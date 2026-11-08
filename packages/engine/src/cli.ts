@@ -6257,8 +6257,21 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           );
         const done = installRuntime(runtime, scope ?? "project", dirs, root);
         if ("refused" in done) return refuse(done.refused);
-        const lines = [...done.files, ...(done.trust ? [`trust: ${done.trust}`] : [])];
-        return ok(lines.join("\n"), { files: done.files, trust: done.trust });
+        // A leftover's path is shown relative to the project when it lies under it (item 2026-11-08-002).
+        const shown = (p: string) =>
+          p.startsWith(`${env.paths.root}/`) ? p.slice(env.paths.root.length + 1) : p;
+        const lines = [
+          ...done.files,
+          ...done.removed.map((p) => `removed ${shown(p)}`),
+          ...done.left.map((p) => `left ${shown(p)}`),
+          ...(done.trust ? [`trust: ${done.trust}`] : []),
+        ];
+        return ok(lines.join("\n"), {
+          files: done.files,
+          removed: done.removed,
+          left: done.left,
+          trust: done.trust,
+        });
       }
       if (sub === "remove") {
         // The rollback (judgement round 2): crew's entries out of the merged configuration, the

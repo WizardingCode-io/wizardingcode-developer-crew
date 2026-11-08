@@ -6,6 +6,7 @@ import { matchesAny } from "./glob.ts";
 import { isDesignContractPath } from "./paths-kind.ts";
 import { SKIP_DIRS } from "./skip-dirs.ts";
 import type { Profile, WorkItem } from "./types.ts";
+import { gitError } from "./worktree.ts";
 
 /** What a work item's change is measured from: a commit, and the proven files of an earlier item that were still uncommitted. */
 export type ChangeBase = Pick<WorkItem, "baseCommit" | "baseFiles">;
@@ -58,26 +59,90 @@ export function baseCommitOf(root: string): string | null {
   return head === "none" ? null : head;
 }
 
+/** One record of `git status --porcelain`: the path and what git says of it. */
+export type StatusEntry = {
+  path: string;
+  kind: "modified" | "untracked" | "ignored" | "renamed";
+};
+
+/**
+ * The runner of the status and ls-files reads: stderr kept for the error, the output untrimmed (a
+ * first record's status columns stay whole), git in the C locale, and no monitor daemon started by
+ * a checkout's own `core.fsmonitor` under a refresh nobody watches (item 2026-11-08-002, AC-26).
+ */
+function gitRead(root: string, args: string[]): string {
+  return execFileSync("git", ["-c", "core.fsmonitor=false", ...args], {
+    cwd: root,
+    env: { ...process.env, LC_ALL: "C" },
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: GIT_OUTPUT_BYTES,
+  });
+}
+
+/**
+ * The entries of `git status --porcelain=v1 -z`, untracked files one by one, the ignored ones too
+ * when asked, under a pathspec when given: `??` untracked, `!!` ignored, a rename or copy as two
+ * `renamed` entries (the new path, and the origin that follows as its own record), anything else
+ * modified. Sorted by path, unique. A failure throws with git's first stderr line, so a caller can
+ * say why (item 2026-11-08-002).
+ */
+export function gitStatusEntries(
+  root: string,
+  opts: { pathspec?: string[]; ignored?: boolean } = {},
+): StatusEntry[] {
+  const args = ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+  if (opts.ignored) args.push("--ignored=matching");
+  if (opts.pathspec?.length) args.push("--", ...opts.pathspec);
+  let out: string;
+  try {
+    out = gitRead(root, args);
+  } catch (error) {
+    throw new Error(gitError(error));
+  }
+  const records = out.split("\0");
+  const byPath = new Map<string, StatusEntry["kind"]>();
+  for (let i = 0; i < records.length; i++) {
+    const record = records[i];
+    if (!record || record.length < 4) continue;
+    const xy = record.slice(0, 2);
+    const path = record.slice(3);
+    if (xy === "??") byPath.set(path, "untracked");
+    else if (xy === "!!") byPath.set(path, "ignored");
+    else if (xy[0] === "R" || xy[0] === "C") {
+      byPath.set(path, "renamed");
+      const origin = records[++i];
+      if (origin) byPath.set(origin, "renamed");
+    } else byPath.set(path, "modified");
+  }
+  return [...byPath.entries()]
+    .map(([path, kind]) => ({ path, kind }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/** The tracked files under a pathspec, relative to the repository top; null when git could not run. */
+export function trackedPaths(root: string, pathspec: string[]): Set<string> | null {
+  try {
+    return new Set(
+      gitRead(root, ["ls-files", "-z", "--full-name", "--", ...pathspec])
+        .split("\0")
+        .filter(Boolean),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Paths that differ from HEAD: modified, added, deleted, renamed and untracked (not ignored).
  * Null when git could not run; a caller must not take that for "nothing changed".
  */
 export function gitChangedPaths(root: string): string[] | null {
-  const out = gitTry(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  if (out === null) return null;
-  const entries = out.split("\0");
-  const paths = new Set<string>();
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    if (!entry || entry.length < 4) continue;
-    paths.add(entry.slice(3));
-    // A rename or copy entry is followed by the original path as its own record.
-    if (entry[0] === "R" || entry[0] === "C") {
-      const original = entries[++i];
-      if (original) paths.add(original);
-    }
+  try {
+    return gitStatusEntries(root).map((e) => e.path);
+  } catch {
+    return null;
   }
-  return [...paths].sort();
 }
 
 /** Null when git could not run. */

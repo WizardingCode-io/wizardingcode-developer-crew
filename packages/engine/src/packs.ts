@@ -29,7 +29,7 @@ import {
   type TeamName,
   type WorkItem,
 } from "./types.ts";
-import { VERSION } from "./version.ts";
+import { compareVersions, VERSION } from "./version.ts";
 
 /**
  * A pack is data the engine serves (SP6 Task 2, ADR 0010): a folder with `pack.json`, checklists
@@ -280,13 +280,8 @@ export function readManifest(root: string): { manifest: PackManifest } | { refus
 
 /** Whether `version` (X.Y.Z) satisfies the manifest's `>=X.Y.Z`. */
 function coreSatisfied(range: string, version: string): boolean {
-  const want = CORE_RANGE.exec(range)?.slice(1).map(Number) ?? [0, 0, 0];
-  const have = version.split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((have[i] ?? 0) > (want[i] ?? 0)) return true;
-    if ((have[i] ?? 0) < (want[i] ?? 0)) return false;
-  }
-  return true;
+  const want = CORE_RANGE.exec(range)?.slice(1, 4).join(".") ?? "0.0.0";
+  return compareVersions(version, want) >= 0;
 }
 
 /** The files a manifest names, relative to the root: pack.json, the checklists, the knowledge files. */

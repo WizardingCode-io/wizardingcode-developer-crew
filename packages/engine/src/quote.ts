@@ -4,10 +4,10 @@
 
 export const SAFE_TEXT_MAX = 120;
 
-/** Text a page or a file wrote, as the report quotes it (2026-10-29-001, the security lead's R-3): `safeText`'s rule, with C1 controls, zero-width and bidi characters stripped too, cut at 120. */
-export function quotedText(value: unknown): string {
+/** Text a page or a file wrote, as the report quotes it (2026-10-29-001, the security lead's R-3): `safeText`'s rule, with C1 controls, zero-width and bidi characters stripped too, cut at 120 unless a caller needs a longer line (the adapters' paths, item 2026-11-08-002). */
+export function quotedText(value: unknown, max = SAFE_TEXT_MAX): string {
   const text = value === null || value === undefined ? "" : String(value);
-  return safeText(text.replace(/[\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ""));
+  return safeText(text.replace(/[\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ""), max);
 }
 
 /** One line of safe text from a file's string: the first line, no control characters, capped with an ellipsis. */

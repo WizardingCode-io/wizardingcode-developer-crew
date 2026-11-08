@@ -1,14 +1,19 @@
 import {
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  rmdirSync,
   rmSync,
   statSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
+import { gitStatusEntries, trackedPaths } from "./fingerprint.ts";
 import { FRONT_MATTER, frontMatterProblems, parseQuoted } from "./front-matter.ts";
 import { sha256 as hashOf, writeText } from "./fs.ts";
 import type { HookPayload, HookResponse } from "./hooks/types.ts";
@@ -1203,16 +1208,150 @@ export function listLines(): string[] {
   });
 }
 
-function filesBelow(dir: string, base = dir): string[] {
-  if (!existsSync(dir)) return [];
+/** The entry's lstat, or null when there is nothing at the path. */
+function lstatOrNull(path: string) {
+  try {
+    return lstatSync(path);
+  } catch {
+    return null;
+  }
+}
+/**
+ * The files under a folder, relative to `base` with `/` separators. `follow` walks through links as
+ * the plugin's own folder is read; `entry` walks with `lstat`, never descends into a link and
+ * returns a link as an entry, so a dangling one on the copy side does not throw (item
+ * 2026-11-08-002).
+ */
+function filesBelow(dir: string, links: "follow" | "entry" = "follow", base = dir): string[] {
+  const top = links === "follow" ? existsSync(dir) : lstatOrNull(dir)?.isDirectory();
+  if (!top) return [];
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
-    return statSync(path).isDirectory()
-      ? filesBelow(path, base)
+    const stat = links === "follow" ? statSync(path) : lstatSync(path);
+    return stat.isDirectory()
+      ? filesBelow(path, links, base)
       : [relative(base, path).split(sep).join("/")];
   });
 }
 const sha256 = (path: string) => hashOf(readFileSync(path));
+/** A folder's entries by name, none when it is absent or not a folder. */
+function entriesOf(dir: string): string[] {
+  return lstatOrNull(dir)?.isDirectory() ? readdirSync(dir).sort() : [];
+}
+/** Whether a configuration file's text holds the value the install would write: JSON by its parsed value, so a reformatted file is not stale. */
+function holdsValue(text: string, value: unknown): boolean {
+  if (typeof value === "string") return text === value;
+  try {
+    return isDeepStrictEqual(JSON.parse(text), value);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The configuration the install writes for a root: its path, its text and its parsed value (the
+ * existing file's foreign entries kept through `merge`); a refusal when the file there is not JSON;
+ * null for the claude row, which writes none.
+ */
+function configText(
+  runtime: Runtime,
+  scope: Scope,
+  dirs: InstallDirs,
+  root: string,
+): { path: string; text: string; value: unknown } | { refused: string } | null {
+  if (runtime.name === "claude") return null;
+  const path = resolveScoped(
+    scope === "project" ? runtime.config.project : runtime.config.user,
+    dirs,
+  );
+  const entries = runtime.config.entries(root);
+  if (typeof entries === "string") return { path, text: entries, value: entries };
+  let existing: unknown = null;
+  if (existsSync(path)) {
+    try {
+      existing = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      return { refused: `${path} is not JSON: fix or move it first` };
+    }
+  }
+  const value = runtime.config.merge(existing, entries);
+  return { path, text: `${JSON.stringify(value, null, 2)}\n`, value };
+}
+
+/**
+ * The first path an install at project scope would write through or leave that a repository could
+ * have made a link, or that leaves the project (item 2026-11-08-002, the security return): the
+ * configuration file, the skill folder and every entry it holds or would hold, the agents folder,
+ * its `crew-*` entries and the ones the install writes, and each of their parents up to the project
+ * root, which is not checked itself, so a project reached through a link installs. Null when none.
+ */
+export function adapterLinkProblem(
+  base: string,
+  runtime: Runtime,
+  dirs: InstallDirs,
+  root: string,
+): string | null {
+  const paths = new Set<string>([resolveScoped(runtime.config.project, dirs)]);
+  const skillTarget = join(resolveScoped(runtime.skillsDir.project, dirs), SKILL_FOLDER);
+  paths.add(skillTarget);
+  for (const rel of filesBelow(skillTarget, "entry")) paths.add(join(skillTarget, rel));
+  for (const rel of filesBelow(join(root, "skills", "crew"))) paths.add(join(skillTarget, rel));
+  const agentEntries = new Set<string>();
+  if (runtime.agentsDir) {
+    const agentsTarget = resolveScoped(runtime.agentsDir.project, dirs);
+    paths.add(agentsTarget);
+    for (const name of entriesOf(agentsTarget))
+      if (name.startsWith("crew-")) {
+        paths.add(join(agentsTarget, name));
+        agentEntries.add(join(agentsTarget, name));
+      }
+    for (const { name } of generatedAgents(runtime, root)) paths.add(join(agentsTarget, name));
+  }
+  const all = new Set(paths);
+  for (const path of paths)
+    for (let parent = dirname(path); parent.startsWith(base + sep); parent = dirname(parent))
+      all.add(parent);
+  const realBase = realpathSync(base);
+  for (const path of [...all].sort()) {
+    const rel = relative(base, path).split(sep).join("/");
+    let stat: ReturnType<typeof lstatSync>;
+    try {
+      stat = lstatSync(path);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") continue;
+      if (code === "ENOTDIR" || code === "EACCES") return `${rel}: cannot be read (${code})`;
+      throw error;
+    }
+    if (stat.isSymbolicLink()) return `${rel} is a symbolic link`;
+    const real = realpathSync(path);
+    if (real !== realBase && !real.startsWith(realBase + sep)) return `${rel} leaves the project`;
+    if (agentEntries.has(path) && !stat.isFile()) return `${rel} is not a file`;
+  }
+  return null;
+}
+
+/** An install that threw after it had written: how many paths it wrote or removed before, so the caller can say the adapter is partly written. */
+export class InstallFailed extends Error {
+  constructor(
+    message: string,
+    readonly written: number,
+  ) {
+    super(message);
+    this.name = "InstallFailed";
+  }
+}
+
+/** The folders under `dir` left empty by a prune, removed bottom-up. */
+function removeEmptyFolders(dir: string): void {
+  for (const name of entriesOf(dir)) {
+    const path = join(dir, name);
+    if (lstatOrNull(path)?.isDirectory()) {
+      removeEmptyFolders(path);
+      if (entriesOf(path).length === 0) rmdirSync(path);
+    }
+  }
+}
 /** The agent files the table generates from the plugin's pages, by file name. */
 function generatedAgents(runtime: Runtime, root: string): { name: string; text: string }[] {
   const dir = join(root, "agents");
@@ -1226,17 +1365,31 @@ function generatedAgents(runtime: Runtime, root: string): { name: string; text: 
     });
 }
 
+/** What an install did: every file written (the configuration first, when it was written), the leftovers removed, the leftovers left in place, and the trust step. */
+export interface Installed {
+  files: string[];
+  removed: string[];
+  left: string[];
+  configWritten: boolean;
+  trust: string | null;
+}
+
 /**
- * Writes the runtime's hook configuration (merged, crew's entries replacing crew's own, every
- * foreign entry kept), the skill copied whole as `crew-method/`, and the agents under `crew-`
- * names; nothing else is touched. Returns every file written, in order, and the trust step.
+ * Writes the skill copied whole as `crew-method/`, the agents under `crew-` names, and the
+ * runtime's hook configuration last (merged, crew's entries replacing crew's own, every foreign
+ * entry kept) and only when its value differs, so a failure mid-copy leaves the configuration as
+ * it was and a release that changes no entry asks for no trust again. The files crew owns that the
+ * root no longer holds are removed when git can bring them back (tracked and unchanged), left and
+ * named otherwise; at user scope the skill folder is crew's whole and an agent is never removed.
+ * At project scope a link, or a path that leaves the project, refuses the install before any write
+ * (item 2026-11-08-002). A throw after the first write is an `InstallFailed`.
  */
 export function installRuntime(
   runtime: Runtime,
   scope: Scope,
   dirs: InstallDirs,
   root: string,
-): { files: string[]; trust: string | null } | { refused: string } {
+): Installed | { refused: string } {
   // A skill page a strict YAML loader would drop is refused before anything is written
   // (finding 121): the runtime would load the hooks and lose the method without a word.
   const skillPage = join(root, "skills", "crew", "SKILL.md");
@@ -1248,43 +1401,95 @@ export function installRuntime(
     return {
       refused: `skills/crew/SKILL.md ${pageProblems.join("; ")}; a strict YAML loader drops the page: fix the front matter`,
     };
-  const files: string[] = [];
-  const configPath = resolveScoped(
-    scope === "project" ? runtime.config.project : runtime.config.user,
-    dirs,
-  );
-  const entries = runtime.config.entries(root);
-  if (typeof entries === "string") {
-    writeText(configPath, entries);
-  } else {
-    let existing: unknown = null;
-    if (existsSync(configPath)) {
-      try {
-        existing = JSON.parse(readFileSync(configPath, "utf8"));
-      } catch {
-        return { refused: `${configPath} is not JSON: fix or move it first` };
-      }
-    }
-    writeText(configPath, `${JSON.stringify(runtime.config.merge(existing, entries), null, 2)}\n`);
+  const config = configText(runtime, scope, dirs, root);
+  if (config && "refused" in config) return { refused: config.refused };
+  if (scope === "project") {
+    const problem = adapterLinkProblem(dirs.project, runtime, dirs, root);
+    if (problem)
+      return { refused: `${problem}: nothing is written through a link or outside the project` };
   }
-  files.push(configPath);
+  const files: string[] = [];
+  const removed: string[] = [];
+  const left: string[] = [];
+  let written = 0;
   const skillSource = join(root, "skills", "crew");
   const skillTarget = join(resolveScoped(runtime.skillsDir[scope], dirs), SKILL_FOLDER);
-  for (const rel of filesBelow(skillSource).sort()) {
-    const target = join(skillTarget, rel);
-    mkdirSync(dirname(target), { recursive: true });
-    copyFileSync(join(skillSource, rel), target);
-    files.push(target);
-  }
-  if (runtime.agentsDir) {
-    const agentsTarget = resolveScoped(runtime.agentsDir[scope], dirs);
-    for (const { name, text } of generatedAgents(runtime, root)) {
-      const target = join(agentsTarget, name);
-      writeText(target, text);
-      files.push(target);
+  const agentsTarget = runtime.agentsDir ? resolveScoped(runtime.agentsDir[scope], dirs) : null;
+  // What git tracks and what differs under the adapter's folders, read once when the first prune
+  // needs it; null outside a repository, where nothing is removed.
+  let gitSets: { tracked: Set<string> | null; changed: Set<string> | null } | undefined;
+  const relToProject = (path: string) => relative(dirs.project, path).split(sep).join("/");
+  const prune = (candidate: string, skill: boolean) => {
+    if (scope === "user") {
+      if (!skill) return left.push(candidate);
+      rmSync(candidate, { force: true });
+      written++;
+      return removed.push(candidate);
     }
+    gitSets ??= (() => {
+      const pathspec = [skillTarget, ...(agentsTarget ? [agentsTarget] : [])];
+      let changed: Set<string> | null = null;
+      try {
+        changed = new Set(
+          gitStatusEntries(dirs.project, { pathspec, ignored: true }).map((e) => e.path),
+        );
+      } catch {
+        changed = null;
+      }
+      return { tracked: trackedPaths(dirs.project, pathspec), changed };
+    })();
+    const rel = relToProject(candidate);
+    if (gitSets.tracked?.has(rel) && gitSets.changed && !gitSets.changed.has(rel)) {
+      rmSync(candidate, { force: true });
+      written++;
+      return removed.push(candidate);
+    }
+    return left.push(candidate);
+  };
+  try {
+    const sourceFiles = filesBelow(skillSource).sort();
+    for (const rel of sourceFiles) {
+      const target = join(skillTarget, rel);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(join(skillSource, rel), target);
+      files.push(target);
+      written++;
+    }
+    const source = new Set(sourceFiles);
+    for (const rel of filesBelow(skillTarget, "entry"))
+      if (!source.has(rel)) prune(join(skillTarget, rel), true);
+    removeEmptyFolders(skillTarget);
+    if (agentsTarget) {
+      const generated = generatedAgents(runtime, root);
+      for (const { name, text } of generated) {
+        const target = join(agentsTarget, name);
+        writeText(target, text);
+        files.push(target);
+        written++;
+      }
+      const names = new Set(generated.map((g) => g.name));
+      for (const name of entriesOf(agentsTarget))
+        if (
+          name.startsWith("crew-") &&
+          !names.has(name) &&
+          lstatOrNull(join(agentsTarget, name))?.isFile()
+        )
+          prune(join(agentsTarget, name), false);
+    }
+    let configWritten = false;
+    if (config) {
+      const current = existsSync(config.path) ? readFileSync(config.path, "utf8") : null;
+      if (current === null || !holdsValue(current, config.value)) {
+        writeText(config.path, config.text);
+        configWritten = true;
+        written++;
+        files.unshift(config.path);
+      }
+    }
+    return { files, removed, left, configWritten, trust: runtime.trust };
+  } catch (error) {
+    throw new InstallFailed((error as Error).message, written);
   }
-  return { files, trust: runtime.trust };
 }
 
 /** The existing configuration without crew's entries: an event's list emptied is dropped, and so is an empty `hooks`. */
@@ -1363,7 +1568,7 @@ export function removeRuntime(
 const ROOT_IN_COMMAND = /node (\S+)\/dist\/crew\.mjs hook\b/;
 const ROOT_IN_PLUGIN = /const ROOT = "((?:[^"\\]|\\.)*)";/;
 /** The plugin root a configuration's crew command names, or null when it holds none. */
-function rootOf(text: string, runtime: Runtime, fallback: string): string | null {
+export function rootOf(text: string, runtime: Runtime, fallback: string): string | null {
   if (runtime.name === "claude") return text.includes("crew.mjs") ? fallback : null;
   if (runtime.name === "opencode") {
     const match = ROOT_IN_PLUGIN.exec(text);
@@ -1421,32 +1626,59 @@ function eventResult(runtime: Runtime, event: EngineEvent): string {
     return `${event}: ${runtimeEvent} failed (${(error as Error).message})`;
   }
 }
-/** The copy against its source: `ok`, `missing`, or `stale (<n> files differ)`. */
+/** One part of a check as data: ok, stale with how many files (or events) differ, or missing with how many were expected. */
+export type PartState = { state: "ok" | "stale" | "missing"; differ: number };
+/** The parts of a check: the configuration, the skill copy, the agents (null for a runtime with none) and the hook events run on their samples. */
+export interface CheckParts {
+  config: PartState;
+  skill: PartState;
+  agents: PartState | null;
+  events: PartState;
+}
+const NONE: PartState = { state: "missing", differ: 0 };
+/** A part as its line prints it. */
+function partText(part: PartState): string {
+  if (part.state === "ok") return "ok";
+  if (part.state === "missing") return "missing";
+  return `stale (${part.differ} files differ)`;
+}
+/**
+ * The copy against its source: on the copy side a link counts as differing and is never hashed;
+ * with `extras` (the skill copy, which is crew's whole), a file the source does not hold counts too
+ * (item 2026-11-08-002, AC-9). A missing copy counts every expected file.
+ */
 function copyState(
   expected: Map<string, string>,
   actualDir: string,
   actual: (path: string) => string | null,
-): string {
-  if (!existsSync(actualDir)) return "missing";
+  extras = false,
+): PartState {
+  if (!lstatOrNull(actualDir)?.isDirectory()) return { state: "missing", differ: expected.size };
   let differ = 0;
-  for (const [rel, hash] of expected) if (actual(join(actualDir, rel)) !== hash) differ++;
-  return differ ? `stale (${differ} files differ)` : "ok";
+  for (const [rel, hash] of expected) {
+    const path = join(actualDir, rel);
+    if (lstatOrNull(path)?.isSymbolicLink() || actual(path) !== hash) differ++;
+  }
+  if (extras) for (const rel of filesBelow(actualDir, "entry")) if (!expected.has(rel)) differ++;
+  return { state: differ ? "stale" : "ok", differ };
 }
 
 /**
  * Reads the configuration back (project scope then user when none is named), names the root its
- * crew command points at and whether it holds the bundle, runs every event through the adapter on
- * its sample, compares the skill copy and the agents by sha256 against the root's sources, and
- * prints the guarantee table; `ok` is false on a missing or foreign configuration, a gone root, a
- * failed event or a stale copy.
+ * crew command points at and whether it holds the bundle, compares the configuration with what the
+ * install would write for that root, runs every event through the adapter on its sample, compares
+ * the skill copy and the agents by sha256 against the root's sources, and prints the guarantee
+ * table. The parts are computed first as data and the lines rendered from them; `problems` holds
+ * each line that is not ok, in the lines' order, and `ok` is their absence (item 2026-11-08-002).
  */
 export function checkRuntime(
   runtime: Runtime,
   scope: Scope | null,
   dirs: InstallDirs,
   fallbackRoot: string,
-): { lines: string[]; ok: boolean } {
+): { lines: string[]; ok: boolean; parts: CheckParts; problems: string[] } {
   const lines: string[] = [];
+  const problems: string[] = [];
   const candidates: [Scope, string][] =
     runtime.name === "claude"
       ? [["project", join(fallbackRoot, "hooks", "hooks.json")]]
@@ -1464,24 +1696,56 @@ export function checkRuntime(
             ["project", resolveScoped(runtime.config.project, dirs)],
             ["user", resolveScoped(runtime.config.user, dirs)],
           ];
+  const early = (line: string, config: PartState) => ({
+    lines: [...lines, line],
+    ok: false,
+    parts: { config, skill: NONE, agents: NONE, events: NONE },
+    problems: [...problems, line],
+  });
   const found = candidates.find(([, path]) => existsSync(path));
-  if (!found) return { lines: [`missing: ${candidates.map(([, p]) => p).join(" | ")}`], ok: false };
+  if (!found)
+    return early(`missing: ${candidates.map(([, p]) => p).join(" | ")}`, {
+      state: "missing",
+      differ: 1,
+    });
   const [foundScope, configPath] = found;
   const text = readFileSync(configPath, "utf8");
   const root = rootOf(text, runtime, fallbackRoot);
-  if (!root) return { lines: [`config: ${configPath} holds no crew hook`], ok: false };
+  if (!root)
+    return early(`config: ${configPath} holds no crew hook`, { state: "stale", differ: 1 });
   lines.push(`config: ${configPath}`);
-  let ok = true;
-  if (!existsSync(join(root, "dist", "crew.mjs"))) {
-    lines.push(`root: ${root} missing dist/crew.mjs`);
-    return { lines, ok: false };
+  // A root without the bundle is said before anything is compared against it: nothing could be
+  // installed from it, so the configuration's comparison has no source.
+  if (!existsSync(join(root, "dist", "crew.mjs")))
+    return early(`root: ${root} missing dist/crew.mjs`, { state: "stale", differ: 1 });
+  let config: PartState = { state: "ok", differ: 0 };
+  const wanted = configText(runtime, foundScope, dirs, root);
+  if (wanted) {
+    const line =
+      "refused" in wanted
+        ? `config: stale (${wanted.refused})`
+        : holdsValue(text, wanted.value)
+          ? null
+          : "config: stale (differs from what crew runtime install writes)";
+    if (line) {
+      config = { state: "stale", differ: 1 };
+      lines.push(line);
+      problems.push(line);
+    }
   }
   lines.push(`root: ${root} ok`);
+  let failedEvents = 0;
   for (const event of ENGINE_EVENTS) {
     const line = eventResult(runtime, event);
-    if (line.includes(" failed (")) ok = false;
+    if (line.includes(" failed (")) {
+      failedEvents++;
+      problems.push(line);
+    }
     lines.push(line);
   }
+  const events: PartState = { state: failedEvents ? "stale" : "ok", differ: failedEvents };
+  let skill: PartState = { state: "ok", differ: 0 };
+  let agents: PartState | null = { state: "ok", differ: 0 };
   if (runtime.name === "claude") {
     lines.push("skill: ok", "agents: ok");
   } else {
@@ -1490,32 +1754,42 @@ export function checkRuntime(
       filesBelow(skillSource).map((rel) => [rel, sha256(join(skillSource, rel))]),
     );
     const skillCopy = join(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER);
-    const skill = copyState(skillHashes, skillCopy, (p) => (existsSync(p) ? sha256(p) : null));
-    lines.push(`skill: ${skill}`);
-    if (skill !== "ok") ok = false;
+    const hasher = (p: string) => (lstatOrNull(p)?.isFile() ? sha256(p) : null);
+    skill = copyState(skillHashes, skillCopy, hasher, true);
+    lines.push(`skill: ${partText(skill)}`);
+    if (skill.state !== "ok") problems.push(`skill: ${partText(skill)}`);
     // The installed page as a strict YAML loader reads it (finding 121): a copy equal to its source
     // is still dropped by the runtime when its front matter holds a plain scalar YAML reads
     // otherwise. Every problem is named (finding 128); a missing page is the skill line's to say.
     const installedPage = join(skillCopy, "SKILL.md");
-    if (existsSync(installedPage)) {
+    if (lstatOrNull(installedPage)?.isFile()) {
       const pageProblems = frontMatterProblems(readFileSync(installedPage, "utf8"));
-      lines.push(
-        `skill front matter: ${pageProblems.length ? `SKILL.md ${pageProblems.join("; ")}` : "ok"}`,
-      );
-      if (pageProblems.length) ok = false;
+      const line = `skill front matter: ${pageProblems.length ? `SKILL.md ${pageProblems.join("; ")}` : "ok"}`;
+      lines.push(line);
+      if (pageProblems.length) problems.push(line);
     }
     if (runtime.agentsDir) {
-      const expected = new Map(
-        generatedAgents(runtime, root).map(({ name, text: t }) => [name, hashOf(t)]),
-      );
-      const agents = copyState(expected, resolveScoped(runtime.agentsDir[foundScope], dirs), (p) =>
-        existsSync(p) ? sha256(p) : null,
-      );
-      lines.push(`agents: ${agents}`);
-      if (agents !== "ok") ok = false;
-    }
+      const generated = generatedAgents(runtime, root);
+      const expected = new Map(generated.map(({ name, text: t }) => [name, hashOf(t)]));
+      const agentsDir = resolveScoped(runtime.agentsDir[foundScope], dirs);
+      agents = copyState(expected, agentsDir, hasher);
+      // At project scope a crew-named agent the root does not generate is a leftover of an earlier
+      // release, counted as differing; a person's own agent under another name never is. At user
+      // scope the install leaves such an agent, so the check does not count it.
+      if (foundScope === "project" && agents.state !== "missing") {
+        const strays = entriesOf(agentsDir).filter(
+          (name) =>
+            name.startsWith("crew-") &&
+            !expected.has(name) &&
+            lstatOrNull(join(agentsDir, name))?.isFile(),
+        ).length;
+        if (strays) agents = { state: "stale", differ: agents.differ + strays };
+      }
+      lines.push(`agents: ${partText(agents)}`);
+      if (agents.state !== "ok") problems.push(`agents: ${partText(agents)}`);
+    } else agents = null;
   }
   lines.push(...guaranteeLines(runtime));
   if (runtime.trust) lines.push(`trust: ${runtime.trust}`);
-  return { lines, ok };
+  return { lines, ok: problems.length === 0, parts: { config, skill, agents, events }, problems };
 }

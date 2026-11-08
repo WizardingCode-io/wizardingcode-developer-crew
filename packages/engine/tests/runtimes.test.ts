@@ -1,5 +1,18 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { HookPayload, HookResponse } from "../src/hooks/types.ts";
@@ -10,15 +23,18 @@ import {
   type EngineEvent,
   type Guarantee,
   guaranteeLines,
+  type InstallDirs,
+  InstallFailed,
   installRuntime,
   patchPaths,
   RUNTIME_NAMES,
   RUNTIMES,
+  type Runtime,
   type RuntimeName,
   readAgentPage,
   runtimeOf,
 } from "../src/runtimes.ts";
-import { tempDir } from "./helpers.ts";
+import { git, makeRepo, tempDir, write } from "./helpers.ts";
 
 // SP6 Task 4: the runtime adapters over the recorded payloads (AC-1, AC-4, AC-8's unit rows).
 
@@ -1248,4 +1264,305 @@ test("SP6-T4 AC-4: the OpenCode plugin text runs crew hook through the injected 
     `node ${root}/dist/crew.mjs hook pre-tool-use --runtime opencode < <stdin>`,
   );
   expect(JSON.parse(calls[0]?.stdin ?? "{}").cwd).toBe("/session/dir");
+});
+
+// 2026-11-08-002 Task 2: the install's write order, the prune of what git can bring back, the link
+// refusal at project scope, and the check's parts as data (AC-18, AC-28, AC-9, AC-19, AC-23, AC-13).
+
+/** A plugin root with a bundle, a skill page, one reference and one agent page, by its real path. */
+function fakeRoot(): string {
+  const root = tempDir("crew-root-");
+  mkdirSync(join(root, "skills", "crew", "references"), { recursive: true });
+  mkdirSync(join(root, "agents"), { recursive: true });
+  mkdirSync(join(root, "dist"), { recursive: true });
+  writeFileSync(join(root, "dist", "crew.mjs"), "");
+  writeFileSync(
+    join(root, "skills", "crew", "SKILL.md"),
+    '---\nname: crew-method\ndescription: "Use when the user asks: a fix, a feature"\n---\n\n# Crew\n',
+  );
+  writeFileSync(join(root, "skills", "crew", "references", "a.md"), "# A\n");
+  writeFileSync(
+    join(root, "agents", "tech-lead.md"),
+    readFileSync(
+      fileURLToPath(new URL("../../../plugins/core/agents/tech-lead.md", import.meta.url)),
+      "utf8",
+    ),
+  );
+  return realpathSync(root);
+}
+
+/** A repository with the adapter installed and committed, so its files are tracked and clean. */
+function gitFixture(runtime: Runtime, root: string): { project: string; dirs: InstallDirs } {
+  const project = realpathSync(makeRepo());
+  const dirs = { project, home: tempDir("crew-home-") };
+  const done = installRuntime(runtime, "project", dirs, root);
+  if ("refused" in done) throw new Error(done.refused);
+  git(project, "add", "-A");
+  git(project, "commit", "-q", "-m", "adapter");
+  return { project, dirs };
+}
+
+/** Every file under a folder with its bytes' hash, by relative path, to show nothing changed. */
+function hashesBelow(dir: string, base = dir): Record<string, string> {
+  if (!existsSync(dir)) return {};
+  const out: Record<string, string> = {};
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    if (lstatSync(path).isDirectory()) Object.assign(out, hashesBelow(path, base));
+    else if (lstatSync(path).isFile())
+      out[path.slice(base.length + 1)] = createHash("sha256")
+        .update(readFileSync(path))
+        .digest("hex");
+  }
+  return out;
+}
+
+test("2026-11-08-002 AC-18: the install writes the configuration last and prunes only what git can bring back", () => {
+  const root = fakeRoot();
+  const copilot = RUNTIMES.copilot;
+  const { project, dirs } = gitFixture(copilot, root);
+  const agents = join(project, ".github", "agents");
+  const old = join(project, ".agents", "skills", "crew-method", "references", "old.md");
+  write(project, ".agents/skills/crew-method/references/old.md", "old\n");
+  write(project, ".github/agents/crew-retired.agent.md", "retired\n");
+  write(project, ".github/agents/crew-edited.agent.md", "edited\n");
+  write(project, ".github/agents/crew-é d.agent.md", "accent\n");
+  git(project, "add", "-A");
+  git(project, "commit", "-q", "-m", "leftovers");
+  write(project, ".github/agents/crew-edited.agent.md", "edited twice\n");
+  write(project, ".github/agents/crew-é d.agent.md", "accent twice\n");
+  write(project, ".github/agents/crew-mine.agent.md", "mine\n");
+  write(project, ".github/agents/mine.agent.md", "mine\n");
+  const done = installRuntime(copilot, "project", dirs, root);
+  if ("refused" in done) throw new Error(done.refused);
+  expect(existsSync(old)).toBe(false);
+  expect(existsSync(join(agents, "crew-retired.agent.md"))).toBe(false);
+  expect([...done.removed].sort()).toEqual([old, join(agents, "crew-retired.agent.md")].sort());
+  const left = ["crew-edited.agent.md", "crew-é d.agent.md", "crew-mine.agent.md"].map((n) =>
+    join(agents, n),
+  );
+  for (const path of left) expect(existsSync(path), path).toBe(true);
+  expect([...done.left].sort()).toEqual([...left].sort());
+  expect(existsSync(join(agents, "mine.agent.md"))).toBe(true);
+  expect(done.left).not.toContain(join(agents, "mine.agent.md"));
+  expect(readFileSync(join(agents, "crew-edited.agent.md"), "utf8")).toBe("edited twice\n");
+  // Outside a git repository the same leftovers are all left.
+  const plain = { project: tempDir("crew-plain-"), home: tempDir("crew-home-") };
+  expect("files" in installRuntime(copilot, "project", plain, root)).toBe(true);
+  write(plain.project, ".agents/skills/crew-method/references/old.md", "old\n");
+  write(plain.project, ".github/agents/crew-retired.agent.md", "retired\n");
+  const again = installRuntime(copilot, "project", plain, root);
+  if ("refused" in again) throw new Error(again.refused);
+  expect(again.removed).toEqual([]);
+  expect([...again.left].sort()).toEqual(
+    [
+      join(plain.project, ".agents", "skills", "crew-method", "references", "old.md"),
+      join(plain.project, ".github", "agents", "crew-retired.agent.md"),
+    ].sort(),
+  );
+  // User scope: a skill leftover goes, an agent leftover stays and is named.
+  const home = tempDir("crew-home-");
+  const userDirs = { project: tempDir("crew-project-"), home };
+  expect("files" in installRuntime(copilot, "user", userDirs, root)).toBe(true);
+  write(home, ".agents/skills/crew-method/old.md", "old\n");
+  write(home, ".copilot/agents/crew-mine.agent.md", "mine\n");
+  const user = installRuntime(copilot, "user", userDirs, root);
+  if ("refused" in user) throw new Error(user.refused);
+  expect(existsSync(join(home, ".agents", "skills", "crew-method", "old.md"))).toBe(false);
+  expect(user.removed).toEqual([join(home, ".agents", "skills", "crew-method", "old.md")]);
+  expect(existsSync(join(home, ".copilot", "agents", "crew-mine.agent.md"))).toBe(true);
+  expect(user.left).toEqual([join(home, ".copilot", "agents", "crew-mine.agent.md")]);
+});
+
+test.skipIf(process.getuid?.() === 0)(
+  "2026-11-08-002 AC-18 (write order): a copy that fails leaves the configuration as it was",
+  () => {
+    const root = fakeRoot();
+    const unreadable = join(root, "skills", "crew", "references", "a.md");
+    chmodSync(unreadable, 0o000);
+    try {
+      // A first install: the configuration is never written.
+      const fresh = { project: tempDir("crew-project-"), home: tempDir("crew-home-") };
+      expect(() => installRuntime(RUNTIMES.copilot, "project", fresh, root)).toThrow(InstallFailed);
+      try {
+        installRuntime(RUNTIMES.copilot, "project", fresh, root);
+      } catch (error) {
+        expect((error as InstallFailed).written).toBeGreaterThan(0);
+      }
+      expect(existsSync(join(fresh.project, ".github", "hooks", "crew.json"))).toBe(false);
+      // A second install from another root: the configuration keeps its earlier bytes.
+      const good = fakeRoot();
+      const project = { project: tempDir("crew-project-"), home: tempDir("crew-home-") };
+      expect("files" in installRuntime(RUNTIMES.copilot, "project", project, good)).toBe(true);
+      const config = join(project.project, ".github", "hooks", "crew.json");
+      const before = readFileSync(config, "utf8");
+      expect(() => installRuntime(RUNTIMES.copilot, "project", project, root)).toThrow(
+        InstallFailed,
+      );
+      expect(readFileSync(config, "utf8")).toBe(before);
+    } finally {
+      chmodSync(unreadable, 0o644);
+    }
+  },
+);
+
+test("2026-11-08-002 AC-28: an unchanged configuration is not rewritten", () => {
+  const root = fakeRoot();
+  const dirs = { project: tempDir("crew-project-"), home: tempDir("crew-home-") };
+  const first = installRuntime(RUNTIMES.cursor, "project", dirs, root);
+  if ("refused" in first) throw new Error(first.refused);
+  expect(first.configWritten).toBe(true);
+  const config = join(dirs.project, ".cursor", "hooks.json");
+  const mtime = statSync(config).mtimeMs;
+  const second = installRuntime(RUNTIMES.cursor, "project", dirs, root);
+  if ("refused" in second) throw new Error(second.refused);
+  expect(second.configWritten).toBe(false);
+  expect(statSync(config).mtimeMs).toBe(mtime);
+  expect(second.files).not.toContain(config);
+  // A person's own entry added by hand stays, and the file is still not rewritten.
+  const parsed = JSON.parse(readFileSync(config, "utf8")) as { hooks: Record<string, unknown[]> };
+  parsed.hooks.stop = [{ command: "./mine.sh" }, ...(parsed.hooks.stop ?? [])];
+  writeFileSync(config, `${JSON.stringify(parsed, null, 2)}\n`);
+  const withMine = statSync(config).mtimeMs;
+  const third = installRuntime(RUNTIMES.cursor, "project", dirs, root);
+  if ("refused" in third) throw new Error(third.refused);
+  expect(third.configWritten).toBe(false);
+  expect(statSync(config).mtimeMs).toBe(withMine);
+  expect((JSON.parse(readFileSync(config, "utf8")) as typeof parsed).hooks.stop?.[0]).toEqual({
+    command: "./mine.sh",
+  });
+  // A crew entry changed by hand: written again, the entry restored.
+  const edited = JSON.parse(readFileSync(config, "utf8")) as {
+    hooks: Record<string, { command?: string; timeout?: number }[]>;
+  };
+  const crewStop = edited.hooks.stop?.find((e) => e.command?.includes("crew.mjs"));
+  if (!crewStop) throw new Error("no crew stop entry");
+  crewStop.timeout = 99;
+  writeFileSync(config, `${JSON.stringify(edited, null, 2)}\n`);
+  const fourth = installRuntime(RUNTIMES.cursor, "project", dirs, root);
+  if ("refused" in fourth) throw new Error(fourth.refused);
+  expect(fourth.configWritten).toBe(true);
+  const restored = JSON.parse(readFileSync(config, "utf8")) as typeof edited;
+  expect(restored.hooks.stop?.find((e) => e.command?.includes("crew.mjs"))?.timeout).toBe(10);
+  // OpenCode's file, compared by its text.
+  const oc = installRuntime(RUNTIMES.opencode, "project", dirs, root);
+  if ("refused" in oc) throw new Error(oc.refused);
+  const plugin = join(dirs.project, ".opencode", "plugins", "wizardingcode-crew.js");
+  const ocTime = statSync(plugin).mtimeMs;
+  const ocAgain = installRuntime(RUNTIMES.opencode, "project", dirs, root);
+  if ("refused" in ocAgain) throw new Error(ocAgain.refused);
+  expect(ocAgain.configWritten).toBe(false);
+  expect(statSync(plugin).mtimeMs).toBe(ocTime);
+});
+
+test("2026-11-08-002 AC-23: a user-scope install through a linked home folder", () => {
+  const root = fakeRoot();
+  const home = tempDir("crew-home-");
+  const elsewhere = tempDir("crew-dotfiles-");
+  symlinkSync(elsewhere, join(home, ".agents"));
+  const done = installRuntime(RUNTIMES.copilot, "user", { project: tempDir(), home }, root);
+  expect("refused" in done).toBe(false);
+  expect(existsSync(join(elsewhere, "skills", "crew-method", "SKILL.md"))).toBe(true);
+});
+
+test("2026-11-08-002 AC-9: the check sees leftovers and links, and not a left user agent", () => {
+  const root = fakeRoot();
+  const dirs = { project: tempDir("crew-project-"), home: tempDir("crew-home-") };
+  expect("files" in installRuntime(RUNTIMES.copilot, "project", dirs, root)).toBe(true);
+  const extra = join(dirs.project, ".agents", "skills", "crew-method", "extra.md");
+  writeFileSync(extra, "extra\n");
+  let checked = checkRuntime(RUNTIMES.copilot, "project", dirs, root);
+  expect(checked.parts.skill).toEqual({ state: "stale", differ: 1 });
+  expect(checked.ok).toBe(false);
+  rmSync(extra);
+  const outside = join(tempDir("crew-outside-"), "o.md");
+  writeFileSync(outside, "o\n");
+  symlinkSync(outside, extra);
+  checked = checkRuntime(RUNTIMES.copilot, "project", dirs, root);
+  expect(checked.parts.skill.state).toBe("stale");
+  rmSync(extra);
+  symlinkSync(join(tempDir("crew-gone-"), "nowhere.md"), extra);
+  checked = checkRuntime(RUNTIMES.copilot, "project", dirs, root);
+  expect(checked.parts.skill.state).toBe("stale");
+  rmSync(extra);
+  expect(checkRuntime(RUNTIMES.copilot, "project", dirs, root).ok).toBe(true);
+  const agents = join(dirs.project, ".github", "agents");
+  writeFileSync(join(agents, "crew-gone.agent.md"), "gone\n");
+  checked = checkRuntime(RUNTIMES.copilot, "project", dirs, root);
+  expect(checked.parts.agents).toEqual({ state: "stale", differ: 1 });
+  rmSync(join(agents, "crew-gone.agent.md"));
+  writeFileSync(join(agents, "mine.agent.md"), "mine\n");
+  checked = checkRuntime(RUNTIMES.copilot, "project", dirs, root);
+  expect(checked.parts.agents).toEqual({ state: "ok", differ: 0 });
+  expect(checked.ok).toBe(true);
+  // User scope: an agent the install leaves never fails the check.
+  const home = tempDir("crew-home-");
+  const userDirs = { project: tempDir("crew-project-"), home };
+  expect("files" in installRuntime(RUNTIMES.copilot, "user", userDirs, root)).toBe(true);
+  write(home, ".copilot/agents/crew-mine.agent.md", "mine\n");
+  expect("files" in installRuntime(RUNTIMES.copilot, "user", userDirs, root)).toBe(true);
+  expect(checkRuntime(RUNTIMES.copilot, "user", userDirs, root).ok).toBe(true);
+  // Folder names that read like a failed line never make the check fail: the parts are data.
+  const odd = join(tempDir("crew-odd-"), "missing-docs", "failed-build");
+  mkdirSync(odd, { recursive: true });
+  const oddDirs = { project: odd, home: tempDir("crew-home-") };
+  expect("files" in installRuntime(RUNTIMES.copilot, "project", oddDirs, root)).toBe(true);
+  const oddCheck = checkRuntime(RUNTIMES.copilot, "project", oddDirs, root);
+  expect(oddCheck.ok, oddCheck.lines.join("\n")).toBe(true);
+  expect(oddCheck.problems).toEqual([]);
+});
+
+test("2026-11-08-002 AC-19: the check compares the configuration", () => {
+  const root = fakeRoot();
+  const dirs = { project: tempDir("crew-project-"), home: tempDir("crew-home-") };
+  expect("files" in installRuntime(RUNTIMES.cursor, "project", dirs, root)).toBe(true);
+  const config = join(dirs.project, ".cursor", "hooks.json");
+  const parsed = JSON.parse(readFileSync(config, "utf8")) as {
+    hooks: Record<string, { command?: string; timeout?: number }[]>;
+  };
+  const crewStop = parsed.hooks.stop?.find((e) => e.command?.includes("crew.mjs"));
+  if (!crewStop) throw new Error("no crew stop entry");
+  crewStop.timeout = 99;
+  writeFileSync(config, `${JSON.stringify(parsed, null, 2)}\n`);
+  let checked = checkRuntime(RUNTIMES.cursor, "project", dirs, root);
+  expect(checked.parts.config).toEqual({ state: "stale", differ: 1 });
+  expect(checked.ok).toBe(false);
+  expect(
+    checked.lines.indexOf("config: stale (differs from what crew runtime install writes)"),
+  ).toBe(checked.lines.indexOf(`config: ${config}`) + 1);
+  expect("files" in installRuntime(RUNTIMES.cursor, "project", dirs, root)).toBe(true);
+  checked = checkRuntime(RUNTIMES.cursor, "project", dirs, root);
+  expect(checked.ok, checked.lines.join("\n")).toBe(true);
+  // The same value, another layout: not stale.
+  writeFileSync(config, `${JSON.stringify(JSON.parse(readFileSync(config, "utf8")), null, 4)}\n`);
+  expect(checkRuntime(RUNTIMES.cursor, "project", dirs, root).ok).toBe(true);
+  // A person's own entry beside crew's, installed again: ok.
+  const withMine = JSON.parse(readFileSync(config, "utf8")) as typeof parsed;
+  withMine.hooks.stop = [{ command: "./mine.sh" }, ...(withMine.hooks.stop ?? [])];
+  writeFileSync(config, `${JSON.stringify(withMine, null, 2)}\n`);
+  expect("files" in installRuntime(RUNTIMES.cursor, "project", dirs, root)).toBe(true);
+  expect(checkRuntime(RUNTIMES.cursor, "project", dirs, root).ok).toBe(true);
+  // OpenCode's plugin file, compared by its text.
+  expect("files" in installRuntime(RUNTIMES.opencode, "project", dirs, root)).toBe(true);
+  const plugin = join(dirs.project, ".opencode", "plugins", "wizardingcode-crew.js");
+  writeFileSync(plugin, `${readFileSync(plugin, "utf8")} `);
+  expect(checkRuntime(RUNTIMES.opencode, "project", dirs, root).parts.config.state).toBe("stale");
+});
+
+test("2026-11-08-002 AC-13 (install): crew runtime install refuses a link at project scope", () => {
+  const root = fakeRoot();
+  const dirs = { project: realpathSync(tempDir("crew-project-")), home: tempDir("crew-home-") };
+  expect("files" in installRuntime(RUNTIMES.copilot, "project", dirs, root)).toBe(true);
+  const references = join(dirs.project, ".agents", "skills", "crew-method", "references");
+  rmSync(references, { recursive: true });
+  const outside = tempDir("crew-outside-");
+  writeFileSync(join(outside, "keep.md"), "keep\n");
+  symlinkSync(outside, references);
+  const before = hashesBelow(dirs.project);
+  const refused = installRuntime(RUNTIMES.copilot, "project", dirs, root);
+  expect("refused" in refused).toBe(true);
+  if ("refused" in refused)
+    expect(refused.refused).toContain(".agents/skills/crew-method/references is a symbolic link");
+  expect(readFileSync(join(outside, "keep.md"), "utf8")).toBe("keep\n");
+  expect(hashesBelow(dirs.project)).toEqual(before);
 });
