@@ -4961,7 +4961,7 @@ test("2026-11-04-001 AC-42: crew projects standingE2eSkip is a policy command: a
     const denied = bash(write, mode);
     expect(decision(denied)).toBe("deny");
     expect(JSON.stringify(denied)).toContain(
-      "crew projects standingE2eSkip writes the person's decision into every registered project: run it in a session a person watches",
+      "crew projects standingE2eSkip writes into every registered project: run it in a session a person watches",
     );
   }
   expect(decision(bash("crew projects $X", "default"))).toBe("ask");
@@ -4969,4 +4969,21 @@ test("2026-11-04-001 AC-42: crew projects standingE2eSkip is a policy command: a
   expect(bash("crew projects standingE2eSkip --reason x --dry-run", "default")).toEqual({});
   // --dry-run is a boolean: the word after it is a positional, and the call is still a dry run.
   expect(bash("crew projects standingE2eSkip --dry-run no --reason x", "default")).toEqual({});
+});
+
+test("2026-11-08-002 AC-15: crew projects update is asked, its dry run free", () => {
+  const relay = setup(null);
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(relay.ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  expect(decision(bash("crew projects update", "auto"))).toBe("ask");
+  expect(decision(bash("crew projects update", "default"))).toBe("ask");
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    const denied = bash("crew projects update", mode);
+    expect(decision(denied)).toBe("deny");
+    expect(JSON.stringify(denied)).toContain(
+      "crew projects update writes into every registered project: run it in a session a person watches",
+    );
+  }
+  expect(bash("crew projects update --dry-run", "default")).toEqual({});
+  expect(bash("crew projects update --dry-run --json", "default")).toEqual({});
 });

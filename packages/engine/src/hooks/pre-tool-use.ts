@@ -651,13 +651,13 @@ function userOnlyCommand(
   // where nobody watches the command must say so with --mode, as a decision must.
   const presence = verb === "question" && third === "add";
   const unreadable = (word: string | undefined) => word !== undefined && UNREADABLE_VERB.test(word);
-  // The one command that writes a person's policy decision into every registered project (finding
-  // 223): asked as a policy command unless it is a dry run, and any word the hook cannot read after
-  // `projects` takes the conservative form.
+  // The commands that write into every registered project (finding 223's standing skip; item
+  // 2026-11-08-002's adapter update): asked as a policy command unless it is a dry run, and any
+  // word the hook cannot read after `projects` takes the conservative form.
   const bulkPolicy =
     verb === "projects" &&
     (parsed.positional.slice(1).some(unreadable) ||
-      (second === "standingE2eSkip" && parsed.flags["dry-run"] !== true));
+      ((second === "standingE2eSkip" || second === "update") && parsed.flags["dry-run"] !== true));
   const userOnly =
     bulkPolicy ||
     unreadable(verb) ||
@@ -1140,10 +1140,14 @@ function userOnlyDecision(
       return unattendedLowering({ parsed, policy, where, mode, flagged, line });
     // A policy command has no unattended form (finding 122): the command refuses --mode by design
     // (ADR 0005), so the answer names the person's way instead of a flag the command refuses.
-    if (policyCommand && verb === "projects" && second === "standingE2eSkip")
+    if (
+      policyCommand &&
+      verb === "projects" &&
+      (second === "standingE2eSkip" || second === "update")
+    )
       return [
         "deny",
-        `Crew: no person is watching this session (${where}) and crew projects standingE2eSkip writes the person's decision into every registered project: run it in a session a person watches`,
+        `Crew: no person is watching this session (${where}) and crew projects ${second} writes into every registered project: run it in a session a person watches`,
       ];
     if (policyCommand)
       return [

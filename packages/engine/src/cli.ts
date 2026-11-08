@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { type AdapterStatus, commitCommand, quoted, refreshAdapters } from "./adapters.ts";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
 import { assembleAuditReport, renderAuditHtml, renderAuditMarkdown } from "./audit-report.ts";
@@ -32,6 +33,7 @@ import {
   type DecisionEntry,
   decisionLine,
   decisionsCount,
+  lastEntryText,
   listDecisions,
   registerTampered,
 } from "./decisions.ts";
@@ -310,7 +312,11 @@ import {
   listLines,
   pluginRoot,
   RUNTIME_NAMES,
+  RUNTIMES,
+  type RuntimeName,
   removeRuntime,
+  resolveScoped,
+  rootOf,
   runtimeOf,
   type Scope,
 } from "./runtimes.ts";
@@ -346,6 +352,7 @@ import {
 import {
   adoptMainFiles,
   ensureCrewDir,
+  liveSessions,
   loadState,
   oneLine,
   saveState,
@@ -2084,11 +2091,12 @@ function scratchFolders(env: NodeJS.ProcessEnv): string[] {
 }
 
 /**
- * Why a registered project is left out of `crew projects standingE2eSkip`, or null when it is
- * processed: the rules in the order the spec gives them (finding 223), the root as the registry
- * holds it read before `canonical` resolves its links.
+ * Why a registered project is left out of every bulk command, or null when it is processed: the
+ * rules in the order the spec gives them (finding 223), the root as the registry holds it read
+ * before `canonical` resolves its links. The standing skip's own two checks follow in
+ * `standingSkipLeftOut` (item 2026-11-08-002).
  */
-function projectLeftOut(
+function registryLeftOut(
   raw: string,
   root: string,
   scratch: readonly string[],
@@ -2103,8 +2111,206 @@ function projectLeftOut(
   if (isLink(crewDir)) return { reason: ".crew is a symbolic link" };
   if (isLink(join(crewDir, "policy.json"))) return { reason: "policy.json is a symbolic link" };
   if (!statSync(crewDir).isDirectory()) return { reason: "no .crew folder" };
-  if (!existsSync(join(crewDir, "profile.json"))) return { reason: "no profile yet" };
   return null;
+}
+/** The standing skip's own check after the shared rules, in its place and with its text. */
+function standingSkipLeftOut(raw: string): { reason: string } | null {
+  if (!existsSync(join(raw, ".crew", "profile.json"))) return { reason: "no profile yet" };
+  return null;
+}
+
+/** One registered project's line in `crew projects update` (item 2026-11-08-002). */
+type UpdateStatus =
+  | "updated"
+  | "would update"
+  | "up to date"
+  | "stale"
+  | "refused"
+  | "failed"
+  | "other root"
+  | "no adapter"
+  | "left out"
+  | "gone";
+interface UpdateLine {
+  name: string;
+  root: string;
+  status: UpdateStatus;
+  /** The line's parts after `<name> <root>: `, as printed. */
+  units: string[];
+  reason?: string;
+}
+interface UserLine {
+  runtime: RuntimeName;
+  status: "up to date" | "stale" | "unreadable";
+  reason?: string;
+}
+/** The count line's fixed order, which is not the precedence a project is counted by. */
+const UPDATE_ORDER: readonly UpdateStatus[] = [
+  "updated",
+  "would update",
+  "up to date",
+  "stale",
+  "refused",
+  "failed",
+  "other root",
+  "no adapter",
+  "left out",
+  "gone",
+];
+/** A project is counted once, in the first bucket its adapters reach. */
+const UPDATE_PRECEDENCE: readonly AdapterStatus[] = [
+  "failed",
+  "refused",
+  "stale",
+  "would update",
+  "updated",
+  "up to date",
+];
+const PROJECTS_USAGE = "usage: crew projects update [--dry-run] [--json]";
+
+/**
+ * `crew projects update [--dry-run] [--json]` (item 2026-11-08-002, AC-10, AC-12, AC-16): every
+ * registered project's own-root adapters refreshed from this engine's root under the project's
+ * own rules, each project's line printed as it finishes, the user scope checked once and never
+ * written (D-6), the count line, and one commit command per updated project. Exit 1 when a project
+ * ended refused or failed.
+ */
+function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Outcome {
+  if (args.length > 1 || parsed.flags.reason !== undefined || parsed.flags.remove !== undefined)
+    return refuse(PROJECTS_USAGE);
+  const dryRun = parsed.flags["dry-run"] === true;
+  const json = parsed.flags.json === true;
+  const engineRoot = canonical(pluginRoot());
+  const home = io.env.HOME ?? "";
+  const scratch = scratchFolders(io.env);
+  const entries = loadRegistry(env.paths.userDir)
+    .projects.filter((p) => p.worktreeOf === undefined)
+    .map((p) => ({ entry: p, root: canonical(p.root) }))
+    .sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+  const lines: UpdateLine[] = [];
+  const commits: { name: string; command: string }[] = [];
+  const emit = (line: UpdateLine) => {
+    lines.push(line);
+    // Each line as its project finishes, so a run killed at the release's bound leaves the reached ones.
+    if (!json) io.stdout(`${line.name} ${line.root}: ${line.units.join(", ")}\n`);
+  };
+  for (const { entry, root } of entries) {
+    const name = entry.name;
+    const out = registryLeftOut(entry.root, root, scratch);
+    if (out === "gone") {
+      emit({ name, root, status: "gone", units: ["gone"] });
+      continue;
+    }
+    if (out) {
+      emit({
+        name,
+        root,
+        status: "left out",
+        units: [`left out (${out.reason})`],
+        reason: out.reason,
+      });
+      continue;
+    }
+    const paths = pathsFor(root, env.paths.userDir);
+    if (registerTampered(paths)) {
+      const reason = "decisions.json changed outside the engine";
+      emit({ name, root, status: "left out", units: [`left out (${reason})`], reason });
+      continue;
+    }
+    try {
+      const refresh = refreshAdapters(paths, {
+        root: engineRoot,
+        version: VERSION,
+        home,
+        dryRun,
+        deadline: null,
+        resumed: false,
+        activeItem: activeWork(paths) !== null,
+        worktree: worktreeMainRoot(root) !== null,
+        live: Object.keys(liveSessions(paths)).length > 0,
+      });
+      const units = [
+        ...refresh.results.map((r) =>
+          r.status === "updated"
+            ? `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)`
+            : `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`,
+        ),
+        ...refresh.foreign.map((f) =>
+          f.why === "another root"
+            ? `${f.runtime} on another root (${quoted(f.root)})`
+            : f.why === "root unreadable"
+              ? `${f.runtime} root unreadable (${quoted(f.path)})`
+              : `${f.runtime} names ${quoted(f.root)} (${f.why})`,
+        ),
+      ];
+      const bucket =
+        UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ??
+        (refresh.foreign.length ? "other root" : "no adapter");
+      const allOk =
+        refresh.results.length > 0 &&
+        refresh.results.every((r) => r.status === "up to date") &&
+        refresh.foreign.length === 0;
+      emit({
+        name,
+        root,
+        status: bucket,
+        units: allOk ? ["up to date"] : units.length ? units : ["no adapter on this root"],
+      });
+      const command = commitCommand(refresh, { project: root, home });
+      if (command) commits.push({ name, command });
+    } catch (error) {
+      const reason = quoted((error as Error).message);
+      emit({ name, root, status: "failed", units: [`failed (${reason})`], reason });
+    }
+  }
+  // The user scope, once per run, read and never written (D-6).
+  const user: UserLine[] = [];
+  const userDirs = { project: home, home };
+  for (const runtimeName of RUNTIME_NAMES) {
+    if (runtimeName === "claude") continue;
+    const runtime = RUNTIMES[runtimeName];
+    try {
+      const text = readText(resolveScoped(runtime.config.user, userDirs));
+      if (text === null) continue;
+      const named = rootOf(text, runtime, "");
+      if (named === null || named === "" || !isAbsolute(named)) continue;
+      if (canonical(named) !== engineRoot) continue;
+      const checked = checkRuntime(runtime, "user", userDirs, engineRoot);
+      user.push({ runtime: runtimeName, status: checked.ok ? "up to date" : "stale" });
+    } catch (error) {
+      user.push({
+        runtime: runtimeName,
+        status: "unreadable",
+        reason: quoted((error as Error).message),
+      });
+    }
+  }
+  const userText = `user scope: ${
+    user.length
+      ? user
+          .map((u) =>
+            u.status === "up to date"
+              ? `${u.runtime} up to date`
+              : u.status === "stale"
+                ? `${u.runtime} stale: run crew runtime install ${u.runtime} --scope user with the crew of this root`
+                : `${u.runtime} unreadable (${u.reason})`,
+          )
+          .join(", ")
+      : "no adapter on this root"
+  }`;
+  const counts = Object.fromEntries(
+    UPDATE_ORDER.map((s) => [s, lines.filter((l) => l.status === s).length]),
+  ) as Record<UpdateStatus, number>;
+  const countLine = UPDATE_ORDER.map((s) => `${counts[s]} ${s}`).join(", ");
+  const code = counts.refused || counts.failed ? 1 : 0;
+  const data = { projects: lines, user, counts, commits };
+  if (json) return { code, text: countLine, stdout: true, data };
+  const text = [
+    userText,
+    countLine,
+    ...commits.map((c) => `commit in ${c.name}: ${c.command}`),
+  ].join("\n");
+  return { code, text, stdout: true, data };
 }
 
 /**
@@ -2134,7 +2340,7 @@ function projectsStandingE2eSkip(env: Env, parsed: Parsed, args: string[], io: C
   for (const { entry, root } of entries) {
     const line = (status: ProjectLine["status"], why?: string) =>
       lines.push({ name: entry.name, root, status, ...(why ? { reason: why } : {}) });
-    const out = projectLeftOut(entry.root, root, scratch);
+    const out = registryLeftOut(entry.root, root, scratch) ?? standingSkipLeftOut(entry.root);
     if (out === "gone") {
       line("gone");
       continue;
@@ -6626,7 +6832,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       });
     }
     case "projects":
-      return projectsStandingE2eSkip(env, parsed, args, io);
+      return args[0] === "update"
+        ? projectsUpdate(env, parsed, args, io)
+        : projectsStandingE2eSkip(env, parsed, args, io);
     case "workspace": {
       // The business priorities the user signs once (SP7 §10.2): their state, and the acceptance.
       if (args[0] === "priorities") {
@@ -6729,8 +6937,22 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const named = args[0] ? openWork(env, args[0]) : null;
       if (named && isOutcome(named)) return named;
       const active = named ?? activeWork(env.paths);
-      if (!active?.work) return ok("no active work item", { active: null });
-      return statusView(env, { work: active.work, tampered: active.tampered });
+      const outcome = active?.work
+        ? statusView(env, { work: active.work, tampered: active.tampered })
+        : ok("no active work item", { active: null });
+      // The checkout's last adapters entry (item 2026-11-08-002, AC-25): what the last refresh
+      // did or held back, readable in every runtime, OpenCode's included.
+      const last = lastEntryText(env.paths, "adapters");
+      if (last === null) return outcome;
+      const adapters = quotedText(
+        last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last,
+        200,
+      );
+      return {
+        ...outcome,
+        text: `${outcome.text}\nadapters: ${adapters}`,
+        data: { ...outcome.data, adapters },
+      };
     }
     case "mail":
       return mailCommand(env, parsed, args);
@@ -6860,6 +7082,7 @@ const HELP = `crew ${VERSION}
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   workspace status [--json]           every project of the workspace: live, open items, unread, open threads, unconfirmed priorities, environment (reads records, runs nothing)
   projects standingE2eSkip --reason "<why>" | --remove [--dry-run]   the person's standing e2e skip written into, or removed from, every registered project; --remove undoes it the same way (asks the user)
+  projects update [--dry-run] [--json]   refresh the runtime adapters of every registered project from this engine's root, one line per project; check the user scope, never write it (asks the user)
   workspace priorities [accept [--file <path>]]   the workspace's signed business priorities (accept asks the user)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)

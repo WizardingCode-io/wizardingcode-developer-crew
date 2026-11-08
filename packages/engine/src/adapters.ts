@@ -336,14 +336,19 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   };
   const lock = join(paths.localDir, "adapters");
   const lockOptions = { what: "adapter refresh", waitMs: LOCK_WAIT_MS };
-  const toInstall = own.filter((a) => isStale(a.first));
+  // A configuration the install would refuse (not JSON) is refused here, on the real run and the
+  // dry run alike, so the dry run predicts it and nothing is installed over it.
+  const toInstall = own.filter((a) => isStale(a.first) && !a.first.configRefused);
   for (const a of own)
-    if (!isStale(a.first))
+    if (a.first.configRefused) set(a, "refused", quoted(a.first.configRefused));
+    else if (!isStale(a.first))
       if (a.first.parts.events.state === "ok") set(a, "up to date");
       else set(a, "failed", quoted(a.first.problems[0] ?? "an event failed"));
   if (toInstall.length === 0) {
-    const failed = [...results.values()].some((r) => r.status === "failed");
-    if (!o.dryRun && !failed) {
+    const ended = [...results.values()].some(
+      (r) => r.status === "failed" || r.status === "refused",
+    );
+    if (!o.dryRun && !ended) {
       recordAdapterVersion(paths, o.root, o.version);
       refresh.recorded = true;
     } else if (!o.dryRun && !registerTampered(paths)) {

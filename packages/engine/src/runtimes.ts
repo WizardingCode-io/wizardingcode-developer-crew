@@ -1676,9 +1676,17 @@ export function checkRuntime(
   scope: Scope | null,
   dirs: InstallDirs,
   fallbackRoot: string,
-): { lines: string[]; ok: boolean; parts: CheckParts; problems: string[] } {
+): {
+  lines: string[];
+  ok: boolean;
+  parts: CheckParts;
+  problems: string[];
+  /** The refusal an install would give for the configuration file (not JSON), when it would. */
+  configRefused?: string;
+} {
   const lines: string[] = [];
   const problems: string[] = [];
+  let configRefused: string | undefined;
   const candidates: [Scope, string][] =
     runtime.name === "claude"
       ? [["project", join(fallbackRoot, "hooks", "hooks.json")]]
@@ -1721,6 +1729,7 @@ export function checkRuntime(
   let config: PartState = { state: "ok", differ: 0 };
   const wanted = configText(runtime, foundScope, dirs, root);
   if (wanted) {
+    if ("refused" in wanted) configRefused = wanted.refused;
     const line =
       "refused" in wanted
         ? `config: stale (${wanted.refused})`
@@ -1791,5 +1800,11 @@ export function checkRuntime(
   }
   lines.push(...guaranteeLines(runtime));
   if (runtime.trust) lines.push(`trust: ${runtime.trust}`);
-  return { lines, ok: problems.length === 0, parts: { config, skill, agents, events }, problems };
+  return {
+    lines,
+    ok: problems.length === 0,
+    parts: { config, skill, agents, events },
+    problems,
+    ...(configRefused ? { configRefused } : {}),
+  };
 }
