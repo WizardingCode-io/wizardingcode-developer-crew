@@ -10595,7 +10595,7 @@ import { homedir as homedir2 } from "node:os";
 import { basename as basename8, isAbsolute as isAbsolute4, join as join32, sep as sep4 } from "node:path";
 
 // packages/engine/src/version.ts
-var VERSION = "0.20.1";
+var VERSION = "0.21.0";
 
 // packages/engine/src/packs.ts
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
