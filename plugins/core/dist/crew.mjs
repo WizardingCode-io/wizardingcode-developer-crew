@@ -3997,7 +3997,7 @@ function listed(paths) {
   const shown = paths.slice(0, PATHS_NAMED).map(quoted).join(", ");
   return paths.length > PATHS_NAMED ? `${shown} and ${paths.length - PATHS_NAMED} more` : shown;
 }
-function linkProblem(own, paths, dirs) {
+function linkProblem(own, dirs) {
   for (const a of own) {
     const problem = adapterLinkProblem(a.runtime, dirs, a.root);
     if (problem)
@@ -4038,6 +4038,13 @@ function resultText(r) {
     return `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)`;
   return `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`;
 }
+function foreignText(f) {
+  if (f.why === "another root")
+    return `${f.runtime} on another root (${quoted(f.root)})`;
+  if (f.why === "root unreadable")
+    return `${f.runtime} root unreadable (${quoted(f.path)})`;
+  return `${f.runtime} names ${quoted(f.root)} (${f.why})`;
+}
 function adaptersEntryText(refresh, root) {
   const results = refresh.results.map(resultText).join(", ");
   return `adapters: ${results} (from ${refresh.from ?? "none"} to ${refresh.version} at ${quoted(root)})`;
@@ -4077,9 +4084,9 @@ function adaptersLine(refresh, extra = []) {
     if (f.why === "another root")
       continue;
     if (f.why === "root unreadable")
-      parts.push(`${f.runtime} root unreadable (${quoted(f.path)})`);
+      parts.push(foreignText(f));
     else
-      parts.push(`${f.runtime} names ${quoted(f.root)} (${f.why}): run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`);
+      parts.push(`${foreignText(f)}: run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`);
   }
   parts.push(...extra);
   if (!parts.length)
@@ -4208,11 +4215,13 @@ function refreshAdapters(paths, o) {
       } catch (error) {
         if (!(error instanceof LockBusy))
           throw error;
+        for (const a of notUpToDate())
+          set(a, "stale", "another session is updating");
       }
     }
     return finish();
   }
-  const problem = linkProblem(own, paths, dirs);
+  const problem = linkProblem(own, dirs);
   if (problem) {
     for (const a of own)
       set(a, "refused", problem);
@@ -4255,7 +4264,7 @@ function refreshAdapters(paths, o) {
         return false;
       });
       if (still.length) {
-        const again = linkProblem(own, paths, dirs);
+        const again = linkProblem(own, dirs);
         if (again)
           for (const a of own)
             set(a, "refused", again);
@@ -23438,10 +23447,7 @@ function projectsUpdate(env, parsed, args, io) {
         worktree: worktreeMainRoot(root) !== null,
         live: Object.keys(liveSessions(paths)).length > 0
       });
-      const units = [
-        ...refresh.results.map(resultText),
-        ...refresh.foreign.map((f) => f.why === "another root" ? `${f.runtime} on another root (${quoted(f.root)})` : f.why === "root unreadable" ? `${f.runtime} root unreadable (${quoted(f.path)})` : `${f.runtime} names ${quoted(f.root)} (${f.why})`)
-      ];
+      const units = [...refresh.results.map(resultText), ...refresh.foreign.map(foreignText)];
       const bucket = UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ?? (refresh.foreign.length ? "other root" : "no adapter");
       const allOk = refresh.results.length > 0 && refresh.results.every((r) => r.status === "up to date") && refresh.foreign.length === 0;
       emit({
@@ -23493,7 +23499,7 @@ function projectsUpdate(env, parsed, args, io) {
   const text = [
     userText,
     countLine,
-    ...commits.map((c) => `commit in ${c.name}: ${c.command}`)
+    ...commits.map((c) => `commit in ${quoted(c.name)}: ${c.command}`)
   ].join(`
 `);
   return { code, text, stdout: true, data };

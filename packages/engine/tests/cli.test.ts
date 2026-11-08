@@ -13398,22 +13398,47 @@ test("2026-11-08-002 AC-24 (crew runtime install): a leftover's name and a refus
   const scratch = tempDir("crew-scratch-");
   const env = { ...testEnv(), TMPDIR: scratch, HOME: tempDir("crew-home-") };
   const root = await adapterProject(env, ["copilot"]);
-  const hostile = join(root, ".github", "agents", "crew-\x1b[2Jgone.agent.md");
+  const agents = join(root, ".github", "agents");
+  const hostile = join(agents, "crew-\x1b[2Jgone.agent.md");
   writeFileSync(hostile, "gone\n");
   git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A");
   git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "leftover");
+  // An untracked leftover with the same kind of name is left, and named quoted too.
+  writeFileSync(join(agents, "crew-\x1b[2Jmine.agent.md"), "mine\n");
   const installed = await io(root, env).run("runtime", "install", "copilot");
   expect(installed.code, installed.err).toBe(0);
   expect(installed.out).not.toContain("\x1b");
   expect(installed.out).toContain("removed .github/agents/crew-[2Jgone.agent.md");
+  expect(installed.out).toContain("left .github/agents/crew-[2Jmine.agent.md");
   expect(existsSync(hostile)).toBe(false);
   // A refusal names a link the repository made, quoted the same way.
-  const references = join(root, ".agents", "skills", "crew-method", "references");
-  rmSync(references, { recursive: true });
-  symlinkSync(tempDir("crew-outside-"), references);
+  symlinkSync(join(tempDir("crew-outside-"), "x.md"), join(agents, "crew-\x1b[2Jlink.agent.md"));
   const refused = await io(root, env).run("runtime", "install", "copilot");
   expect(refused.code).toBe(1);
-  expect(refused.err).toContain(".agents/skills/crew-method/references is a symbolic link");
+  expect(refused.err).not.toContain("\x1b");
+  expect(refused.err).toContain(".github/agents/crew-[2Jlink.agent.md is a symbolic link");
+});
+
+test("2026-11-08-002 AC-10 (the judgement's test-quality advisory): a project that throws is failed, the next is still processed, and the user scope is read once", async () => {
+  const scratch = tempDir("crew-scratch-");
+  const env = { ...testEnv(), TMPDIR: scratch, HOME: tempDir("crew-home-") };
+  const A = await adapterProject(env, ["copilot"], { stale: true });
+  const B = await adapterProject(env, ["copilot"], { stale: true });
+  const [first, second] = [A, B].sort((x, y) => basename(x).localeCompare(basename(y))) as [
+    string,
+    string,
+  ];
+  // The first project's local folder is a file: its state and its lock throw under it.
+  rmSync(join(first, ".crew", "local"), { recursive: true, force: true });
+  writeFileSync(join(first, ".crew", "local"), "");
+  const run = await io(second, env).run("projects", "update");
+  expect(run.code).toBe(1);
+  expect(run.out).toContain(`${basename(first)} ${first}: failed (`);
+  expect(run.out).toContain(`${basename(second)} ${second}: copilot updated (`);
+  expect(run.out.split("\n").filter((l) => l.startsWith("user scope: "))).toHaveLength(1);
+  expect(run.out).toContain(
+    "1 updated, 0 would update, 0 up to date, 0 stale, 0 refused, 1 failed, ",
+  );
 });
 
 test("2026-11-08-002 AC-16: the fleet's register entry", async () => {

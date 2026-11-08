@@ -776,3 +776,26 @@ test("2026-11-08-002 AC-21 (under the lock): the deadline is checked before each
   expect(refresh.recorded).toBe(false);
   expect(loadState(two.paths).adapters).toBeUndefined();
 });
+
+test("2026-11-08-002 AC-11 (the judgement's code-quality advisory): a refused adapter with nothing to install says the busy lock as the other paths do", () => {
+  const f = fixture([RUNTIMES.copilot], { stale: false });
+  const config = join(f.project, RUNTIMES.copilot.config.project);
+  writeFileSync(config, readFileSync(config, "utf8").trimEnd().replace(/\}$/, ""));
+  git(f.project, "add", "-A");
+  git(f.project, "commit", "-q", "-m", "broken config");
+  const held: { refresh: Refresh | null } = { refresh: null };
+  withLock(
+    join(f.paths.localDir, "adapters"),
+    () => {
+      held.refresh = refreshAdapters(f.paths, options(f));
+    },
+    { what: "the test's hold" },
+  );
+  if (!held.refresh) throw new Error("no refresh");
+  expect(result(held.refresh, "copilot")).toMatchObject({
+    status: "stale",
+    why: "another session is updating",
+  });
+  expect(held.refresh.appended).toBe(false);
+  expect(register(f.paths)).toHaveLength(0);
+});

@@ -1127,7 +1127,7 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
   });
   expect(killed.code).toBe(0);
   expect(killed.notify).toContain(
-    "projects: not updated (killed by SIGTERM; 2 project lines printed)",
+    "projects: cut at the bound (killed by SIGTERM after 2 project lines; the rest not updated)",
   );
   // Status 0 and no output at all: done.
   const silent = await answers({ status: 0, exit: 0, stdout: "", stderr: "" });

@@ -125,7 +125,7 @@ function listed(paths: string[]): string {
 }
 
 /** The first link problem of any own-root adapter's paths, since they all write the shared skill folder. */
-function linkProblem(own: Own[], paths: CrewPaths, dirs: InstallDirs): string | null {
+function linkProblem(own: Own[], dirs: InstallDirs): string | null {
   for (const a of own) {
     const problem = adapterLinkProblem(a.runtime, dirs, a.root);
     if (problem) return quoted(problem);
@@ -169,6 +169,13 @@ export function resultText(r: AdapterResult): string {
   if (r.status === "updated")
     return `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)`;
   return `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`;
+}
+
+/** One foreign adapter as every output names it: the runtime, the root (or the file) it names, and why it is not this engine's. */
+export function foreignText(f: ForeignAdapter): string {
+  if (f.why === "another root") return `${f.runtime} on another root (${quoted(f.root)})`;
+  if (f.why === "root unreadable") return `${f.runtime} root unreadable (${quoted(f.path)})`;
+  return `${f.runtime} names ${quoted(f.root)} (${f.why})`;
 }
 
 /** The register's text of a refresh: each adapter's result, and the versions and root it moved between. */
@@ -215,10 +222,10 @@ export function adaptersLine(refresh: Refresh, extra: string[] = []): string | n
   }
   for (const f of refresh.foreign) {
     if (f.why === "another root") continue;
-    if (f.why === "root unreadable") parts.push(`${f.runtime} root unreadable (${quoted(f.path)})`);
+    if (f.why === "root unreadable") parts.push(foreignText(f));
     else
       parts.push(
-        `${f.runtime} names ${quoted(f.root)} (${f.why}): run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`,
+        `${foreignText(f)}: run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`,
       );
   }
   parts.push(...extra);
@@ -362,19 +369,20 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     for (const a of notUpToDate()) set(a, "stale", heldBack);
     return finish();
   }
-  // Nothing to install, but a refusal or a failure to record.
+  // Nothing to install, but a refusal or a failure to record; a busy lock is said as at step 5.
   if (toInstall.length === 0) {
     if (!o.dryRun) {
       try {
         withLock(lock, writeEntry, lockOptions);
       } catch (error) {
         if (!(error instanceof LockBusy)) throw error;
+        for (const a of notUpToDate()) set(a, "stale", "another session is updating");
       }
     }
     return finish();
   }
   // 5: a link or a path outside the project refuses every own-root adapter.
-  const problem = linkProblem(own, paths, dirs);
+  const problem = linkProblem(own, dirs);
   if (problem) {
     for (const a of own) set(a, "refused", problem);
     if (!o.dryRun) {
@@ -415,7 +423,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
           return false;
         });
         if (still.length) {
-          const again = linkProblem(own, paths, dirs);
+          const again = linkProblem(own, dirs);
           if (again) for (const a of own) set(a, "refused", again);
           else {
             const heldNow = gitHoldBack(own, paths, dirs);

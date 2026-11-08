@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   type AdapterStatus,
   commitCommand,
+  foreignText,
   quoted,
   refreshAdapters,
   resultText,
@@ -2239,16 +2240,7 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
         worktree: worktreeMainRoot(root) !== null,
         live: Object.keys(liveSessions(paths)).length > 0,
       });
-      const units = [
-        ...refresh.results.map(resultText),
-        ...refresh.foreign.map((f) =>
-          f.why === "another root"
-            ? `${f.runtime} on another root (${quoted(f.root)})`
-            : f.why === "root unreadable"
-              ? `${f.runtime} root unreadable (${quoted(f.path)})`
-              : `${f.runtime} names ${quoted(f.root)} (${f.why})`,
-        ),
-      ];
+      const units = [...refresh.results.map(resultText), ...refresh.foreign.map(foreignText)];
       const bucket =
         UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ??
         (refresh.foreign.length ? "other root" : "no adapter");
@@ -2314,7 +2306,7 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
   const text = [
     userText,
     countLine,
-    ...commits.map((c) => `commit in ${c.name}: ${c.command}`),
+    ...commits.map((c) => `commit in ${quoted(c.name)}: ${c.command}`),
   ].join("\n");
   return { code, text, stdout: true, data };
 }

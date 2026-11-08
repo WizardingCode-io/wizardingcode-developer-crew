@@ -716,7 +716,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           .split("\n")
           .filter((l) => l.trim() !== "").length;
         if (r.signal)
-          projectCounts = `not updated (killed by ${r.signal}; ${printed} project lines printed)`;
+          projectCounts = `cut at the bound (killed by ${r.signal} after ${printed} project lines; the rest not updated)`;
         else if (count) projectCounts = r.status === 0 ? count : `${count} (exit ${r.status})`;
         else if (r.status === 0) projectCounts = "done";
         else {
