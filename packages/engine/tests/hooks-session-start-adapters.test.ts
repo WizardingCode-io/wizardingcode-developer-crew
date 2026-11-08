@@ -1,0 +1,284 @@
+import { expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { listDecisions } from "../src/decisions.ts";
+import { adapterDeadline, onSessionStart } from "../src/hooks/session-start.ts";
+import { onStop } from "../src/hooks/stop.ts";
+import type { HookResponse } from "../src/hooks/types.ts";
+import { canonical } from "../src/paths.ts";
+import { ensureProfile } from "../src/profile.ts";
+import {
+  installRuntime,
+  pluginRoot,
+  RUNTIME_NAMES,
+  RUNTIMES,
+  type Runtime,
+} from "../src/runtimes.ts";
+import { loadState, updateState } from "../src/state.ts";
+import { VERSION } from "../src/version.ts";
+import { git, hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+
+// Item 2026-11-08-002, Task 4: SessionStart refreshes the adapters before its baseline (AC-17, AC-4, AC-5, AC-21, AC-27, AC-11's SessionStart cases).
+
+const FIXTURES = fileURLToPath(new URL("./fixtures/", import.meta.url));
+/** The engine's own root under the sources: `plugins/core`, as the hook installs from it. */
+const engineRoot = canonical(pluginRoot());
+
+const context = (response: HookResponse) =>
+  (response.hookSpecificOutput as { additionalContext: string }).additionalContext;
+
+/**
+ * A repository with `.crew/` and the given runtimes installed from `plugins/core` and committed;
+ * `stale` edits one skill file (and the configuration when `staleConfig`) and commits again.
+ */
+function fixture(
+  runtimes: Runtime[],
+  options: { stale?: boolean; staleConfig?: boolean; parent?: string } = {},
+) {
+  const root = makeRepo({
+    "README.md": "# test\n",
+    ".crew/.gitignore": "local/\nwork/*/logs/\nwork/*/review/ui/\nworktrees/\n",
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+  });
+  const project = options.parent ? join(options.parent, "project") : root;
+  if (options.parent) {
+    mkdirSync(options.parent, { recursive: true });
+    // Move the repository under the parent so every path the hook sees carries its name.
+    renameSync(root, project);
+  }
+  git(project, "config", "user.email", "crew@test.invalid");
+  git(project, "config", "user.name", "Crew Test");
+  const env = testEnv();
+  // The engine's own profile, as a first crew command would write it.
+  ensureProfile(repoPaths(project, env));
+  const dirs = { project, home: env.HOME ?? "" };
+  for (const runtime of runtimes) {
+    const done = installRuntime(runtime, "project", dirs, engineRoot);
+    if ("refused" in done) throw new Error(done.refused);
+  }
+  git(project, "add", "-A");
+  git(project, "commit", "-q", "-m", "adapters");
+  if (options.stale !== false) {
+    write(project, ".agents/skills/crew-method/SKILL.md", "# stale\n");
+    if (options.staleConfig)
+      for (const runtime of runtimes) {
+        const config = join(project, runtime.config.project);
+        writeFileSync(
+          config,
+          readFileSync(config, "utf8").replace(/"timeout(Sec)?": ?\d+/, '"timeout$1": 1'),
+        );
+      }
+    git(project, "add", "-A");
+    git(project, "commit", "-q", "-m", "stale");
+  }
+  return { project, env, paths: repoPaths(project, env) };
+}
+
+function hashesBelow(dir: string, base = dir): Record<string, string> {
+  if (!existsSync(dir)) return {};
+  const out: Record<string, string> = {};
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name);
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) Object.assign(out, hashesBelow(path, base));
+    else if (stat.isFile())
+      out[path.slice(base.length + 1)] = createHash("sha256")
+        .update(readFileSync(path))
+        .digest("hex");
+  }
+  return out;
+}
+const adapterFiles = (project: string) => ({
+  ...hashesBelow(join(project, ".agents")),
+  ...hashesBelow(join(project, ".github")),
+});
+const start = (
+  f: { project: string; env: NodeJS.ProcessEnv },
+  sessionId = "s",
+  source = "startup",
+) => onSessionStart(hookContext({ session_id: sessionId, cwd: f.project }, f.env), { source });
+
+test("2026-11-08-002 AC-17: the recorded version reads nothing; any other version checks", () => {
+  const same = fixture([RUNTIMES.copilot]);
+  updateState(same.paths, (state) => {
+    state.adapters = { [engineRoot]: VERSION };
+  });
+  const before = adapterFiles(same.project);
+  const text = context(start(same));
+  expect(text).not.toContain("adapters:");
+  expect(adapterFiles(same.project)).toEqual(before);
+  for (const recorded of ["99.0.0", "0.0.1"]) {
+    const other = fixture([RUNTIMES.copilot]);
+    updateState(other.paths, (state) => {
+      state.adapters = { [engineRoot]: recorded };
+    });
+    expect(context(start(other)), recorded).toContain("adapters: copilot updated (");
+    expect(loadState(other.paths).adapters?.[engineRoot], recorded).toBe(VERSION);
+  }
+});
+
+test("2026-11-08-002 AC-4: a new version refreshes before the baseline", () => {
+  const f = fixture([RUNTIMES.copilot], { staleConfig: true });
+  const text = context(start(f));
+  const engineLine = `Engine: crew ${VERSION}.`;
+  const after = text.slice(text.indexOf(engineLine) + engineLine.length);
+  expect(after.trimStart().startsWith("adapters: copilot updated (")).toBe(true);
+  expect(text).toContain("Commit: git add -A -- ");
+  expect(text).toContain(`git commit -m 'adapters refreshed by crew ${VERSION}'`);
+  expect(loadState(f.paths).adapters?.[engineRoot]).toBe(VERSION);
+  const stop = onStop(hookContext({ session_id: "s", cwd: f.project }, f.env)) as {
+    decision?: string;
+  };
+  expect(stop.decision).toBeUndefined();
+  expect(listDecisions(f.paths).filter((d) => d.kind === "adapters")).toHaveLength(1);
+  // Dedupe: a refusal that stands is written once.
+  const broken = fixture([RUNTIMES.copilot], { stale: false });
+  const config = join(broken.project, ".github", "hooks", "crew.json");
+  writeFileSync(config, readFileSync(config, "utf8").trimEnd().replace(/\}$/, ""));
+  write(broken.project, ".agents/skills/crew-method/SKILL.md", "# stale\n");
+  git(broken.project, "add", "-A");
+  git(broken.project, "commit", "-q", "-m", "broken config");
+  expect(context(start(broken))).toContain("copilot refused");
+  expect(context(start(broken))).toContain("copilot refused");
+  expect(listDecisions(broken.paths).filter((d) => d.kind === "adapters")).toHaveLength(1);
+});
+
+test("2026-11-08-002 AC-11 (SessionStart): another live session and a resumed start hold the write", () => {
+  const live = fixture([RUNTIMES.copilot], { staleConfig: true });
+  updateState(live.paths, (state) => {
+    state.sessions.other = { baseline: null, stopBlocks: 0, seenAt: new Date().toISOString() };
+  });
+  const before = adapterFiles(live.project);
+  expect(context(start(live))).toContain("copilot stale (a session is live)");
+  expect(adapterFiles(live.project)).toEqual(before);
+  expect(loadState(live.paths).adapters).toBeUndefined();
+  // A resumed start keeps its earlier baseline, so it writes nothing.
+  const resumed = fixture([RUNTIMES.copilot], { stale: false });
+  start(resumed);
+  expect(loadState(resumed.paths).adapters?.[engineRoot]).toBe(VERSION);
+  write(resumed.project, ".agents/skills/crew-method/SKILL.md", "# stale\n");
+  const config = join(resumed.project, ".github", "hooks", "crew.json");
+  writeFileSync(
+    config,
+    readFileSync(config, "utf8").replace(/"timeoutSec": ?\d+/, '"timeoutSec": 1'),
+  );
+  git(resumed.project, "add", "-A");
+  git(resumed.project, "commit", "-q", "-m", "stale");
+  updateState(resumed.paths, (state) => {
+    state.adapters = { [engineRoot]: "0.0.1" };
+  });
+  const resumedBefore = adapterFiles(resumed.project);
+  expect(context(start(resumed, "s", "resume"))).toContain("copilot stale (a resumed session)");
+  expect(adapterFiles(resumed.project)).toEqual(resumedBefore);
+  expect(loadState(resumed.paths).adapters?.[engineRoot]).toBe("0.0.1");
+});
+
+test("2026-11-08-002 AC-5: a throw in the adapter step keeps the start", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  mkdirSync(f.paths.localDir, { recursive: true });
+  writeFileSync(join(f.paths.localDir, "adapters"), "a file where the lock folder goes\n");
+  const text = context(start(f));
+  expect(text).toContain(`Engine: crew ${VERSION}.`);
+  expect(text).toContain("adapters: not checked (");
+  expect(loadState(f.paths).sessions.s?.baseline).not.toBeNull();
+  // The hostile path (AC-24's SessionStart case): the thrown message carries it, cleaned.
+  const parent = join(tempDir("crew-evil-"), "evil\n\x1b[2J");
+  const hostile = fixture([RUNTIMES.copilot], { parent });
+  mkdirSync(hostile.paths.localDir, { recursive: true });
+  writeFileSync(join(hostile.paths.localDir, "adapters"), "a file\n");
+  const hostileText = context(start(hostile));
+  const line = hostileText.slice(hostileText.indexOf("adapters: not checked ("));
+  const message = line.slice("adapters: not checked (".length, line.indexOf(")."));
+  expect(line).not.toContain("\n");
+  expect(line).not.toContain("\x1b");
+  expect(message.length).toBeLessThanOrEqual(200);
+});
+
+test("2026-11-08-002 AC-21: the time budget keeps the context", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  adapterDeadline.ms = -1;
+  try {
+    const text = context(start(f));
+    expect(text).toContain(`Engine: crew ${VERSION}.`);
+    expect(text).toContain("copilot stale (time budget)");
+    expect(loadState(f.paths).adapters).toBeUndefined();
+    expect(loadState(f.paths).sessions.s?.baseline).not.toBeNull();
+  } finally {
+    adapterDeadline.ms = 8000;
+  }
+});
+
+test("2026-11-08-002 AC-27: no baseline while a refresh writes", () => {
+  const f = fixture([RUNTIMES.copilot], { staleConfig: true });
+  updateState(f.paths, (state) => {
+    state.sessions.other = { baseline: null, stopBlocks: 0, seenAt: new Date().toISOString() };
+  });
+  const config = join(f.project, ".github", "hooks", "crew.json");
+  const hold = (ms: string, text: string) => {
+    const marker = join(tempDir("crew-marker-"), "held");
+    const holder = Bun.spawn(
+      [
+        "bun",
+        join(FIXTURES, "hold-adapters-lock.ts"),
+        join(f.paths.localDir, "adapters"),
+        marker,
+        ms,
+        config,
+        text,
+      ],
+      { stdout: "ignore", stderr: "inherit" },
+    );
+    const until = Date.now() + 5000;
+    while (!existsSync(marker) && Date.now() < until) Bun.sleepSync(20);
+    if (!existsSync(marker)) throw new Error("the holder never took the lock");
+    return holder;
+  };
+  const written = `${readFileSync(config, "utf8")}\n`;
+  const holder = hold("1000", written);
+  try {
+    const began = Date.now();
+    const text = context(start(f));
+    expect(Date.now() - began).toBeGreaterThanOrEqual(900);
+    expect(text).toContain("copilot stale (a session is live)");
+    expect(readFileSync(config, "utf8")).toBe(written);
+    const stop = onStop(hookContext({ session_id: "s", cwd: f.project }, f.env)) as {
+      decision?: string;
+    };
+    expect(stop.decision).toBeUndefined();
+  } finally {
+    holder.kill();
+  }
+  // The wait outruns the deadline: the line says so and the baseline is taken anyway.
+  const slow = hold("3000", `${written}\n`);
+  adapterDeadline.ms = 1000;
+  try {
+    const began = Date.now();
+    const text = context(start(f, "t"));
+    expect(Date.now() - began).toBeLessThan(2500);
+    expect(text).toContain("another session is updating");
+    expect(loadState(f.paths).sessions.t?.baseline).not.toBeNull();
+  } finally {
+    adapterDeadline.ms = 8000;
+    slow.kill();
+  }
+});
+
+test("2026-11-08-002 timing: the adapter step with the five runtimes installed", () => {
+  const runtimes = RUNTIME_NAMES.filter((n) => n !== "claude").map((n) => RUNTIMES[n]);
+  const f = fixture(runtimes);
+  const began = Date.now();
+  const text = context(start(f));
+  const ms = Date.now() - began;
+  expect(text).toContain("adapters: ");
+  if (process.env.CREW_TIMING === "1") console.log(`adapter step with five runtimes: ${ms} ms`);
+});

@@ -1,4 +1,6 @@
-import { appendDecision, listDecisions } from "../decisions.ts";
+import { join } from "node:path";
+import { adaptersLine, refreshAdapters } from "../adapters.ts";
+import { appendDecision, lastEntryText } from "../decisions.ts";
 import {
   DEFAULT_WATCH_EXCLUDE,
   isFormerWatchDefault,
@@ -7,17 +9,30 @@ import {
 import { baseCommitOf, changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
+import { LockBusy, withLock } from "../lock.ts";
 import { emptyInboxSummary, inboxSummary, subjectQuoted } from "../mail.ts";
 import { discoverPacks } from "../packs.ts";
+import { canonical } from "../paths.ts";
 import { refreshProfile, saveProfile } from "../profile.ts";
-import { ensureCrewDir, loadState, updateSession } from "../state.ts";
+import { quotedText } from "../quote.ts";
+import { pluginRoot } from "../runtimes.ts";
+import { ensureCrewDir, liveSessions, loadState, updateSession } from "../state.ts";
 import { VERSION } from "../version.ts";
 import { activeWork } from "../work.ts";
+import { worktreeMainRoot } from "../worktree.ts";
 import { mailQuietly, neighbourLine, refreshMail, sweepLines } from "./context.ts";
 import { packCounts, statusLine } from "./prompt.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
+/**
+ * How long the adapter step may run, from entry to `onSessionStart`, inside the hook's 15 s bound
+ * (item 2026-11-08-002, AC-21): an install not begun by then is left stale, and the baseline wait
+ * gives up by then too. A property, so a test can shorten it.
+ */
+export const adapterDeadline = { ms: 8000 };
+
 export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): HookResponse {
+  const start = Date.now();
   ensureCrewDir(ctx.paths, ctx.policy);
   // The project is known to the mail from its first moment; what the sync marks as seen is what
   // the prompt hook will not repeat (SP2c §6; plan decision 3). A mailbox this run cannot use
@@ -45,7 +60,7 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     const discovered = discoverPacks(ctx.paths.userDir, ctx.env);
     const text = `pack discovery: ${discovered.join("; ")}`;
     // The register is read only when the discovery has something to say (finding 111).
-    if (discovered.length && text !== listDecisions(ctx.paths).find((d) => d.kind === "pack")?.text)
+    if (discovered.length && text !== lastEntryText(ctx.paths, "pack"))
       appendDecision(ctx.paths, {
         at: nowIso(),
         item: "pack",
@@ -65,6 +80,49 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   const continues =
     (payload.source === "resume" || payload.source === "compact") &&
     loadState(ctx.paths).sessions[ctx.sessionId] !== undefined;
+  // The runtime adapters of this checkout (item 2026-11-08-002): refreshed from this engine's root
+  // when the recorded version differs, before the baseline is taken, so the session's own Stop
+  // never counts the files the refresh wrote; then the wait for the adapters lock, so no baseline
+  // is taken while another session's or the fleet's refresh writes (AC-27). Fenced: a throw costs
+  // the line, never the context.
+  let adaptersText: string | null = null;
+  try {
+    const deadline = start + adapterDeadline.ms;
+    const engineRoot = canonical(pluginRoot());
+    const dirs = { project: ctx.paths.root, home: ctx.env.HOME ?? "" };
+    const recorded = loadState(ctx.paths).adapters?.[engineRoot];
+    const refresh =
+      recorded === VERSION
+        ? null
+        : refreshAdapters(ctx.paths, {
+            root: engineRoot,
+            version: VERSION,
+            home: dirs.home,
+            dryRun: false,
+            deadline,
+            resumed: continues,
+            activeItem: active !== null,
+            worktree: worktreeMainRoot(ctx.paths.root) !== null,
+            live: Object.keys(liveSessions(ctx.paths)).some((id) => id !== ctx.sessionId),
+          });
+    let busy = false;
+    try {
+      withLock(join(ctx.paths.localDir, "adapters"), () => {}, {
+        what: "adapter refresh",
+        waitMs: Math.max(0, deadline - Date.now()),
+      });
+    } catch (error) {
+      if (!(error instanceof LockBusy)) throw error;
+      busy = true;
+    }
+    adaptersText = refresh
+      ? adaptersLine(refresh, engineRoot, dirs, busy ? ["another session is updating"] : [])
+      : busy
+        ? "adapters: another session is updating."
+        : null;
+  } catch (error) {
+    adaptersText = `adapters: not checked (${quotedText((error as Error).message, 200)}).`;
+  }
   if (!continues) {
     const work = active?.work ?? null;
     // Unproven changes left by an earlier session are not this session's starting point: with no
@@ -101,6 +159,8 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     "Every text you write, your ending too, follows the skill's references/writing.md: no filler or inflation, every fact and scope limit kept, a missing source marked [source?], never invented or dropped.",
     // The engine that runs, so a stale plugin shows at the start, not in the cache (finding 66).
     `Engine: crew ${VERSION}.`,
+    // What the refresh of the runtime adapters did, when it did or held back anything (item 2026-11-08-002).
+    ...(adaptersText ? [adaptersText] : []),
   ];
   if (active?.work)
     lines.push(

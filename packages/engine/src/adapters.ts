@@ -202,7 +202,12 @@ export function commitCommand(refresh: Refresh, _dirs: InstallDirs): string | nu
  * then once each the note that an update applies from the runtime's next session, the commit
  * command, and the hold-back suffixes that tell the person what ends the hold-back.
  */
-export function adaptersLine(refresh: Refresh, root: string, dirs: InstallDirs): string | null {
+export function adaptersLine(
+  refresh: Refresh,
+  root: string,
+  dirs: InstallDirs,
+  extra: string[] = [],
+): string | null {
   const parts: string[] = [];
   for (const r of refresh.results) {
     if (r.status === "up to date") continue;
@@ -220,6 +225,7 @@ export function adaptersLine(refresh: Refresh, root: string, dirs: InstallDirs):
         `${f.runtime} names ${quoted(f.root)} (${f.why}): run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`,
       );
   }
+  parts.push(...extra);
   if (!parts.length) return null;
   let line = `adapters: ${parts.join("; ")}`;
   if (refresh.results.some((r) => r.status === "updated"))
