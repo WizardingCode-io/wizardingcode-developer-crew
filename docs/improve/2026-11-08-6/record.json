@@ -1,0 +1,339 @@
+{
+  "run": "2026-11-08-6",
+  "at": "2026-11-08T18:00:06.501Z",
+  "targets": [
+    "spec-resolve-rules",
+    "spec-review-planted"
+  ],
+  "baseline": {
+    "spec-resolve-rules": {
+      "name": "spec-resolve-rules",
+      "runs": [
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "contest-with-evidence",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "contest-with-evidence",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 0.888888888888889,
+      "spread": 0.16666666666666663,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.5071689000000001
+    },
+    "spec-review-planted": {
+      "name": "spec-review-planted",
+      "runs": [
+        {
+          "score": 0.8461538461538461,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "no-reimplementation-on-comprehension",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "paraphrase-kept",
+              "explanation": "judge votes: FAIL FAIL FAIL — note: long file (28993 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+          ]
+        },
+        {
+          "score": 0.9230769230769231,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "paraphrase-kept",
+              "explanation": "judge votes: FAIL FAIL FAIL — note: long file (29432 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+          ]
+        },
+        {
+          "score": 0.9230769230769231,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "paraphrase-kept",
+              "explanation": "judge votes: FAIL FAIL FAIL — note: long file (28999 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+          ]
+        }
+      ],
+      "mean": 0.8974358974358975,
+      "spread": 0.07692307692307698,
+      "reads": [
+        "plugins/core/skills/crew/references/writing.md",
+        "plugins/core/skills/crew/rubrics/spec-feature.md",
+        "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+        "plugins/core/skills/crew/rubrics/spec-readiness.md",
+        "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+        "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+      ],
+      "errored": false,
+      "costUsd": 3.5342172
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/agents/goldfish-comprehension.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/agents/goldfish-comprehension.md`, its frontmatter description and the first sentence of its \"Review mode\" section. Of the three failing graders, two cannot be reached from the editable folders for the right reason. `paraphrase-kept` of `spec-review-planted` wants the comprehension reviewer's paraphrase in the written report, but since finding 227 (today's commit e03cac3, the user's D-3) a round has stages 5, 7 and 9 only: `STAGES` in `spec-review.ts` lists no `goldfish-comprehension`, the `record` case in `cli.ts` iterates only the due stage's own reviewers, so a comprehension answer can never enter the record, `round.paraphrase` is never set and the consolidated report never prints \"What a new reader understood\". That grader is stale against the engine and belongs with the grader, not the harness; a lead pasting a paraphrase into `review-report.md` by hand would pass for the wrong reason and break the skill's \"never write a reviewer's answer\" rule. `contest-with-evidence` of `spec-resolve-rules` loses one run in three, every record shows `reads: []`, and the governing page (`wizardingcode-spec-resolve/SKILL.md`) is outside my folders; the 2026-11-01-5 edit to writing.md for the same grader gained nothing. The one reachable grader is `no-reimplementation-on-comprehension`, which fails in a single run with three votes, the shape of a lead that launched `goldfish-comprehension` on its own inside stage 9 with the readiness and re-implementation rubrics, because the agent's description still said \"Launched by the crew's spec-review\". The description now says it is launched by the spec-brainstorm as a lens and that no stage of the spec review launches it, since a round has stages 5, 7 and 9 and the record takes only a stage's own reviewers; the review-mode opener adds that a standard named in its prompt is not its to apply, that the readiness and re-implementation standards belong to stage 9's reviewers, and tha",
+      "probeSet": [
+        "spec-resolve-rules",
+        "spec-review-planted"
+      ],
+      "probe": {
+        "spec-resolve-rules": {
+          "name": "spec-resolve-rules",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "contest-with-evidence",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.9444444444444445,
+          "spread": 0.16666666666666663,
+          "reads": [],
+          "errored": false,
+          "costUsd": 0.5174975
+        },
+        "spec-review-planted": {
+          "name": "spec-review-planted",
+          "runs": [
+            {
+              "score": 0.9230769230769231,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "paraphrase-kept",
+                  "explanation": "judge votes: FAIL FAIL FAIL — note: long file (30127 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.9230769230769231,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "paraphrase-kept",
+                  "explanation": "judge votes: FAIL FAIL FAIL — note: long file (8762 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.9230769230769231,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "paraphrase-kept",
+                  "explanation": "judge votes: FAIL FAIL FAIL — note: long file (26975 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.923076923076923,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 3.7426065999999993
+        }
+      },
+      "verdict": "win",
+      "gain": 0.08119658119658113
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/agents/goldfish-comprehension.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/agents/goldfish-comprehension.md`, its description and the opening sentence of its \"Review mode\" section. Of the three failing graders, only `no-reimplementation-on-comprehension` of `spec-review-planted` is reachable from the editable folders and movable for the right reason. It passes whenever the comprehension reviewer is not launched, and since finding 227 (commit e03cac3) no review stage launches it: `STAGES` in the engine lists stages 5, 7 and 9 with zoom-out, the three critics, and readiness plus codebase, and the `crew spec-review check` line names only those. The one run in three that lost it is therefore a lead that launched comprehension on its own inside stage 9 and handed it `rubrics/spec-readiness.md` and `rubrics/spec-reimplementation.md`, and the trigger is the agent listing, where the page's description said \"Launched by the crew's spec-review\". The description now says it is launched by the spec-brainstorm as one of its six lenses, that no review stage launches it, and that it never takes the readiness or re-implementation standard; the review-mode opener adds that a standard named in the prompt anyway is left unapplied and said so under \"Not answerable\", because a missing file list, test list or code-level contract is the readiness stage's finding and never a new reader's. Every string the agents test pins on the page is intact. `paraphrase-kept` is stale: the record takes only a stage's own reviewers and `renderSpecReview` prints \"What a new reader understood\" only from a paraphrase that can no longer be recorded, so a lead pasting one into `review-report.md` would pass for the wrong reason, and I edited nothing for it. `contest-with-evidence` of `spec-resolve-rules` is unreachable: every recorded run of that case, including the 2026-11-01-5 probe of a writing.md edit that lost, shows `reads: []`, and the rule it wants (contest with a file and a symbol) lives in `wizardingcode-spec-resolv",
+      "probeSet": [
+        "spec-resolve-rules",
+        "spec-review-planted"
+      ],
+      "probe": {
+        "spec-resolve-rules": {
+          "name": "spec-resolve-rules",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 0.5367101999999999
+        },
+        "spec-review-planted": {
+          "name": "spec-review-planted",
+          "runs": [
+            {
+              "score": 0.8461538461538461,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "no-reimplementation-on-comprehension",
+                  "explanation": "judge votes: PASS FAIL FAIL"
+                },
+                {
+                  "grader": "paraphrase-kept",
+                  "explanation": "judge votes: FAIL FAIL FAIL — note: long file (26375 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8461538461538461,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "no-reimplementation-on-comprehension",
+                  "explanation": "judge votes: FAIL PASS FAIL"
+                },
+                {
+                  "grader": "paraphrase-kept",
+                  "explanation": "judge votes: FAIL FAIL FAIL — note: long file (31479 chars); llm judges are noisy on long inputs, prefer a regex grader for large artifacts"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.9230769230769231,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "paraphrase-kept",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.8717948717948718,
+          "spread": 0.07692307692307698,
+          "reads": [],
+          "errored": false,
+          "costUsd": 3.7441143000000006
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.08547008547008539
+    }
+  ],
+  "composition": null,
+  "kept": {
+    "kind": "single",
+    "id": "P-1"
+  },
+  "branch": "improve/2026-11-08-6",
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 17.50643395,
+  "lessons": [
+    "K-320",
+    "K-321"
+  ],
+  "exit": 0,
+  "unmeasured": []
+}
