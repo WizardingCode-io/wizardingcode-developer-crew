@@ -127,7 +127,7 @@ function listed(paths: string[]): string {
 /** The first link problem of any own-root adapter's paths, since they all write the shared skill folder. */
 function linkProblem(own: Own[], paths: CrewPaths, dirs: InstallDirs): string | null {
   for (const a of own) {
-    const problem = adapterLinkProblem(paths.root, a.runtime, dirs, a.root);
+    const problem = adapterLinkProblem(a.runtime, dirs, a.root);
     if (problem) return quoted(problem);
   }
   return null;
@@ -164,11 +164,16 @@ function gitHoldBack(own: Own[], paths: CrewPaths, dirs: InstallDirs): string | 
   return null;
 }
 
+/** One adapter's result as every output states it: `<runtime> updated (<n> differed, <n> removed)`, or `<runtime> <status> (<why>)`. */
+export function resultText(r: AdapterResult): string {
+  if (r.status === "updated")
+    return `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)`;
+  return `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`;
+}
+
 /** The register's text of a refresh: each adapter's result, and the versions and root it moved between. */
 export function adaptersEntryText(refresh: Refresh, root: string): string {
-  const results = refresh.results
-    .map((r) => `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`)
-    .join(", ");
+  const results = refresh.results.map(resultText).join(", ");
   return `adapters: ${results} (from ${refresh.from ?? "none"} to ${refresh.version} at ${quoted(root)})`;
 }
 
@@ -178,7 +183,7 @@ export function adaptersEntryText(refresh: Refresh, root: string): string {
  * single-quoted; `-A` with the pathspecs stages the prune's deletions too; `-m` so it runs with no
  * editor. Null when nothing was updated.
  */
-export function commitCommand(refresh: Refresh, _dirs: InstallDirs): string | null {
+export function commitCommand(refresh: Refresh): string | null {
   const updated = refresh.results.filter((r) => r.status === "updated");
   if (!updated.length) return null;
   const paths: string[] = [];
@@ -202,20 +207,11 @@ export function commitCommand(refresh: Refresh, _dirs: InstallDirs): string | nu
  * then once each the note that an update applies from the runtime's next session, the commit
  * command, and the hold-back suffixes that tell the person what ends the hold-back.
  */
-export function adaptersLine(
-  refresh: Refresh,
-  root: string,
-  dirs: InstallDirs,
-  extra: string[] = [],
-): string | null {
+export function adaptersLine(refresh: Refresh, extra: string[] = []): string | null {
   const parts: string[] = [];
   for (const r of refresh.results) {
     if (r.status === "up to date") continue;
-    if (r.status === "updated")
-      parts.push(
-        `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)${r.trust ? ` (${r.trust})` : ""}`,
-      );
-    else parts.push(`${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`);
+    parts.push(`${resultText(r)}${r.status === "updated" && r.trust ? ` (${r.trust})` : ""}`);
   }
   for (const f of refresh.foreign) {
     if (f.why === "another root") continue;
@@ -230,7 +226,7 @@ export function adaptersLine(
   let line = `adapters: ${parts.join("; ")}`;
   if (refresh.results.some((r) => r.status === "updated"))
     line += "; applies from each updated runtime's next session";
-  const commit = commitCommand(refresh, dirs);
+  const commit = commitCommand(refresh);
   if (commit) line += `. Commit: ${commit}`;
   const whys = refresh.results.map((r) => r.why ?? "");
   if (whys.includes("an item is active"))
@@ -240,7 +236,6 @@ export function adaptersLine(
   const never = refresh.results.find((r) => r.why?.startsWith("not committed"));
   if (never)
     line += `; commit them to adopt the adapter, or run crew runtime install ${never.runtime} again`;
-  void root;
   return `${line}.`;
 }
 
@@ -282,13 +277,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
       foreign(named, "root gone");
       continue;
     }
-    let c: string;
-    try {
-      c = canonical(named);
-    } catch {
-      foreign(named, "root gone");
-      continue;
-    }
+    const c = canonical(named);
     if (c !== o.root) {
       const cached = PLUGIN_CACHE_VERSION.exec(c);
       foreign(
@@ -318,11 +307,8 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     return refresh;
   };
   const writeEntry = () => {
-    const ended = [...results.values()].some((r) =>
-      ["updated", "refused", "failed"].includes(r.status),
-    );
+    const ended = finish().results.some((r) => ["updated", "refused", "failed"].includes(r.status));
     if (!ended) return;
-    refresh.results = own.map((a) => results.get(a.runtime.name) as AdapterResult);
     const text = adaptersEntryText(refresh, o.root);
     if (text === lastEntryText(paths, "adapters")) return;
     appendDecision(paths, {
@@ -337,31 +323,29 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   const lock = join(paths.localDir, "adapters");
   const lockOptions = { what: "adapter refresh", waitMs: LOCK_WAIT_MS };
   // A configuration the install would refuse (not JSON) is refused here, on the real run and the
-  // dry run alike, so the dry run predicts it and nothing is installed over it.
-  const toInstall = own.filter((a) => isStale(a.first) && !a.first.configRefused);
+  // dry run alike, so the dry run predicts it and nothing is installed over it; an adapter whose
+  // event fails is failed with the event's line, and nothing is installed for it.
   for (const a of own)
     if (a.first.configRefused) set(a, "refused", quoted(a.first.configRefused));
-    else if (!isStale(a.first))
-      if (a.first.parts.events.state === "ok") set(a, "up to date");
-      else set(a, "failed", quoted(a.first.problems[0] ?? "an event failed"));
-  if (toInstall.length === 0) {
-    const ended = [...results.values()].some(
-      (r) => r.status === "failed" || r.status === "refused",
-    );
-    if (!o.dryRun && !ended) {
+    else if (a.first.parts.events.state !== "ok")
+      set(
+        a,
+        "failed",
+        quoted(a.first.problems.find((p) => p.includes(" failed (")) ?? "an event failed"),
+      );
+    else if (!isStale(a.first)) set(a, "up to date");
+  const toInstall = own.filter((a) => !results.has(a.runtime.name));
+  const notUpToDate = () => own.filter((a) => results.get(a.runtime.name)?.status !== "up to date");
+  if (notUpToDate().length === 0) {
+    if (!o.dryRun) {
       recordAdapterVersion(paths, o.root, o.version);
       refresh.recorded = true;
-    } else if (!o.dryRun && !registerTampered(paths)) {
-      try {
-        withLock(lock, writeEntry, lockOptions);
-      } catch (error) {
-        if (!(error instanceof LockBusy)) throw error;
-      }
     }
     return finish();
   }
+  // 4: held back, nothing written, not even the entry of a refused or failed adapter; every
+  // adapter that is not up to date says the reason.
   const watched = changesWatched(toInstall);
-  // 4: held back, nothing written.
   const heldBack =
     o.resumed && watched
       ? "a resumed session"
@@ -375,7 +359,18 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
               ? "decisions.json changed outside the engine"
               : null;
   if (heldBack) {
-    for (const a of toInstall) set(a, "stale", heldBack);
+    for (const a of notUpToDate()) set(a, "stale", heldBack);
+    return finish();
+  }
+  // Nothing to install, but a refusal or a failure to record.
+  if (toInstall.length === 0) {
+    if (!o.dryRun) {
+      try {
+        withLock(lock, writeEntry, lockOptions);
+      } catch (error) {
+        if (!(error instanceof LockBusy)) throw error;
+      }
+    }
     return finish();
   }
   // 5: a link or a path outside the project refuses every own-root adapter.

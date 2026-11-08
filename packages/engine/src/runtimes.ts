@@ -1286,11 +1286,11 @@ function configText(
  * root, which is not checked itself, so a project reached through a link installs. Null when none.
  */
 export function adapterLinkProblem(
-  base: string,
   runtime: Runtime,
   dirs: InstallDirs,
   root: string,
 ): string | null {
+  const base = dirs.project;
   const paths = new Set<string>([resolveScoped(runtime.config.project, dirs)]);
   const skillTarget = join(resolveScoped(runtime.skillsDir.project, dirs), SKILL_FOLDER);
   paths.add(skillTarget);
@@ -1404,7 +1404,7 @@ export function installRuntime(
   const config = configText(runtime, scope, dirs, root);
   if (config && "refused" in config) return { refused: config.refused };
   if (scope === "project") {
-    const problem = adapterLinkProblem(dirs.project, runtime, dirs, root);
+    const problem = adapterLinkProblem(runtime, dirs, root);
     if (problem)
       return { refused: `${problem}: nothing is written through a link or outside the project` };
   }

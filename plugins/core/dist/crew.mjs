@@ -3328,7 +3328,8 @@ function configText(runtime, scope, dirs, root) {
   return { path, text: `${JSON.stringify(value, null, 2)}
 `, value };
 }
-function adapterLinkProblem(base, runtime, dirs, root) {
+function adapterLinkProblem(runtime, dirs, root) {
+  const base = dirs.project;
   const paths = new Set([resolveScoped(runtime.config.project, dirs)]);
   const skillTarget = join7(resolveScoped(runtime.skillsDir.project, dirs), SKILL_FOLDER);
   paths.add(skillTarget);
@@ -3415,7 +3416,7 @@ function installRuntime(runtime, scope, dirs, root) {
   if (config && "refused" in config)
     return { refused: config.refused };
   if (scope === "project") {
-    const problem = adapterLinkProblem(dirs.project, runtime, dirs, root);
+    const problem = adapterLinkProblem(runtime, dirs, root);
     if (problem)
       return { refused: `${problem}: nothing is written through a link or outside the project` };
   }
@@ -3998,7 +3999,7 @@ function listed(paths) {
 }
 function linkProblem(own, paths, dirs) {
   for (const a of own) {
-    const problem = adapterLinkProblem(paths.root, a.runtime, dirs, a.root);
+    const problem = adapterLinkProblem(a.runtime, dirs, a.root);
     if (problem)
       return quoted(problem);
   }
@@ -4032,11 +4033,16 @@ function gitHoldBack(own, paths, dirs) {
     return `files git ignores in ${listed(ignored)}`;
   return null;
 }
+function resultText(r) {
+  if (r.status === "updated")
+    return `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)`;
+  return `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`;
+}
 function adaptersEntryText(refresh, root) {
-  const results = refresh.results.map((r) => `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`).join(", ");
+  const results = refresh.results.map(resultText).join(", ");
   return `adapters: ${results} (from ${refresh.from ?? "none"} to ${refresh.version} at ${quoted(root)})`;
 }
-function commitCommand(refresh, _dirs) {
+function commitCommand(refresh) {
   const updated = refresh.results.filter((r) => r.status === "updated");
   if (!updated.length)
     return null;
@@ -4060,15 +4066,12 @@ function commitCommand(refresh, _dirs) {
   const q = (p) => `'${p.replace(/'/g, "'\\''")}'`;
   return `git add -A -- ${paths.map(q).join(" ")} && git commit -m 'adapters refreshed by crew ${refresh.version}'`;
 }
-function adaptersLine(refresh, root, dirs, extra = []) {
+function adaptersLine(refresh, extra = []) {
   const parts = [];
   for (const r of refresh.results) {
     if (r.status === "up to date")
       continue;
-    if (r.status === "updated")
-      parts.push(`${r.runtime} updated (${r.differed} differed, ${r.removed} removed)${r.trust ? ` (${r.trust})` : ""}`);
-    else
-      parts.push(`${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`);
+    parts.push(`${resultText(r)}${r.status === "updated" && r.trust ? ` (${r.trust})` : ""}`);
   }
   for (const f of refresh.foreign) {
     if (f.why === "another root")
@@ -4084,7 +4087,7 @@ function adaptersLine(refresh, root, dirs, extra = []) {
   let line = `adapters: ${parts.join("; ")}`;
   if (refresh.results.some((r) => r.status === "updated"))
     line += "; applies from each updated runtime's next session";
-  const commit = commitCommand(refresh, dirs);
+  const commit = commitCommand(refresh);
   if (commit)
     line += `. Commit: ${commit}`;
   const whys = refresh.results.map((r) => r.why ?? "");
@@ -4135,13 +4138,7 @@ function refreshAdapters(paths, o) {
       foreign(named, "root gone");
       continue;
     }
-    let c;
-    try {
-      c = canonical(named);
-    } catch {
-      foreign(named, "root gone");
-      continue;
-    }
+    const c = canonical(named);
     if (c !== o.root) {
       const cached = PLUGIN_CACHE_VERSION.exec(c);
       foreign(named, cached?.[1] && compareVersions(cached[1], o.version) < 0 ? "older plugin folder" : "another root");
@@ -4164,10 +4161,9 @@ function refreshAdapters(paths, o) {
     return refresh;
   };
   const writeEntry = () => {
-    const ended = [...results.values()].some((r) => ["updated", "refused", "failed"].includes(r.status));
+    const ended = finish().results.some((r) => ["updated", "refused", "failed"].includes(r.status));
     if (!ended)
       return;
-    refresh.results = own.map((a) => results.get(a.runtime.name));
     const text = adaptersEntryText(refresh, o.root);
     if (text === lastEntryText(paths, "adapters"))
       return;
@@ -4182,21 +4178,31 @@ function refreshAdapters(paths, o) {
   };
   const lock = join9(paths.localDir, "adapters");
   const lockOptions = { what: "adapter refresh", waitMs: LOCK_WAIT_MS2 };
-  const toInstall = own.filter((a) => isStale(a.first) && !a.first.configRefused);
   for (const a of own)
     if (a.first.configRefused)
       set(a, "refused", quoted(a.first.configRefused));
+    else if (a.first.parts.events.state !== "ok")
+      set(a, "failed", quoted(a.first.problems.find((p) => p.includes(" failed (")) ?? "an event failed"));
     else if (!isStale(a.first))
-      if (a.first.parts.events.state === "ok")
-        set(a, "up to date");
-      else
-        set(a, "failed", quoted(a.first.problems[0] ?? "an event failed"));
-  if (toInstall.length === 0) {
-    const ended = [...results.values()].some((r) => r.status === "failed" || r.status === "refused");
-    if (!o.dryRun && !ended) {
+      set(a, "up to date");
+  const toInstall = own.filter((a) => !results.has(a.runtime.name));
+  const notUpToDate = () => own.filter((a) => results.get(a.runtime.name)?.status !== "up to date");
+  if (notUpToDate().length === 0) {
+    if (!o.dryRun) {
       recordAdapterVersion(paths, o.root, o.version);
       refresh.recorded = true;
-    } else if (!o.dryRun && !registerTampered(paths)) {
+    }
+    return finish();
+  }
+  const watched = changesWatched(toInstall);
+  const heldBack = o.resumed && watched ? "a resumed session" : o.activeItem ? "an item is active" : o.worktree ? "a task worktree" : o.live && watched ? "a session is live" : registerTampered(paths) ? "decisions.json changed outside the engine" : null;
+  if (heldBack) {
+    for (const a of notUpToDate())
+      set(a, "stale", heldBack);
+    return finish();
+  }
+  if (toInstall.length === 0) {
+    if (!o.dryRun) {
       try {
         withLock(lock, writeEntry, lockOptions);
       } catch (error) {
@@ -4204,13 +4210,6 @@ function refreshAdapters(paths, o) {
           throw error;
       }
     }
-    return finish();
-  }
-  const watched = changesWatched(toInstall);
-  const heldBack = o.resumed && watched ? "a resumed session" : o.activeItem ? "an item is active" : o.worktree ? "a task worktree" : o.live && watched ? "a session is live" : registerTampered(paths) ? "decisions.json changed outside the engine" : null;
-  if (heldBack) {
-    for (const a of toInstall)
-      set(a, "stale", heldBack);
     return finish();
   }
   const problem = linkProblem(own, paths, dirs);
@@ -18803,7 +18802,7 @@ function userOnlyDecision(command, permissionMode, headless, policy, line) {
     if (policyCommand && verb === "projects" && (second === "standingE2eSkip" || second === "update"))
       return [
         "deny",
-        `Crew: no person is watching this session (${where}) and crew projects ${second} writes into every registered project: run it in a session a person watches`
+        `Crew: no person is watching this session (${where}) and crew projects ${second} writes ${second === "update" ? "the adapters" : "the person's decision"} into every registered project: run it in a session a person watches`
       ];
     if (policyCommand)
       return [
@@ -20366,12 +20365,11 @@ function onSessionStart(ctx, payload = {}) {
   try {
     const deadline = start + adapterDeadline.ms;
     const engineRoot = canonical(pluginRoot());
-    const dirs = { project: ctx.paths.root, home: ctx.env.HOME ?? "" };
     const recorded = loadState(ctx.paths).adapters?.[engineRoot];
     const refresh = recorded === VERSION ? null : refreshAdapters(ctx.paths, {
       root: engineRoot,
       version: VERSION,
-      home: dirs.home,
+      home: ctx.env.HOME ?? "",
       dryRun: false,
       deadline,
       resumed: continues,
@@ -20390,9 +20388,9 @@ function onSessionStart(ctx, payload = {}) {
         throw error;
       busy = true;
     }
-    adaptersText = refresh ? adaptersLine(refresh, engineRoot, dirs, busy ? ["another session is updating"] : []) : busy ? "adapters: another session is updating." : null;
+    adaptersText = refresh ? adaptersLine(refresh, busy ? ["another session is updating"] : []) : busy ? "adapters: another session is updating." : null;
   } catch (error) {
-    adaptersText = `adapters: not checked (${quotedText(error.message, 200)}).`;
+    adaptersText = `adapters: not checked (${quoted(error.message)}).`;
   }
   if (!continues) {
     const work = active?.work ?? null;
@@ -23364,6 +23362,9 @@ function standingSkipLeftOut(raw) {
     return { reason: "no profile yet" };
   return null;
 }
+function registeredProjects(userDir) {
+  return loadRegistry(userDir).projects.filter((p) => p.worktreeOf === undefined).map((p) => ({ entry: p, root: canonical(p.root) })).sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+}
 var UPDATE_ORDER = [
   "updated",
   "would update",
@@ -23393,13 +23394,13 @@ function projectsUpdate(env, parsed, args, io) {
   const engineRoot = canonical(pluginRoot());
   const home = io.env.HOME ?? "";
   const scratch = scratchFolders(io.env);
-  const entries = loadRegistry(env.paths.userDir).projects.filter((p) => p.worktreeOf === undefined).map((p) => ({ entry: p, root: canonical(p.root) })).sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+  const entries = registeredProjects(env.paths.userDir);
   const lines = [];
   const commits = [];
   const emit = (line) => {
     lines.push(line);
     if (!json)
-      io.stdout(`${line.name} ${line.root}: ${line.units.join(", ")}
+      io.stdout(`${quoted(line.name)} ${quoted(line.root)}: ${line.units.join(", ")}
 `);
   };
   for (const { entry, root } of entries) {
@@ -23438,7 +23439,7 @@ function projectsUpdate(env, parsed, args, io) {
         live: Object.keys(liveSessions(paths)).length > 0
       });
       const units = [
-        ...refresh.results.map((r) => r.status === "updated" ? `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)` : `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`),
+        ...refresh.results.map(resultText),
         ...refresh.foreign.map((f) => f.why === "another root" ? `${f.runtime} on another root (${quoted(f.root)})` : f.why === "root unreadable" ? `${f.runtime} root unreadable (${quoted(f.path)})` : `${f.runtime} names ${quoted(f.root)} (${f.why})`)
       ];
       const bucket = UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ?? (refresh.foreign.length ? "other root" : "no adapter");
@@ -23449,7 +23450,7 @@ function projectsUpdate(env, parsed, args, io) {
         status: bucket,
         units: allOk ? ["up to date"] : units.length ? units : ["no adapter on this root"]
       });
-      const command = commitCommand(refresh, { project: root, home });
+      const command = commitCommand(refresh);
       if (command)
         commits.push({ name, command });
     } catch (error) {
@@ -23486,7 +23487,7 @@ function projectsUpdate(env, parsed, args, io) {
   const counts = Object.fromEntries(UPDATE_ORDER.map((s) => [s, lines.filter((l) => l.status === s).length]));
   const countLine = UPDATE_ORDER.map((s) => `${counts[s]} ${s}`).join(", ");
   const code = counts.refused || counts.failed ? 1 : 0;
-  const data = { projects: lines, user, counts, commits };
+  const data = { projects: lines, user, counts };
   if (json)
     return { code, text: countLine, stdout: true, data };
   const text = [
@@ -23509,7 +23510,7 @@ function projectsStandingE2eSkip(env, parsed, args, io) {
     return refuse(`a standing e2e skip needs the person's reason (--reason "<their words>")`);
   const dryRun = parsed.flags["dry-run"] === true;
   const scratch = scratchFolders(io.env);
-  const entries = loadRegistry(env.paths.userDir).projects.filter((p) => p.worktreeOf === undefined).map((p) => ({ entry: p, root: canonical(p.root) })).sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+  const entries = registeredProjects(env.paths.userDir);
   const lines = [];
   const touched = [];
   for (const { entry, root } of entries) {
@@ -26756,8 +26757,8 @@ ${drafted.lesson}`, "lesson")[0];
           return refuse("claude is installed as a plugin (claude plugin install wizardingcode-developer-crew@wizardingcode-plugins)");
         const done = installRuntime(runtime, scope ?? "project", dirs, root);
         if ("refused" in done)
-          return refuse(done.refused);
-        const shown = (p) => p.startsWith(`${env.paths.root}/`) ? p.slice(env.paths.root.length + 1) : p;
+          return refuse(quoted(done.refused));
+        const shown = (p) => quoted(p.startsWith(`${env.paths.root}/`) ? p.slice(env.paths.root.length + 1) : p);
         const lines = [
           ...done.files,
           ...done.removed.map((p) => `removed ${shown(p)}`),
@@ -27155,7 +27156,7 @@ ${lines.join(`
       const last = lastEntryText(env.paths, "adapters");
       if (last === null)
         return outcome;
-      const adapters = quotedText(last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last, 200);
+      const adapters = quoted(last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last);
       return {
         ...outcome,
         text: `${outcome.text}

@@ -188,7 +188,7 @@ test("2026-11-08-002 AC-2: a stale own-root adapter is installed again and recor
   expect(refresh.foreign).toContainEqual(
     expect.objectContaining({ runtime: "gemini", why: "older plugin folder" }),
   );
-  const line = adaptersLine(refresh, root, f.dirs) ?? "";
+  const line = adaptersLine(refresh) ?? "";
   expect(line).toContain("copilot updated (1 differed, 0 removed)");
   expect(line).toContain(`cursor names ${gone} (root gone)`);
   expect(line).toContain("gemini names ");
@@ -211,7 +211,7 @@ test("2026-11-08-002 AC-2: a stale own-root adapter is installed again and recor
   expect(otherRefresh.foreign).toContainEqual(
     expect.objectContaining({ runtime: "cursor", why: "another root" }),
   );
-  expect(adaptersLine(otherRefresh, other.root, other.dirs)).toBeNull();
+  expect(adaptersLine(otherRefresh)).toBeNull();
   // An OpenCode plugin file whose root cannot be decoded: reported, and the others go on.
   const broken = fixture([RUNTIMES.copilot]);
   write(broken.project, ".opencode/plugins/wizardingcode-crew.js", 'const ROOT = "\\q";\n');
@@ -222,10 +222,7 @@ test("2026-11-08-002 AC-2: a stale own-root adapter is installed again and recor
   expect(brokenRefresh.foreign).toContainEqual(
     expect.objectContaining({ runtime: "opencode", why: "root unreadable" }),
   );
-  expect(adaptersLine(brokenRefresh, broken.root, broken.dirs)).toContain(
-    "opencode root unreadable (",
-  );
-  expect(compareVersions("0.10.0", "0.9.9")).toBe(1);
+  expect(adaptersLine(brokenRefresh)).toContain("opencode root unreadable (");
   // A configuration that names the running root through a link keeps its text: the install is
   // given the root as the configuration names it.
   const linked = fixture([], { root });
@@ -434,7 +431,7 @@ test("2026-11-08-002 AC-22: the printed commit command leaves the next start cle
   const refresh = refreshAdapters(f.paths, options(f));
   expect(result(refresh, "copilot")).toMatchObject({ status: "updated", removed: 1 });
   expect(existsSync(join(f.project, ".github", "agents", "crew-retired.agent.md"))).toBe(false);
-  const command = commitCommand(refresh, f.dirs);
+  const command = commitCommand(refresh);
   expect(command).toContain("&& git commit -m 'adapters refreshed by crew 0.21.0'");
   expect(command).toContain("'.crew/decisions.json'");
   execFileSync("sh", ["-c", command ?? ""], { cwd: f.project, stdio: "ignore" });
@@ -590,7 +587,7 @@ test("2026-11-08-002 AC-24: a root, a path and a message with control characters
   git(hostile.project, "add", "-A");
   git(hostile.project, "commit", "-q", "-m", "hostile roots");
   const refresh = refreshAdapters(hostile.paths, options(hostile));
-  const line = adaptersLine(refresh, hostile.root, hostile.dirs) ?? "";
+  const line = adaptersLine(refresh) ?? "";
   const entry = adaptersEntryText(refresh, hostile.root);
   for (const text of [line, entry]) {
     expect(text).not.toContain("\n");
@@ -612,7 +609,7 @@ test("2026-11-08-002 AC-24: a root, a path and a message with control characters
   expect(why).toContain(".agents/skills/crew-method/evil");
   expect(why).not.toContain("\n");
   expect(why).not.toContain("\x1b");
-  expect(adaptersLine(untracked, named.root, named.dirs)).not.toContain("\x1b");
+  expect(adaptersLine(untracked)).not.toContain("\x1b");
   expect(adaptersEntryText(untracked, named.root)).not.toContain("\n");
   git(named.project, "add", "-A");
   git(named.project, "commit", "-q", "-m", "an evil name");
@@ -685,4 +682,97 @@ test("2026-11-08-002 the lock the refresh takes is the adapters lock of the chec
     { what: "the test's hold" },
   );
   expect(seenBusy).toBe(true);
+});
+
+test("2026-11-08-002 AC-2 (the versions): compareVersions orders by number, not by text", () => {
+  expect(compareVersions("0.10.0", "0.9.9")).toBe(1);
+  expect(compareVersions("0.9.9", "0.10.0")).toBe(-1);
+  expect(compareVersions("1.0.0", "1.0.0")).toBe(0);
+});
+
+test("2026-11-08-002 AC-2 (the judgement's test-quality return): an install that writes nothing leaves the adapter failed and the version unrecorded", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  const refresh = refreshAdapters(
+    f.paths,
+    options(f, {
+      install: () => ({ files: [], removed: [], left: [], configWritten: false, trust: null }),
+    }),
+  );
+  expect(result(refresh, "copilot")?.status).toBe("failed");
+  expect(result(refresh, "copilot")?.why).toContain("skill: stale");
+  expect(refresh.recorded).toBe(false);
+  expect(loadState(f.paths).adapters).toBeUndefined();
+  expect(refresh.appended).toBe(true);
+});
+
+test("2026-11-08-002 AC-11 (the judgement's architecture return): a refused adapter with nothing to install is held back too, and no entry is written", () => {
+  const breakConfig = (f: Fixture) => {
+    const config = join(f.project, RUNTIMES.copilot.config.project);
+    writeFileSync(config, readFileSync(config, "utf8").trimEnd().replace(/\}$/, ""));
+    git(f.project, "add", "-A");
+    git(f.project, "commit", "-q", "-m", "broken config");
+  };
+  for (const [extra, why] of [
+    [{ worktree: true }, "a task worktree"],
+    [{ activeItem: true }, "an item is active"],
+  ] as const) {
+    const f = fixture([RUNTIMES.copilot], { stale: false });
+    breakConfig(f);
+    const before = hashesBelow(f.project);
+    const refresh = refreshAdapters(f.paths, options(f, extra));
+    expect(result(refresh, "copilot"), why).toMatchObject({ status: "stale", why });
+    expect(hashesBelow(f.project), why).toEqual(before);
+    expect(refresh.appended, why).toBe(false);
+    expect(register(f.paths), why).toHaveLength(0);
+  }
+  // Not held back: refused, and the entry says so.
+  const open = fixture([RUNTIMES.copilot], { stale: false });
+  breakConfig(open);
+  const refresh = refreshAdapters(open.paths, options(open));
+  expect(result(refresh, "copilot")?.status).toBe("refused");
+  expect(refresh.appended).toBe(true);
+  expect(register(open.paths)[0]?.text).toContain("copilot refused (");
+});
+
+test("2026-11-08-002 AC-3 (the judgement's architecture advisory): an adapter whose event fails is failed, and nothing is installed for it", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  const copilot = RUNTIMES.copilot;
+  const writeResponse = copilot.writeResponse;
+  copilot.writeResponse = () => {
+    throw new Error("the translation broke");
+  };
+  let installs = 0;
+  try {
+    const refresh = refreshAdapters(
+      f.paths,
+      options(f, {
+        install: (...args) => {
+          installs++;
+          return installRuntime(...args);
+        },
+      }),
+    );
+    expect(result(refresh, "copilot")?.status).toBe("failed");
+    expect(result(refresh, "copilot")?.why).toContain("failed (the translation broke)");
+    expect(installs).toBe(0);
+    expect(refresh.recorded).toBe(false);
+    expect(refresh.appended).toBe(true);
+  } finally {
+    copilot.writeResponse = writeResponse;
+  }
+});
+
+test("2026-11-08-002 AC-21 (under the lock): the deadline is checked before each install", () => {
+  const two = fixture([RUNTIMES.copilot, RUNTIMES.codex]);
+  const opts = options(two, { deadline: Date.now() + 60_000 });
+  opts.install = (...args) => {
+    // The first install uses the budget up: the next adapter is not installed.
+    opts.deadline = Date.now() - 1;
+    return installRuntime(...args);
+  };
+  const refresh = refreshAdapters(two.paths, opts);
+  const statuses = refresh.results.map((r) => `${r.status}${r.why ? ` (${r.why})` : ""}`).sort();
+  expect(statuses).toEqual(["stale (time budget)", "updated"]);
+  expect(refresh.recorded).toBe(false);
+  expect(loadState(two.paths).adapters).toBeUndefined();
 });

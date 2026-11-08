@@ -1346,6 +1346,22 @@ test("2026-11-08-002 AC-18: the install writes the configuration last and prunes
   expect(existsSync(join(agents, "mine.agent.md"))).toBe(true);
   expect(done.left).not.toContain(join(agents, "mine.agent.md"));
   expect(readFileSync(join(agents, "crew-edited.agent.md"), "utf8")).toBe("edited twice\n");
+  // Under crew-method/ too: a tracked leftover edited since its commit, and one git ignores, are
+  // left; the agent leftovers, committed since, go.
+  const references = join(project, ".agents", "skills", "crew-method", "references");
+  write(project, ".agents/skills/crew-method/references/edited.md", "edited\n");
+  write(project, ".gitignore", "*.scratch\n");
+  git(project, "add", "-A");
+  git(project, "commit", "-q", "-m", "more leftovers");
+  write(project, ".agents/skills/crew-method/references/edited.md", "edited twice\n");
+  write(project, ".agents/skills/crew-method/references/notes.scratch", "scratch\n");
+  const more = installRuntime(copilot, "project", dirs, root);
+  if ("refused" in more) throw new Error(more.refused);
+  expect([...more.removed].sort()).toEqual([...left].sort());
+  expect([...more.left].sort()).toEqual(
+    [join(references, "edited.md"), join(references, "notes.scratch")].sort(),
+  );
+  expect(readFileSync(join(references, "edited.md"), "utf8")).toBe("edited twice\n");
   // Outside a git repository the same leftovers are all left.
   const plain = { project: tempDir("crew-plain-"), home: tempDir("crew-home-") };
   expect("files" in installRuntime(copilot, "project", plain, root)).toBe(true);

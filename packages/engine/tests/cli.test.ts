@@ -13394,6 +13394,28 @@ test("2026-11-08-002 AC-25: crew status prints the last adapters entry", async (
   expect((JSON.parse(json.out) as { adapters: string }).adapters).toBe("copilot refused (second)");
 });
 
+test("2026-11-08-002 AC-24 (crew runtime install): a leftover's name and a refusal reach the output quoted", async () => {
+  const scratch = tempDir("crew-scratch-");
+  const env = { ...testEnv(), TMPDIR: scratch, HOME: tempDir("crew-home-") };
+  const root = await adapterProject(env, ["copilot"]);
+  const hostile = join(root, ".github", "agents", "crew-\x1b[2Jgone.agent.md");
+  writeFileSync(hostile, "gone\n");
+  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A");
+  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "leftover");
+  const installed = await io(root, env).run("runtime", "install", "copilot");
+  expect(installed.code, installed.err).toBe(0);
+  expect(installed.out).not.toContain("\x1b");
+  expect(installed.out).toContain("removed .github/agents/crew-[2Jgone.agent.md");
+  expect(existsSync(hostile)).toBe(false);
+  // A refusal names a link the repository made, quoted the same way.
+  const references = join(root, ".agents", "skills", "crew-method", "references");
+  rmSync(references, { recursive: true });
+  symlinkSync(tempDir("crew-outside-"), references);
+  const refused = await io(root, env).run("runtime", "install", "copilot");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(".agents/skills/crew-method/references is a symbolic link");
+});
+
 test("2026-11-08-002 AC-16: the fleet's register entry", async () => {
   const scratch = tempDir("crew-scratch-");
   const env = { ...testEnv(), TMPDIR: scratch, HOME: tempDir("crew-home-") };

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { adaptersLine, refreshAdapters } from "../adapters.ts";
+import { adaptersLine, quoted, refreshAdapters } from "../adapters.ts";
 import { appendDecision, lastEntryText } from "../decisions.ts";
 import {
   DEFAULT_WATCH_EXCLUDE,
@@ -14,7 +14,6 @@ import { emptyInboxSummary, inboxSummary, subjectQuoted } from "../mail.ts";
 import { discoverPacks } from "../packs.ts";
 import { canonical } from "../paths.ts";
 import { refreshProfile, saveProfile } from "../profile.ts";
-import { quotedText } from "../quote.ts";
 import { pluginRoot } from "../runtimes.ts";
 import { ensureCrewDir, liveSessions, loadState, updateSession } from "../state.ts";
 import { VERSION } from "../version.ts";
@@ -89,7 +88,6 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   try {
     const deadline = start + adapterDeadline.ms;
     const engineRoot = canonical(pluginRoot());
-    const dirs = { project: ctx.paths.root, home: ctx.env.HOME ?? "" };
     const recorded = loadState(ctx.paths).adapters?.[engineRoot];
     const refresh =
       recorded === VERSION
@@ -97,7 +95,7 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
         : refreshAdapters(ctx.paths, {
             root: engineRoot,
             version: VERSION,
-            home: dirs.home,
+            home: ctx.env.HOME ?? "",
             dryRun: false,
             deadline,
             resumed: continues,
@@ -116,12 +114,12 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       busy = true;
     }
     adaptersText = refresh
-      ? adaptersLine(refresh, engineRoot, dirs, busy ? ["another session is updating"] : [])
+      ? adaptersLine(refresh, busy ? ["another session is updating"] : [])
       : busy
         ? "adapters: another session is updating."
         : null;
   } catch (error) {
-    adaptersText = `adapters: not checked (${quotedText((error as Error).message, 200)}).`;
+    adaptersText = `adapters: not checked (${quoted((error as Error).message)}).`;
   }
   if (!continues) {
     const work = active?.work ?? null;

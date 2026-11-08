@@ -1147,7 +1147,7 @@ function userOnlyDecision(
     )
       return [
         "deny",
-        `Crew: no person is watching this session (${where}) and crew projects ${second} writes into every registered project: run it in a session a person watches`,
+        `Crew: no person is watching this session (${where}) and crew projects ${second} writes ${second === "update" ? "the adapters" : "the person's decision"} into every registered project: run it in a session a person watches`,
       ];
     if (policyCommand)
       return [

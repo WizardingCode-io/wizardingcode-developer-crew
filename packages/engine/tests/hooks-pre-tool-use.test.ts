@@ -4961,7 +4961,7 @@ test("2026-11-04-001 AC-42: crew projects standingE2eSkip is a policy command: a
     const denied = bash(write, mode);
     expect(decision(denied)).toBe("deny");
     expect(JSON.stringify(denied)).toContain(
-      "crew projects standingE2eSkip writes into every registered project: run it in a session a person watches",
+      "crew projects standingE2eSkip writes the person's decision into every registered project: run it in a session a person watches",
     );
   }
   expect(decision(bash("crew projects $X", "default"))).toBe("ask");
@@ -4981,7 +4981,7 @@ test("2026-11-08-002 AC-15: crew projects update is asked, its dry run free", ()
     const denied = bash("crew projects update", mode);
     expect(decision(denied)).toBe("deny");
     expect(JSON.stringify(denied)).toContain(
-      "crew projects update writes into every registered project: run it in a session a person watches",
+      "crew projects update writes the adapters into every registered project: run it in a session a person watches",
     );
   }
   expect(bash("crew projects update --dry-run", "default")).toEqual({});

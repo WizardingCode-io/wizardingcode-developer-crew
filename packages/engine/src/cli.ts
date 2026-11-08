@@ -1,7 +1,13 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { type AdapterStatus, commitCommand, quoted, refreshAdapters } from "./adapters.ts";
+import {
+  type AdapterStatus,
+  commitCommand,
+  quoted,
+  refreshAdapters,
+  resultText,
+} from "./adapters.ts";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
 import { assembleAuditReport, renderAuditHtml, renderAuditMarkdown } from "./audit-report.ts";
@@ -2093,8 +2099,8 @@ function scratchFolders(env: NodeJS.ProcessEnv): string[] {
 /**
  * Why a registered project is left out of every bulk command, or null when it is processed: the
  * rules in the order the spec gives them (finding 223), the root as the registry holds it read
- * before `canonical` resolves its links. The standing skip's own two checks follow in
- * `standingSkipLeftOut` (item 2026-11-08-002).
+ * before `canonical` resolves its links; a linked `policy.json` stays here, so that no bulk command
+ * writes beside it. The standing skip's own check follows in `standingSkipLeftOut` (item 2026-11-08-002).
  */
 function registryLeftOut(
   raw: string,
@@ -2117,6 +2123,13 @@ function registryLeftOut(
 function standingSkipLeftOut(raw: string): { reason: string } | null {
   if (!existsSync(join(raw, ".crew", "profile.json"))) return { reason: "no profile yet" };
   return null;
+}
+/** The registry's projects as a bulk command walks them: the worktree entries dropped, each root canonical, by name then root. */
+function registeredProjects(userDir: string): { entry: ProjectEntry; root: string }[] {
+  return loadRegistry(userDir)
+    .projects.filter((p) => p.worktreeOf === undefined)
+    .map((p) => ({ entry: p, root: canonical(p.root) }))
+    .sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
 }
 
 /** One registered project's line in `crew projects update` (item 2026-11-08-002). */
@@ -2183,16 +2196,13 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
   const engineRoot = canonical(pluginRoot());
   const home = io.env.HOME ?? "";
   const scratch = scratchFolders(io.env);
-  const entries = loadRegistry(env.paths.userDir)
-    .projects.filter((p) => p.worktreeOf === undefined)
-    .map((p) => ({ entry: p, root: canonical(p.root) }))
-    .sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+  const entries = registeredProjects(env.paths.userDir);
   const lines: UpdateLine[] = [];
   const commits: { name: string; command: string }[] = [];
   const emit = (line: UpdateLine) => {
     lines.push(line);
     // Each line as its project finishes, so a run killed at the release's bound leaves the reached ones.
-    if (!json) io.stdout(`${line.name} ${line.root}: ${line.units.join(", ")}\n`);
+    if (!json) io.stdout(`${quoted(line.name)} ${quoted(line.root)}: ${line.units.join(", ")}\n`);
   };
   for (const { entry, root } of entries) {
     const name = entry.name;
@@ -2230,11 +2240,7 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
         live: Object.keys(liveSessions(paths)).length > 0,
       });
       const units = [
-        ...refresh.results.map((r) =>
-          r.status === "updated"
-            ? `${r.runtime} updated (${r.differed} differed, ${r.removed} removed)`
-            : `${r.runtime} ${r.status}${r.why ? ` (${r.why})` : ""}`,
-        ),
+        ...refresh.results.map(resultText),
         ...refresh.foreign.map((f) =>
           f.why === "another root"
             ? `${f.runtime} on another root (${quoted(f.root)})`
@@ -2256,7 +2262,7 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
         status: bucket,
         units: allOk ? ["up to date"] : units.length ? units : ["no adapter on this root"],
       });
-      const command = commitCommand(refresh, { project: root, home });
+      const command = commitCommand(refresh);
       if (command) commits.push({ name, command });
     } catch (error) {
       const reason = quoted((error as Error).message);
@@ -2303,7 +2309,7 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
   ) as Record<UpdateStatus, number>;
   const countLine = UPDATE_ORDER.map((s) => `${counts[s]} ${s}`).join(", ");
   const code = counts.refused || counts.failed ? 1 : 0;
-  const data = { projects: lines, user, counts, commits };
+  const data = { projects: lines, user, counts };
   if (json) return { code, text: countLine, stdout: true, data };
   const text = [
     userText,
@@ -2331,10 +2337,7 @@ function projectsStandingE2eSkip(env: Env, parsed: Parsed, args: string[], io: C
     return refuse(`a standing e2e skip needs the person's reason (--reason "<their words>")`);
   const dryRun = parsed.flags["dry-run"] === true;
   const scratch = scratchFolders(io.env);
-  const entries = loadRegistry(env.paths.userDir)
-    .projects.filter((p) => p.worktreeOf === undefined)
-    .map((p) => ({ entry: p, root: canonical(p.root) }))
-    .sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+  const entries = registeredProjects(env.paths.userDir);
   const lines: ProjectLine[] = [];
   const touched: string[] = [];
   for (const { entry, root } of entries) {
@@ -6462,10 +6465,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             "claude is installed as a plugin (claude plugin install wizardingcode-developer-crew@wizardingcode-plugins)",
           );
         const done = installRuntime(runtime, scope ?? "project", dirs, root);
-        if ("refused" in done) return refuse(done.refused);
-        // A leftover's path is shown relative to the project when it lies under it (item 2026-11-08-002).
+        // A refusal and a leftover name what a cloned repository wrote: quoted (item 2026-11-08-002,
+        // AC-24); a leftover's path is shown relative to the project when it lies under it.
+        if ("refused" in done) return refuse(quoted(done.refused));
         const shown = (p: string) =>
-          p.startsWith(`${env.paths.root}/`) ? p.slice(env.paths.root.length + 1) : p;
+          quoted(p.startsWith(`${env.paths.root}/`) ? p.slice(env.paths.root.length + 1) : p);
         const lines = [
           ...done.files,
           ...done.removed.map((p) => `removed ${shown(p)}`),
@@ -6944,9 +6948,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // did or held back, readable in every runtime, OpenCode's included.
       const last = lastEntryText(env.paths, "adapters");
       if (last === null) return outcome;
-      const adapters = quotedText(
+      const adapters = quoted(
         last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last,
-        200,
       );
       return {
         ...outcome,
