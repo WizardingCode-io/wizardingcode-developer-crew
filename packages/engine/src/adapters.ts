@@ -369,14 +369,15 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     for (const a of notUpToDate()) set(a, "stale", heldBack);
     return finish();
   }
-  // Nothing to install, but a refusal or a failure to record; a busy lock is said as at step 5.
+  // Nothing to install, but a refusal or a failure to record. A busy lock changes the status of
+  // what it prevented, and here it prevents no install: the refusal and the failure, which the
+  // first check made, stand as they do at step 8, and the entry is appended by the next refresh.
   if (toInstall.length === 0) {
     if (!o.dryRun) {
       try {
         withLock(lock, writeEntry, lockOptions);
       } catch (error) {
         if (!(error instanceof LockBusy)) throw error;
-        for (const a of notUpToDate()) set(a, "stale", "another session is updating");
       }
     }
     return finish();

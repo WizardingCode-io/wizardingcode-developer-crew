@@ -4215,8 +4215,6 @@ function refreshAdapters(paths, o) {
       } catch (error) {
         if (!(error instanceof LockBusy))
           throw error;
-        for (const a of notUpToDate())
-          set(a, "stale", "another session is updating");
       }
     }
     return finish();

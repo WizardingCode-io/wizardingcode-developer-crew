@@ -777,7 +777,7 @@ test("2026-11-08-002 AC-21 (under the lock): the deadline is checked before each
   expect(loadState(two.paths).adapters).toBeUndefined();
 });
 
-test("2026-11-08-002 AC-11 (the judgement's code-quality advisory): a refused adapter with nothing to install says the busy lock as the other paths do", () => {
+test("2026-11-08-002 AC-11 (the judgement's code-quality advisory): a refused adapter with nothing to install keeps its refusal under a busy lock, and the entry waits", () => {
   const f = fixture([RUNTIMES.copilot], { stale: false });
   const config = join(f.project, RUNTIMES.copilot.config.project);
   writeFileSync(config, readFileSync(config, "utf8").trimEnd().replace(/\}$/, ""));
@@ -792,10 +792,13 @@ test("2026-11-08-002 AC-11 (the judgement's code-quality advisory): a refused ad
     { what: "the test's hold" },
   );
   if (!held.refresh) throw new Error("no refresh");
-  expect(result(held.refresh, "copilot")).toMatchObject({
-    status: "stale",
-    why: "another session is updating",
-  });
+  // The lock guards the entry's write alone: the refusal, which the first check made, stands, as it
+  // does at step 8, and the entry is appended by the next refresh.
+  expect(result(held.refresh, "copilot")?.status).toBe("refused");
   expect(held.refresh.appended).toBe(false);
   expect(register(f.paths)).toHaveLength(0);
+  const after = refreshAdapters(f.paths, options(f));
+  expect(result(after, "copilot")?.status).toBe("refused");
+  expect(after.appended).toBe(true);
+  expect(register(f.paths)).toHaveLength(1);
 });
