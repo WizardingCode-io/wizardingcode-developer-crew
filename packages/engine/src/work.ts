@@ -18,7 +18,7 @@ import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts, disputedDefault, disputedDefaultText } from "./policy.ts";
 import { sourceLine, sourceText } from "./source.ts";
-import { specReviewHash, specReviewMissing } from "./spec-review.ts";
+import { specReviewMissing } from "./spec-review.ts";
 import { loadState, type SessionState, updateState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import { checkStrategy, RESEARCHER_FIRST, strategyHash, verdictText } from "./strategy.ts";
@@ -809,12 +809,7 @@ function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
   if (kindOfItem(work) === "audit") return missing;
   // The document reviewed before the code (ADR 0019), felt at build, at the gate and at delivery.
   if (work.specReview && work.route === "full")
-    missing.push(
-      ...specReviewMissing(
-        ctx.evidence?.specReview,
-        specReviewHash(ctx.specText ?? "", ctx.planText ?? ""),
-      ),
-    );
+    missing.push(...specReviewMissing(ctx.evidence?.specReview));
   if (work.route !== "fast") {
     if (ctx.specText === null) missing.push("spec.md in the work folder");
     else if (!hasAcceptanceSection(ctx.specText)) {

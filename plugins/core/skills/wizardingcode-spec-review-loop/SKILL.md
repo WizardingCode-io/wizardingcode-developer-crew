@@ -1,6 +1,6 @@
 ---
 name: wizardingcode-spec-review-loop
-description: "The rounds of a document review: what makes a round clean, when it has converged, the settled list, the cap of 5, no progress and churn. Also runs any chosen reviewers over any document."
+description: "The rounds of a document review: what makes a round clean, the settled list, at most two rounds, and churn. Also runs any chosen reviewers over any document."
 ---
 
 # Spec review loop
@@ -19,9 +19,9 @@ The document, the part of it under review by heading (a heading survives edits, 
 2. **Record.** An answer reaches the record only through `crew spec-review record`. You never write or edit a reviewer's answer or its findings. A reviewer that fails is launched once more, then recorded `not run` and never filled in; it never counts as zero findings.
 3. **Keep the settled list.** A finding is settled when it was contested, confirmed by a person or declined. Fresh reviewers sample differently, so one may raise it again at the same scope: mark it `settled` with `--earlier`, and it is not re-opened.
 4. **A fixed finding raised again re-opens.** The fix failed, or a later edit undid it. A fixed finding is not settled.
-5. **Judge the round from its reviews, before the fixes.** It is clean when every reviewer ran and no Blocker or Major is unsettled. Nits do not block.
-6. **Converged is two consecutive clean rounds.** One is not enough: the next fresh reviewer can find a different gap in the same text.
-7. **The stops.** A cap of 5 rounds; no progress: a round that raises no fewer Blockers and Majors than the last round in which every reviewer ran, above zero (the engine counts what the reviewers raised, never the dispositions; ADR 0021); and churn: a new finding at the scope of an applied fix, which reverting that fix would resolve (`--churn` on `crew spec-review resolve`). Write the open findings by severity, then ask the person one question: accept, go on past the cap, or return the document to drafting.
+5. **Judge the round from its reviews, before the fixes.** It is clean when every reviewer ran and only an unsettled Blocker is open: a Major and a Nit never keep a round open; they are notes the tests and the judgement gates carry.
+6. **At most two rounds** (finding 227). A clean round 1 ends the review. Round 2 runs only when round 1 is not clean (an unsettled Blocker, or a reviewer not run), and after round 2 closes, clean or not, build opens with no person. Fresh reviewers find new gaps in every round, so a third round finds detail, not a change of design.
+7. **The one stop.** churn: a new finding at the scope of an applied fix, which reverting that fix would resolve (`--churn` on `crew spec-review resolve`), stops the rounds before round 2. Write the open findings by severity, then ask the person one question: accept, or return the document to drafting.
 
 Who decides: that choice is the person's. Ask, relay their own words, never answer, accept or pick for them. In a journey the item waits and you never run `accept`. An `escalate` is never turned into a `contest` to avoid asking.
 
@@ -31,4 +31,4 @@ The rounds in the record, and at a stop the list of what is open.
 
 ## Done when
 
-The round closed converged, or a person chose.
+The review is done (a clean round, two rounds), or a person chose.

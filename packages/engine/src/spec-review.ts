@@ -25,25 +25,11 @@ export const STAGES: readonly SpecStage[] = [
     standards: ["spec-zoom-out"],
   },
   {
-    stage: 6,
-    name: "comprehension",
-    reviewers: ["goldfish-comprehension"],
-    range: "both",
-    standards: [],
-  },
-  {
     stage: 7,
     name: "critic",
     reviewers: ["goldfish-design", "goldfish-structural", "goldfish-style"],
     range: "feature",
     standards: ["spec-feature", "spec-heilmeier"],
-  },
-  {
-    stage: 8,
-    name: "second zoom out",
-    reviewers: ["goldfish-zoom-out"],
-    range: "both",
-    standards: ["spec-zoom-out"],
   },
   {
     stage: 9,
@@ -54,8 +40,11 @@ export const STAGES: readonly SpecStage[] = [
   },
 ];
 
-/** Rounds before a person chooses whether to go on (the source's cap). */
-const MAX_SPEC_ROUNDS = 5;
+/**
+ * The rounds a review runs before build opens (finding 227, the user's D-1 of 2026-11-08-001):
+ * round 2 only after a round 1 that is not clean, and then build opens with no person.
+ */
+const MAX_SPEC_ROUNDS = 2;
 
 export type SpecSeverity = "Blocker" | "Major" | "Nit";
 export type SpecDisposition = "propose-fix" | "contest" | "escalate" | "decline" | "settled";
@@ -156,59 +145,31 @@ const openRound = (record: SpecReviewRecord): SpecRound | null => {
 const closedRounds = (record: SpecReviewRecord): SpecRound[] =>
   record.rounds.filter((r) => r.closedAt);
 
-export type SpecStop = "cap" | "churn" | "no progress" | "not run";
-
-/** The Blockers and Majors a round's reviewers raised, whatever became of them. */
-export const raisedCount = (round: SpecRound): number =>
-  round.findings.filter((f) => f.severity !== "Nit").length;
+export type SpecStop = "churn" | "not run";
 
 const everyReviewerRan = (round: SpecRound): boolean =>
   !round.stages.some((s) => Object.values(s.reviewers).includes("not run"));
 
-/**
- * No progress (ADR 0021): the last two closed rounds in which every reviewer ran, when the last of
- * them raised no fewer Blockers and Majors than the one before, above zero, and after any accept.
- * A round with a reviewer not run raised fewer for that reason, so it never enters the comparison.
- */
-export function noProgress(
-  record: SpecReviewRecord,
-): { last: SpecRound; before: SpecRound } | null {
-  const full = closedRounds(record).filter(everyReviewerRan);
-  const last = full.at(-1);
-  const before = full.at(-2);
-  if (!last || !before) return null;
-  if (record.accepted && last.n <= record.accepted.round) return null;
-  // A clean round is progress whatever it raised: two in a row converge.
-  if (last.clean) return null;
-  const n = raisedCount(last);
-  return n > 0 && n >= raisedCount(before) ? { last, before } : null;
-}
-
-/** A stop with what it rests on: the pair of rounds that made no progress, when that is the stop. */
-export interface SpecStopDetail {
-  stop: SpecStop;
-  pair?: { last: SpecRound; before: SpecRound };
-}
-
-/** What stops the rounds until a person answers, or null: churn, no progress, the cap, a reviewer not run. */
-export function specReviewStopDetail(record: SpecReviewRecord): SpecStopDetail | null {
-  const closed = closedRounds(record);
-  const last = closed.at(-1);
+/** What stops the rounds before round 2 until a person accepts, or null. */
+export function specReviewStop(record: SpecReviewRecord): SpecStop | null {
+  const last = closedRounds(record).at(-1);
   if (!last) return null;
-  if (last.findings.some((f) => f.churn)) return { stop: "churn" };
-  const pair = noProgress(record);
-  if (pair) return { stop: "no progress", pair };
-  if (closed.length >= MAX_SPEC_ROUNDS) return { stop: "cap" };
-  if (!everyReviewerRan(last)) return { stop: "not run" };
+  if (last.findings.some((f) => f.churn)) return "churn";
+  if (!everyReviewerRan(last)) return "not run";
   return null;
 }
 
-export const specReviewStop = (record: SpecReviewRecord): SpecStop | null =>
-  specReviewStopDetail(record)?.stop ?? null;
-
-const stopBlocks = (record: SpecReviewRecord, stop: SpecStop | null): boolean =>
-  (stop === "cap" || stop === "churn" || stop === "no progress") &&
-  record.accepted?.round !== closedRounds(record).length;
+/**
+ * Why the review is done, or null: a clean round, two closed rounds, or a person's
+ * accept. Done holds on whatever text follows: the fixes applied after a round do not reopen it.
+ */
+export function specReviewDone(record: SpecReviewRecord): "clean" | "rounds" | "accepted" | null {
+  if (openRound(record)) return null;
+  if (record.accepted) return "accepted";
+  const closed = closedRounds(record);
+  if (closed.at(-1)?.clean) return "clean";
+  return closed.length >= MAX_SPEC_ROUNDS ? "rounds" : null;
+}
 
 /**
  * The round to work on: the open one on this hash, a fresh one when the document changed under an
@@ -221,9 +182,10 @@ export function openSpecRound(
 ): { round: SpecRound } | { refused: string } {
   const open = openRound(record);
   if (open?.hash === hash) return { round: open };
-  const detail = specReviewStopDetail(record);
-  if (detail && stopBlocks(record, detail.stop)) return { refused: stopText(detail) };
+  // An edit while a round is open drops that round: the fresh one keeps its number.
   if (open) record.rounds.pop();
+  if (specReviewDone(record)) return { refused: doneText(record) };
+  if (specReviewStop(record) === "churn") return { refused: CHURN_TEXT };
   const round: SpecRound = {
     n: record.rounds.length + 1,
     hash,
@@ -294,6 +256,8 @@ export function recordSpecStage(
         ...f,
       });
     }
+    // No stage launches goldfish-comprehension since the rounds became stages 5, 7 and 9; a round
+    // recorded before keeps its paraphrase, its contest rule and its report section.
     if (role === "goldfish-comprehension" && parsed.prose) round.paraphrase = parsed.prose;
   }
   round.stages.push({ stage: stage.stage, reviewers });
@@ -372,9 +336,9 @@ export function answerSpecFinding(
   return null;
 }
 
-/** A Blocker or a Major that keeps its round from being clean. */
+/** A Blocker that keeps its round from being clean: a Major or a Nit never does (finding 227). */
 function keepsOpen(f: SpecFinding): boolean {
-  if (f.severity === "Nit") return false;
+  if (f.severity !== "Blocker") return false;
   if (f.disposition === "propose-fix") return true;
   return f.disposition === "escalate" && f.answer?.choice !== "confirm";
 }
@@ -401,22 +365,19 @@ export function closeSpecRound(record: SpecReviewRecord, at: string): string | n
   return null;
 }
 
-export function specReviewConverged(record: SpecReviewRecord, hash: string): boolean {
-  if (openRound(record)) return false;
-  const closed = closedRounds(record);
-  const [before, last] = closed.slice(-2);
-  return closed.length >= 2 && !!before?.clean && !!last?.clean && last.hash === hash;
-}
+const CHURN_TEXT =
+  "a churn mark stops the rounds: a new finding that reverting an earlier fix would resolve; a person chooses (crew spec-review <id> accept)";
 
-/** The line a stop prints: why the rounds wait for a person, and what the person may do. */
-export function stopText({ stop, pair }: SpecStopDetail): string {
-  if (stop === "cap")
-    return `the review reached its cap of ${MAX_SPEC_ROUNDS} rounds: a person chooses (crew spec-review <id> accept, or return the document to drafting)`;
-  if (stop === "churn")
-    return "a churn mark stops the rounds: a new finding that reverting an earlier fix would resolve; a person chooses (crew spec-review <id> accept)";
-  if (stop === "no progress" && pair)
-    return `the review made no progress: round ${pair.last.n} raised ${raisedCount(pair.last)} Blockers and Majors, round ${pair.before.n} raised ${raisedCount(pair.before)}; a person chooses (crew spec-review <id> accept, or return the document to drafting)`;
-  return "a reviewer did not run: the round is not clean until a person accepts it (crew spec-review <id> accept)";
+/** What `check` says once the review is done. */
+export function doneText(record: SpecReviewRecord): string {
+  const done = specReviewDone(record);
+  const why =
+    done === "accepted"
+      ? "a person accepted it"
+      : done === "clean"
+        ? `round ${closedRounds(record).length} is clean`
+        : "it ran its two rounds";
+  return `the spec review is done: ${why}; build is open`;
 }
 
 /** A person's acceptance on the document as it is, or what refuses it. */
@@ -428,25 +389,19 @@ export function acceptSpecReview(
   at: string,
 ): string | null {
   const stop = specReviewStop(record);
-  if (!stop)
-    return "nothing to accept: only the cap, a churn mark, no progress or a reviewer not run stops a review";
+  if (!stop || specReviewDone(record))
+    return "nothing to accept: only a churn mark or a reviewer not run stops a review before round 2";
   record.accepted = { hash, round: closedRounds(record).length, reason, by, at };
   return null;
 }
 
-/** What the guard into build says is missing, empty when the review closed on this hash. */
-export function specReviewMissing(record: SpecReviewRecord | undefined, hash: string): string[] {
-  if (record?.accepted?.hash === hash) return [];
-  if (record && specReviewConverged(record, hash)) return [];
+/** What the guard into build says is missing, empty once the review is done (finding 227). */
+export function specReviewMissing(record: SpecReviewRecord | undefined): string[] {
+  if (record && specReviewDone(record)) return [];
   const prefix = "the spec review";
   if (!record || record.rounds.length === 0)
     return [`${prefix} has not run (crew spec-review <id> check)`];
-  const last = closedRounds(record).at(-1);
-  if (!openRound(record) && last?.clean && last.hash !== hash)
-    return [`${prefix} is stale: spec.md or plan.md changed after it; review again`];
-  if (record.accepted && record.accepted.hash !== hash && !openRound(record))
-    return [`${prefix} is stale: the acceptance was on another text of spec.md or plan.md`];
-  return [`${prefix} has not converged: ${specReviewLine(record)}`];
+  return [`${prefix} is not done: ${specReviewLine(record)}`];
 }
 
 /** One line of where the review stands. */
@@ -457,10 +412,12 @@ export function specReviewLine(record: SpecReviewRecord): string {
     const due = dueStage(round);
     return `round ${round.n} open, ${due ? `stage ${due.stage} (${due.name}) due` : "all stages recorded, close it"}`;
   }
-  const clean = record.rounds.filter((r) => r.clean).length;
-  const stop = specReviewStop(record);
-  const stopped = stop && stopBlocks(record, stop) ? `; stopped (${stop})` : "";
-  return `round ${round.n} ${round.clean ? "clean" : "not clean"}, ${clean} clean of ${record.rounds.length}${stopped}`;
+  const done = specReviewDone(record);
+  if (done === "clean") return `done: round ${round.n} clean`;
+  if (done === "rounds") return "done: two rounds";
+  if (done === "accepted") return `done: accepted after round ${round.n}`;
+  const stopped = specReviewStop(record) === "churn" ? "; stopped (churn)" : "";
+  return `round ${round.n} not clean${stopped}`;
 }
 
 const SEVERITIES: readonly SpecSeverity[] = ["Blocker", "Major", "Nit"];

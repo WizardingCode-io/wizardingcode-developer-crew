@@ -337,7 +337,7 @@ import {
   type SpecDisposition,
   type SpecReviewRecord,
   type SpecRound,
-  specReviewConverged,
+  specReviewDone,
   specReviewHash,
   specReviewLine,
   specReviewMissing,
@@ -3473,14 +3473,16 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
       if (unsaved) return refuse(unsaved);
       const round = record.rounds.at(-1) as SpecRound;
       const verdict = round.clean ? "clean" : "not clean";
-      if (specReviewConverged(record, hash))
+      // At most two rounds (finding 227): a clean round, or round 2 closed, opens build.
+      const done = specReviewDone(record);
+      if (done)
         return ok(
-          `round ${round.n}: ${verdict}; converged: two consecutive clean rounds on the document as it is`,
+          `round ${round.n}: ${verdict}; ${specReviewLine(record)}; build is open (apply the fixes the round proposed; the Majors and Nits left are notes for the tests)`,
           {},
         );
       const stop = specReviewStop(record);
       return ok(
-        `round ${round.n}: ${verdict}; ${stop ? `stopped (${stop}): a person chooses (crew spec-review ${work.id} accept) or the document goes back to drafting` : `next: apply the fixes, then crew spec-review ${work.id} check`}`,
+        `round ${round.n}: ${verdict}; ${stop === "churn" ? `stopped (churn): a person chooses (crew spec-review ${work.id} accept) or the document goes back to drafting` : `next: apply the fixes, then crew spec-review ${work.id} check (round 2, the last)`}`,
         {},
       );
     }
@@ -3616,8 +3618,7 @@ function publishedDesign(
   specText: string | null,
   planText: string | null,
 ): { path: string } | { refused: string } {
-  const hash = specReviewHash(specText ?? "", planText ?? "");
-  if (specText === null || planText === null || specReviewMissing(record, hash).length)
+  if (specText === null || planText === null || specReviewMissing(record).length)
     return {
       refused:
         "the spec review has not closed on spec.md and plan.md as they are: nothing published",

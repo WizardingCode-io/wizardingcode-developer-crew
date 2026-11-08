@@ -1638,10 +1638,9 @@
   {
    "source": "egm",
    "rule": "review: the five stages in order",
-   "status": "in",
-   "file": "plugins/core/skills/wizardingcode-spec-review/SKILL.md",
-   "text": "8, second zoom out",
-   "proof": "skill.test.ts"
+   "status": "refused",
+   "decision": "D-3",
+   "reason": "item 2026-11-08-001 (finding 227): a round runs stages 5, 7 and 9; comprehension (6) and the second zoom out (8) leave the round, the user's D-3 of 2026-11-08"
   },
   {
    "source": "egm",
@@ -1686,9 +1685,16 @@
   {
    "source": "egm",
    "rule": "review-loop: two clean rounds, the cap, churn",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-11-08-001 (finding 227): at most two rounds, a clean round or round 2 closed opens build, only an unsettled Blocker keeps a round open; the churn stop is kept (the row review-loop: churn), the user's D-1 and D-2 of 2026-11-08"
+  },
+  {
+   "source": "egm",
+   "rule": "review-loop: churn",
    "status": "in",
    "file": "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
-   "text": "Converged is two consecutive clean rounds",
+   "text": "churn: a new finding at the scope of an applied fix",
    "proof": "skill.test.ts"
   },
   {
@@ -2238,10 +2244,9 @@
   {
    "source": "egm",
    "rule": "stop: no progress when the count does not fall (calibration, ADR 0021)",
-   "status": "in",
-   "file": "packages/engine/src/spec-review.ts",
-   "text": "no progress",
-   "proof": "spec-review.test.ts"
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-11-08-001 (finding 227): with at most two rounds the review is done after round 2, so no stop on progress is needed, the user's D-1 of 2026-11-08"
   },
   {
    "source": "egm",
@@ -2254,10 +2259,9 @@
   {
    "source": "egm",
    "rule": "review-loop: the stop on no progress (calibration, ADR 0021)",
-   "status": "in",
-   "file": "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
-   "text": "no progress: a round that raises no fewer Blockers and Majors",
-   "proof": "skill.test.ts"
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-11-08-001 (finding 227): with at most two rounds the review is done after round 2, so no stop on progress is needed, the user's D-1 of 2026-11-08"
   }
  ]
 }

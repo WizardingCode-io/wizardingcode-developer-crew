@@ -5597,25 +5597,11 @@ var STAGES = [
     standards: ["spec-zoom-out"]
   },
   {
-    stage: 6,
-    name: "comprehension",
-    reviewers: ["goldfish-comprehension"],
-    range: "both",
-    standards: []
-  },
-  {
     stage: 7,
     name: "critic",
     reviewers: ["goldfish-design", "goldfish-structural", "goldfish-style"],
     range: "feature",
     standards: ["spec-feature", "spec-heilmeier"]
-  },
-  {
-    stage: 8,
-    name: "second zoom out",
-    reviewers: ["goldfish-zoom-out"],
-    range: "both",
-    standards: ["spec-zoom-out"]
   },
   {
     stage: 9,
@@ -5625,7 +5611,7 @@ var STAGES = [
     standards: ["spec-readiness", "spec-reimplementation"]
   }
 ];
-var MAX_SPEC_ROUNDS = 5;
+var MAX_SPEC_ROUNDS = 2;
 var SPEC_DISPOSITIONS = [
   "propose-fix",
   "contest",
@@ -5674,48 +5660,37 @@ var openRound = (record) => {
   return last && !last.closedAt ? last : null;
 };
 var closedRounds = (record) => record.rounds.filter((r) => r.closedAt);
-var raisedCount = (round) => round.findings.filter((f) => f.severity !== "Nit").length;
 var everyReviewerRan = (round) => !round.stages.some((s) => Object.values(s.reviewers).includes("not run"));
-function noProgress(record) {
-  const full = closedRounds(record).filter(everyReviewerRan);
-  const last = full.at(-1);
-  const before = full.at(-2);
-  if (!last || !before)
-    return null;
-  if (record.accepted && last.n <= record.accepted.round)
-    return null;
-  if (last.clean)
-    return null;
-  const n = raisedCount(last);
-  return n > 0 && n >= raisedCount(before) ? { last, before } : null;
-}
-function specReviewStopDetail(record) {
-  const closed = closedRounds(record);
-  const last = closed.at(-1);
+function specReviewStop(record) {
+  const last = closedRounds(record).at(-1);
   if (!last)
     return null;
   if (last.findings.some((f) => f.churn))
-    return { stop: "churn" };
-  const pair = noProgress(record);
-  if (pair)
-    return { stop: "no progress", pair };
-  if (closed.length >= MAX_SPEC_ROUNDS)
-    return { stop: "cap" };
+    return "churn";
   if (!everyReviewerRan(last))
-    return { stop: "not run" };
+    return "not run";
   return null;
 }
-var specReviewStop = (record) => specReviewStopDetail(record)?.stop ?? null;
-var stopBlocks = (record, stop) => (stop === "cap" || stop === "churn" || stop === "no progress") && record.accepted?.round !== closedRounds(record).length;
+function specReviewDone(record) {
+  if (openRound(record))
+    return null;
+  if (record.accepted)
+    return "accepted";
+  const closed = closedRounds(record);
+  if (closed.at(-1)?.clean)
+    return "clean";
+  return closed.length >= MAX_SPEC_ROUNDS ? "rounds" : null;
+}
 function openSpecRound(record, hash, at) {
   const open = openRound(record);
   if (open?.hash === hash)
     return { round: open };
-  const detail = specReviewStopDetail(record);
-  if (detail && stopBlocks(record, detail.stop))
-    return { refused: stopText(detail) };
   if (open)
     record.rounds.pop();
+  if (specReviewDone(record))
+    return { refused: doneText(record) };
+  if (specReviewStop(record) === "churn")
+    return { refused: CHURN_TEXT };
   const round = {
     n: record.rounds.length + 1,
     hash,
@@ -5837,7 +5812,7 @@ function answerSpecFinding(record, id, choice, reason, by) {
   return null;
 }
 function keepsOpen(f) {
-  if (f.severity === "Nit")
+  if (f.severity !== "Blocker")
     return false;
   if (f.disposition === "propose-fix")
     return true;
@@ -5861,43 +5836,26 @@ function closeSpecRound(record, at) {
   round.closedAt = at;
   return null;
 }
-function specReviewConverged(record, hash) {
-  if (openRound(record))
-    return false;
-  const closed = closedRounds(record);
-  const [before, last] = closed.slice(-2);
-  return closed.length >= 2 && !!before?.clean && !!last?.clean && last.hash === hash;
-}
-function stopText({ stop, pair }) {
-  if (stop === "cap")
-    return `the review reached its cap of ${MAX_SPEC_ROUNDS} rounds: a person chooses (crew spec-review <id> accept, or return the document to drafting)`;
-  if (stop === "churn")
-    return "a churn mark stops the rounds: a new finding that reverting an earlier fix would resolve; a person chooses (crew spec-review <id> accept)";
-  if (stop === "no progress" && pair)
-    return `the review made no progress: round ${pair.last.n} raised ${raisedCount(pair.last)} Blockers and Majors, round ${pair.before.n} raised ${raisedCount(pair.before)}; a person chooses (crew spec-review <id> accept, or return the document to drafting)`;
-  return "a reviewer did not run: the round is not clean until a person accepts it (crew spec-review <id> accept)";
+var CHURN_TEXT = "a churn mark stops the rounds: a new finding that reverting an earlier fix would resolve; a person chooses (crew spec-review <id> accept)";
+function doneText(record) {
+  const done = specReviewDone(record);
+  const why = done === "accepted" ? "a person accepted it" : done === "clean" ? `round ${closedRounds(record).length} is clean` : "it ran its two rounds";
+  return `the spec review is done: ${why}; build is open`;
 }
 function acceptSpecReview(record, hash, reason, by, at) {
   const stop = specReviewStop(record);
-  if (!stop)
-    return "nothing to accept: only the cap, a churn mark, no progress or a reviewer not run stops a review";
+  if (!stop || specReviewDone(record))
+    return "nothing to accept: only a churn mark or a reviewer not run stops a review before round 2";
   record.accepted = { hash, round: closedRounds(record).length, reason, by, at };
   return null;
 }
-function specReviewMissing(record, hash) {
-  if (record?.accepted?.hash === hash)
-    return [];
-  if (record && specReviewConverged(record, hash))
+function specReviewMissing(record) {
+  if (record && specReviewDone(record))
     return [];
   const prefix = "the spec review";
   if (!record || record.rounds.length === 0)
     return [`${prefix} has not run (crew spec-review <id> check)`];
-  const last = closedRounds(record).at(-1);
-  if (!openRound(record) && last?.clean && last.hash !== hash)
-    return [`${prefix} is stale: spec.md or plan.md changed after it; review again`];
-  if (record.accepted && record.accepted.hash !== hash && !openRound(record))
-    return [`${prefix} is stale: the acceptance was on another text of spec.md or plan.md`];
-  return [`${prefix} has not converged: ${specReviewLine(record)}`];
+  return [`${prefix} is not done: ${specReviewLine(record)}`];
 }
 function specReviewLine(record) {
   const round = record.rounds.at(-1);
@@ -5907,10 +5865,15 @@ function specReviewLine(record) {
     const due = dueStage(round);
     return `round ${round.n} open, ${due ? `stage ${due.stage} (${due.name}) due` : "all stages recorded, close it"}`;
   }
-  const clean = record.rounds.filter((r) => r.clean).length;
-  const stop = specReviewStop(record);
-  const stopped = stop && stopBlocks(record, stop) ? `; stopped (${stop})` : "";
-  return `round ${round.n} ${round.clean ? "clean" : "not clean"}, ${clean} clean of ${record.rounds.length}${stopped}`;
+  const done = specReviewDone(record);
+  if (done === "clean")
+    return `done: round ${round.n} clean`;
+  if (done === "rounds")
+    return "done: two rounds";
+  if (done === "accepted")
+    return `done: accepted after round ${round.n}`;
+  const stopped = specReviewStop(record) === "churn" ? "; stopped (churn)" : "";
+  return `round ${round.n} not clean${stopped}`;
 }
 var SEVERITIES = ["Blocker", "Major", "Nit"];
 function renderSpecReview(record) {
@@ -7013,7 +6976,7 @@ function routeDocuments(work, ctx) {
   if (kindOfItem(work) === "audit")
     return missing;
   if (work.specReview && work.route === "full")
-    missing.push(...specReviewMissing(ctx.evidence?.specReview, specReviewHash(ctx.specText ?? "", ctx.planText ?? "")));
+    missing.push(...specReviewMissing(ctx.evidence?.specReview));
   if (work.route !== "fast") {
     if (ctx.specText === null)
       missing.push("spec.md in the work folder");
@@ -23784,10 +23747,11 @@ function specReviewCommand(env, args, parsed) {
         return refuse(unsaved);
       const round = record.rounds.at(-1);
       const verdict = round.clean ? "clean" : "not clean";
-      if (specReviewConverged(record, hash))
-        return ok(`round ${round.n}: ${verdict}; converged: two consecutive clean rounds on the document as it is`, {});
+      const done = specReviewDone(record);
+      if (done)
+        return ok(`round ${round.n}: ${verdict}; ${specReviewLine(record)}; build is open (apply the fixes the round proposed; the Majors and Nits left are notes for the tests)`, {});
       const stop = specReviewStop(record);
-      return ok(`round ${round.n}: ${verdict}; ${stop ? `stopped (${stop}): a person chooses (crew spec-review ${work.id} accept) or the document goes back to drafting` : `next: apply the fixes, then crew spec-review ${work.id} check`}`, {});
+      return ok(`round ${round.n}: ${verdict}; ${stop === "churn" ? `stopped (churn): a person chooses (crew spec-review ${work.id} accept) or the document goes back to drafting` : `next: apply the fixes, then crew spec-review ${work.id} check (round 2, the last)`}`, {});
     }
     case "accept": {
       if (!reason)
@@ -23892,8 +23856,7 @@ function journeyCommand(env, args, parsed) {
   }
 }
 function publishedDesign(env, work, record, specText, planText) {
-  const hash = specReviewHash(specText ?? "", planText ?? "");
-  if (specText === null || planText === null || specReviewMissing(record, hash).length)
+  if (specText === null || planText === null || specReviewMissing(record).length)
     return {
       refused: "the spec review has not closed on spec.md and plan.md as they are: nothing published"
     };

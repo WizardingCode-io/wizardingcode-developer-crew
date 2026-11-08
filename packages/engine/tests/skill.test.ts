@@ -1714,13 +1714,7 @@ test("2026-10-31-006 AC-1: the four skills have the five headings and a short de
   const review = specSkill("review");
   // The five stages, in order, in the steps.
   const steps = review.slice(review.indexOf("## Steps"), review.indexOf("## Output"));
-  const stages = [
-    "5, zoom out",
-    "6, comprehension",
-    "7, critic",
-    "8, second zoom out",
-    "9, readiness",
-  ];
+  const stages = ["5, zoom out", "7, critic", "9, readiness"];
   for (const stage of stages) expect(steps, stage).toContain(stage);
   const places = stages.map((stage) => steps.indexOf(stage));
   expect(places).toEqual([...places].sort((a, b) => a - b));
@@ -1736,7 +1730,7 @@ test("2026-10-31-006 AC-1: the four skills have the five headings and a short de
   ])
     expect(resolve, words).toContain(words);
   const loop = specSkill("review-loop");
-  for (const words of ["two consecutive clean rounds", "cap of 5", "churn"])
+  for (const words of ["At most two rounds", "only an unsettled Blocker", "churn"])
     expect(loop, words).toContain(words);
   const draft = specSkill("draft");
   expect(draft).toContain("The owner decides the architecture");
@@ -1824,13 +1818,12 @@ test("2026-10-31-006 AC-4: the ledger has a row for each rule of the four skills
     "draft: alternatives from the predecessor",
     "draft: reconcile with the predecessor",
     "draft: contradiction auditing",
-    "review: the five stages in order",
     "review: delegation only to a fresh subagent",
     "review: a stage's reviewers run in parallel",
     "review-loop: a failed reviewer is retried once, then not run",
     "review-loop: the settled list",
     "review-loop: a fixed finding raised again re-opens",
-    "review-loop: two clean rounds, the cap, churn",
+    "review-loop: churn",
     "resolve: four categories",
     "resolve: a contest must be checkable",
     "resolve: no context added only for a reviewer",
@@ -1847,6 +1840,9 @@ test("2026-10-31-006 AC-4: the ledger has a row for each rule of the four skills
     ["the interactive per-stage checkpoints", "D-1"],
     ["the presets for a part of the document", "D-1"],
     ["no default on any gate, even when asked", "D-2"],
+    // 2026-11-08-001 (finding 227): the source's five stages and two clean rounds are refused.
+    ["review: the five stages in order", "D-3"],
+    ["review-loop: two clean rounds, the cap, churn", "D-1"],
   ])
     expect(refused.find((r) => r.rule === rule)?.decision, rule).toBe(decision);
 });
@@ -2095,27 +2091,26 @@ test("2026-11-01-002 AC-4: the calibration is on record: ADR 0021, the loop skil
   const adr = readdirSync(repoPath("docs/adr")).find((f) => f.startsWith("0021-"));
   expect(adr).toBeDefined();
   expect(repoFile(`docs/adr/${adr}`)).toContain("no progress");
-  expect(specSkill("review-loop")).toContain("no progress");
-  expect(repoFile("README.md")).toContain("when the count of Blockers and Majors does not fall");
+  // 2026-11-08-001 (finding 227): the stop on no progress gives way to the two-round rule.
+  expect(specSkill("review-loop")).toContain("At most two rounds");
+  expect(repoFile("README.md")).toContain(
+    "or two rounds, round 2 only after a round 1 that is not clean",
+  );
   const rows = (
     JSON.parse(repoFile("docs/sources/ledger.json")) as { rows: Record<string, string>[] }
   ).rows;
+  const stage9 = rows.find(
+    (r) =>
+      r.rule === "stage 9: readiness and codebase, style in stage 7 only (calibration, ADR 0021)",
+  );
+  expect(stage9?.status).toBe("in");
+  expect(stage9?.file && repoFile(stage9.file)).toContain(stage9?.text ?? "\u0000");
   for (const rule of [
-    "stage 9: readiness and codebase, style in stage 7 only (calibration, ADR 0021)",
     "stop: no progress when the count does not fall (calibration, ADR 0021)",
-  ]) {
-    const row = rows.find((r) => r.rule === rule);
-    expect(row?.status, rule).toBe("in");
-    expect(row?.file && repoFile(row.file), rule).toContain(row?.text ?? "\u0000");
-  }
-  // The source's row keeps its own proof; the stop has a row of its own.
-  expect(rows.find((r) => r.rule === "review-loop: two clean rounds, the cap, churn")?.text).toBe(
-    "Converged is two consecutive clean rounds",
-  );
-  const loopStop = rows.find(
-    (r) => r.rule === "review-loop: the stop on no progress (calibration, ADR 0021)",
-  );
-  expect(loopStop?.file && repoFile(loopStop.file)).toContain(loopStop?.text ?? "\u0000");
+    "review-loop: the stop on no progress (calibration, ADR 0021)",
+    "review-loop: two clean rounds, the cap, churn",
+  ])
+    expect(rows.find((r) => r.rule === rule)?.status, rule).toBe("refused");
   // Finding 214's outcome is written from the measure, and the measure's record holds the table.
   const findings = repoFile("docs/real-use/findings.md");
   const outcome = /### 214\.[\s\S]*?- Outcome: ([^\n]*)/.exec(findings)?.[1] ?? "";

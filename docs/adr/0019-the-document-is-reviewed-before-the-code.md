@@ -9,10 +9,10 @@ The judgement gates review the diff after the code, and the leads validate the s
 
 ## Decision
 
-1. **Every item on the full route passes a `spec-review` phase** between plan and build: five stages in order over `spec.md` and `plan.md`. The agent recommended a trigger by work type, since EGM itself excludes a small clear bug fix; the user chose the whole route.
-2. **The guard into build requires the stages closed on the document's hash**, as `strategy` does. An edit makes them stale.
+1. **Every item on the full route passes a `spec-review` phase** between plan and build: stages in order over `spec.md` and `plan.md` (five at first; stages 5, 7 and 9 since item 2026-11-08-001, point 4). The agent recommended a trigger by work type, since EGM itself excludes a small clear bug fix; the user chose the whole route.
+2. **The guard into build requires the review done** (point 4): at first the stages closed on the document's hash, an edit making them stale; since item 2026-11-08-001 a done review holds on the text that follows, so the fixes a round proposed do not reopen it.
 3. **Reviewers have no context**: read-only, `omitClaudeMd: true`, fresh on every round. The record refuses a resumed one, by the agent id the hook filed. This is the one exception to "resume, never relaunch".
-4. **Convergence is the source's**: two consecutive clean rounds, a cap of 5, the churn rule, on a counter of its own beside `team.maxJudgementRounds`.
+4. **At most two rounds** (item 2026-11-08-001, finding 227, replacing the source's two clean rounds in a row and its cap of five): a clean round ends the review, round 2 runs only after a round 1 that is not clean, and after round 2 build opens with no person; a round is clean when every reviewer ran and no Blocker is unsettled; a round has stages 5, 7 and 9; the churn rule stays, on a counter of its own beside `team.maxJudgementRounds`.
 5. **The source enters rewritten**, one ledger row per rule, as ADR 0017 and ADR 0018 ask. The synthesizer and the bootstrap orchestrator have no agent, because a role here may not write or launch; the session does their work and the rows record the refusal. The site, the packaging, the release scripts and the contribution rules are refused by the user's word.
 
 ## Consequences

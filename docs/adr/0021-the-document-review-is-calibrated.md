@@ -1,6 +1,6 @@
 # 0021. The document review is calibrated: one style stage, a Major that names the wrong build, a stop on no progress
 
-- Status: accepted (the user, 2026-11-01). Calibrates ADR 0019.
+- Status: accepted (the user, 2026-11-01). Calibrates ADR 0019. Its stop on no progress is superseded by the two-round rule of item 2026-11-08-001 (finding 227, ADR 0019 point 4); the single style stage and the Major rule stay.
 - Date: 2026-11-01
 
 ## Context

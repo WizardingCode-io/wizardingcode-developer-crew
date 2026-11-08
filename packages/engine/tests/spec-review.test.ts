@@ -111,7 +111,7 @@ test("2026-10-31-005 AC-1: a full-route item has spec-review between plan and bu
   expect(phasesFor({ route: "full", kind: "feature" })).not.toContain("spec-review");
 });
 
-test("2026-10-31-005 AC-2: the guard refuses build until the review converged on the current hash, and an edit refuses it again", async () => {
+test("2026-10-31-005 AC-2: the guard refuses build until the review is done, and an edit after it leaves it open", async () => {
   const { guardFor } = await import("../src/work.ts");
   const t = await item();
   const work = JSON.parse(readFileSync(join(t.dir, "work.json"), "utf8"));
@@ -127,14 +127,12 @@ test("2026-10-31-005 AC-2: the guard refuses build until the review converged on
     return guardFor(work, "build", ctx).filter((m) => m.includes("spec review"));
   };
   expect(guard().length).toBeGreaterThan(0);
-  expect((await t.quietRound()).code).toBe(0);
-  expect(guard().length).toBeGreaterThan(0);
-  const second = await t.quietRound();
-  expect(second.text).toContain("converged");
+  const first = await t.quietRound();
+  expect(first.text).toContain("done: round 1 clean");
   expect(guard()).toEqual([]);
   writeFileSync(join(t.dir, "plan.md"), "# Plan\n\n1. Another plan.\n");
-  expect(guard().join()).toContain("stale");
-  // An acceptance holds on the text it was given for, and an edit makes it stale too.
+  expect(guard()).toEqual([]);
+  // A churn mark stops the rounds; an acceptance ends the review, and an edit after it too.
   const cap = await item();
   const capWork = JSON.parse(readFileSync(join(cap.dir, "work.json"), "utf8"));
   capWork.phase = "spec-review";
@@ -156,23 +154,18 @@ test("2026-10-31-005 AC-2: the guard refuses build until the review converged on
     "--reason",
     "x",
   );
-  for (const s of [6, 7, 8, 9]) await cap.stage(s);
+  for (const s of [7, 9]) await cap.stage(s);
   await cap.run("spec-review", cap.id, "close");
+  expect(capGuard().length).toBeGreaterThan(0);
   expect((await cap.run("spec-review", cap.id, "accept", "--reason", "their words")).code).toBe(0);
   expect(capGuard()).toEqual([]);
   writeFileSync(join(cap.dir, "spec.md"), "# Spec\n\nEdited.\n");
-  expect(capGuard().join()).toContain("stale");
+  expect(capGuard()).toEqual([]);
 });
 
 test("2026-10-31-005 AC-3: the stages record only in order, each with its reviewers, on an unchanged document", async () => {
-  expect(STAGES.map((s) => [s.stage, s.reviewers])).toEqual([
-    [5, ["goldfish-zoom-out"]],
-    [6, ["goldfish-comprehension"]],
-    [7, ["goldfish-design", "goldfish-structural", "goldfish-style"]],
-    [8, ["goldfish-zoom-out"]],
-    // 2026-11-01-002 AC-1: style reviews in stage 7 only.
-    [9, ["goldfish-readiness", "goldfish-codebase"]],
-  ]);
+  // 2026-11-08-001: the stages are 5, 7 and 9.
+  expect(STAGES.map((s) => s.stage)).toEqual([5, 7, 9]);
   const t = await item();
   expect((await t.run("spec-review", t.id, "check")).text).toContain("stage 5");
   const early = await t.stage(7);
@@ -180,36 +173,49 @@ test("2026-10-31-005 AC-3: the stages record only in order, each with its review
   expect(early.text).toContain("stage 5");
   expect((await t.stage(5)).code).toBe(0);
   // A stage with a reviewer's answer missing.
-  const missing = await t.run("spec-review", t.id, "record", "6");
+  t.answer("goldfish-design");
+  t.answer("goldfish-structural");
+  rmSync(join(t.dir, "spec-review/goldfish-style.md"), { force: true });
+  const missing = await t.run("spec-review", t.id, "record", "7");
   expect(missing.code).toBe(1);
-  expect(missing.text).toContain("goldfish-comprehension");
+  expect(missing.text).toContain("goldfish-style");
   writeFileSync(join(t.dir, "spec.md"), "# Spec\n\nChanged.\n");
-  const changed = await t.stage(6);
+  const changed = await t.stage(7);
   expect(changed.code).toBe(1);
   expect(changed.text).toContain("changed");
   // An answer with no findings section is no review.
   writeFileSync(join(t.dir, "spec.md"), "# Spec\n\nThe spec.\n");
-  t.answer("goldfish-comprehension", "I read it and it looks fine.\n");
-  const shapeless = await t.run("spec-review", t.id, "record", "6");
+  t.answer("goldfish-design");
+  t.answer("goldfish-structural");
+  t.answer("goldfish-style", "I read it and it looks fine.\n");
+  const shapeless = await t.run("spec-review", t.id, "record", "7");
   expect(shapeless.code).toBe(1);
   expect(shapeless.text).toContain("## Findings");
 });
 
-test("2026-10-31-005 AC-4: two clean rounds converge; a propose-fix or a not run keeps a round from being clean; a settled finding does not", async () => {
+test("2026-10-31-005 AC-4: a clean round ends the review; a propose-fix Blocker or a not run keeps a round from being clean; a settled finding does not", async () => {
   const t = await item();
   await t.run("spec-review", t.id, "check");
   await t.stage(5, { "goldfish-zoom-out": blocker() });
-  const first = findingId(t);
-  await t.run("spec-review", t.id, "resolve", first, "propose-fix", "--reason", "it is false");
-  for (const s of [6, 7, 8, 9]) await t.stage(s);
+  await t.run(
+    "spec-review",
+    t.id,
+    "resolve",
+    findingId(t),
+    "propose-fix",
+    "--reason",
+    "it is false",
+  );
+  for (const s of [7, 9]) await t.stage(s);
   const closed = await t.run("spec-review", t.id, "close");
   expect(closed.text).toContain("not clean");
   expect(record(t)?.rounds[0]?.clean).toBe(false);
   // A reviewer that did not run keeps its round from being clean.
-  await t.run("spec-review", t.id, "check");
-  const notRun = await t.run(
+  const n = await item();
+  await n.run("spec-review", n.id, "check");
+  const notRun = await n.run(
     "spec-review",
-    t.id,
+    n.id,
     "record",
     "5",
     "--not-run",
@@ -218,41 +224,45 @@ test("2026-10-31-005 AC-4: two clean rounds converge; a propose-fix or a not run
     "it timed out twice",
   );
   expect(notRun.code).toBe(0);
-  for (const s of [6, 7, 8, 9]) await t.stage(s);
-  expect((await t.run("spec-review", t.id, "close")).text).toContain("not clean");
-  // A contested finding settles, and a later round may settle against it.
-  await t.run("spec-review", t.id, "check");
-  await t.stage(5, { "goldfish-zoom-out": blocker("Risks") });
-  await t.run(
+  for (const s of [7, 9]) await n.stage(s);
+  expect((await n.run("spec-review", n.id, "close")).text).toContain("not clean");
+  // Round 2 settles against round 1's contested finding, and the review is done.
+  const c = await item();
+  await c.run("spec-review", c.id, "check");
+  await c.stage(5, { "goldfish-zoom-out": blocker("Risks") });
+  const contested = findingId(c);
+  await c.run("spec-review", c.id, "resolve", contested, "propose-fix", "--reason", "x");
+  await c.stage(7, { "goldfish-design": blocker("Goals") });
+  await c.run(
     "spec-review",
-    t.id,
+    c.id,
     "resolve",
-    findingId(t),
+    findingId(c),
     "contest",
     "--reason",
     "the code shows it",
     "--evidence",
     "src/known.ts:known",
   );
-  const contested = findingId(t);
-  for (const s of [6, 7, 8, 9]) await t.stage(s);
-  expect((await t.run("spec-review", t.id, "close")).text).not.toContain("not clean");
-  await t.run("spec-review", t.id, "check");
-  await t.stage(5, { "goldfish-zoom-out": blocker("Risks") });
-  const settled = await t.run(
+  const earlier = findingId(c);
+  await c.stage(9);
+  expect((await c.run("spec-review", c.id, "close")).text).toContain("not clean");
+  await c.run("spec-review", c.id, "check");
+  await c.stage(5, { "goldfish-zoom-out": blocker("Goals") });
+  const settled = await c.run(
     "spec-review",
-    t.id,
+    c.id,
     "resolve",
-    findingId(t),
+    findingId(c),
     "settled",
     "--reason",
     "raised before",
     "--earlier",
-    contested,
+    earlier,
   );
   expect(settled.code).toBe(0);
-  for (const s of [6, 7, 8, 9]) await t.stage(s);
-  expect((await t.run("spec-review", t.id, "close")).text).toContain("converged");
+  for (const s of [7, 9]) await c.stage(s);
+  expect((await c.run("spec-review", c.id, "close")).text).toContain("done: round 2 clean");
 });
 
 test("2026-10-31-005 AC-5: the rules of a disposition, and no way to change a severity", async () => {
@@ -284,60 +294,21 @@ test("2026-10-31-005 AC-5: the rules of a disposition, and no way to change a se
   expect(record(t)?.rounds[0]?.findings[0]?.severity).toBe("Blocker");
   // A Nit may be declined.
   await t.run("spec-review", t.id, "resolve", id, "propose-fix", "--reason", "x");
-  await t.stage(6, {
-    "goldfish-comprehension": "## Findings\n- F-1 · Nit · Style · a small thing\n",
-  });
+  t.answer("goldfish-design");
+  t.answer("goldfish-structural");
+  t.answer("goldfish-style", "## Findings\n- F-1 · Nit · Style · a small thing\n");
+  expect((await t.run("spec-review", t.id, "record", "7")).code).toBe(0);
   const nit = findingId(t);
   expect(
     (await t.run("spec-review", t.id, "resolve", nit, "decline", "--reason", "small")).code,
   ).toBe(0);
-  await t.stage(7);
-  await t.stage(8);
   await t.stage(9);
   expect((await t.run("spec-review", t.id, "close")).code).toBe(0);
-  await t.run("spec-review", t.id, "check");
-  await t.stage(5);
-  // A comprehension gap is never contested.
-  await t.stage(6, { "goldfish-comprehension": blocker("Overview", "no paraphrase possible") });
-  const gap = await t.run(
-    "spec-review",
-    t.id,
-    "resolve",
-    findingId(t),
-    "contest",
-    "--reason",
-    "clear to me",
-    "--evidence",
-    "src/known.ts:known",
-  );
-  expect(gap.code).toBe(1);
-  expect(gap.text).toContain("comprehension");
+  // 2026-11-08-001: the comprehension stage left the round, so its never-contested rule is read
+  // only on an old round's findings.
 });
 
-test("2026-10-31-005 AC-6: at the cap, or after a churn mark, another round is refused until accept", async () => {
-  const t = await item();
-  // Five rounds that never converge: each has a reviewer not run.
-  for (let i = 0; i < 5; i += 1) {
-    await t.run("spec-review", t.id, "check");
-    await t.run(
-      "spec-review",
-      t.id,
-      "record",
-      "5",
-      "--not-run",
-      "goldfish-zoom-out",
-      "--reason",
-      "x",
-    );
-    for (const s of [6, 7, 8, 9]) await t.stage(s);
-    await t.run("spec-review", t.id, "close");
-  }
-  const sixth = await t.run("spec-review", t.id, "check");
-  expect(sixth.code).toBe(1);
-  expect(sixth.text).toContain("accept");
-  expect((await t.run("spec-review", t.id, "accept", "--reason", "take it as it is")).code).toBe(0);
-  expect((await t.run("spec-review", t.id, "check")).code).toBe(0);
-  // A churn mark stops the rounds the same way.
+test("2026-10-31-005 AC-6: after a churn mark, round 2 is refused until accept", async () => {
   const c = await item();
   await c.run("spec-review", c.id, "check");
   await c.stage(5, { "goldfish-zoom-out": blocker() });
@@ -351,11 +322,12 @@ test("2026-10-31-005 AC-6: at the cap, or after a churn mark, another round is r
     "x",
     "--churn",
   );
-  for (const s of [6, 7, 8, 9]) await c.stage(s);
+  for (const s of [7, 9]) await c.stage(s);
   await c.run("spec-review", c.id, "close");
   const after = await c.run("spec-review", c.id, "check");
   expect(after.code).toBe(1);
   expect(after.text).toContain("churn");
+  expect((await c.run("spec-review", c.id, "accept", "--reason", "take it as it is")).code).toBe(0);
   // With nothing stopping the rounds there is nothing to accept.
   const n = await item();
   expect((await n.run("spec-review", n.id, "accept", "--reason", "x")).code).toBe(1);
@@ -366,10 +338,11 @@ test("2026-10-31-005 AC-7: an answer from an agent id already recorded is refuse
   await t.run("spec-review", t.id, "check");
   t.answer("goldfish-zoom-out", clean("goldfish-zoom-out"), "same-agent");
   expect((await t.run("spec-review", t.id, "record", "5")).code).toBe(0);
-  await t.stage(6);
-  await t.stage(7);
-  t.answer("goldfish-zoom-out", clean("goldfish-zoom-out"), "same-agent");
-  const resumed = await t.run("spec-review", t.id, "record", "8");
+  // 2026-11-08-001: stage 7 follows stage 5; a reviewer of it answering with the same agent id.
+  t.answer("goldfish-design", clean("goldfish-design"), "same-agent");
+  t.answer("goldfish-structural");
+  t.answer("goldfish-style");
+  const resumed = await t.run("spec-review", t.id, "record", "7");
   expect(resumed.code).toBe(1);
   expect(resumed.text).toContain("fresh");
 });
@@ -395,14 +368,13 @@ test("2026-10-31-005 AC-9: report writes the consolidated file with the paraphra
   await t.run("spec-review", t.id, "check");
   await t.stage(5, { "goldfish-zoom-out": blocker() });
   await t.run("spec-review", t.id, "resolve", findingId(t), "propose-fix", "--reason", "false");
-  const paraphrase = `**What this proposes**\nA thing.\n\n${blocker("Overview", "a gap")}`;
-  await t.stage(6, { "goldfish-comprehension": `# x\n\n## Findings\n${paraphrase}` });
+  // 2026-11-08-001: the comprehension stage left the round, so no paraphrase is written now; an
+  // old record's paraphrase is still rendered (renderSpecReview reads round.paraphrase).
   expect((await t.run("spec-review", t.id, "report")).code).toBe(0);
   const text = readFileSync(join(t.dir, "spec-review/consolidated.md"), "utf8");
   expect(text).toContain("goldfish-zoom-out");
   expect(text).toContain("the goal is false");
   expect(text).toContain("propose-fix");
-  expect(text).toContain("**What this proposes**");
   expect((await t.run("status")).text).toContain("spec review: round 1");
   const { renderReport } = await import("../src/evidence.ts");
   const { loadPolicy } = await import("../src/policy.ts");
@@ -465,7 +437,7 @@ test("2026-10-31-005 AC-13: a Blocker marked escalate stays open until a person'
   await t.stage(5, { "goldfish-zoom-out": blocker() });
   const id = findingId(t);
   await t.run("spec-review", t.id, "resolve", id, "escalate", "--reason", "a team convention");
-  for (const s of [6, 7, 8, 9]) await t.stage(s);
+  for (const s of [7, 9]) await t.stage(s);
   const refused = await t.run("spec-review", t.id, "close");
   expect(refused.code).toBe(1);
   expect(refused.text).toContain(id);
@@ -480,7 +452,7 @@ test("2026-10-31-005 AC-13: a Blocker marked escalate stays open until a person'
   const added = findingId(f);
   await f.run("spec-review", f.id, "resolve", added, "escalate", "--reason", "a verbal decision");
   await f.run("spec-review", f.id, "answer", added, "add-fact", "--reason", "write it down");
-  for (const s of [6, 7, 8, 9]) await f.stage(s);
+  for (const s of [7, 9]) await f.stage(s);
   expect((await f.run("spec-review", f.id, "close")).text).toContain("not clean");
 });
 
@@ -489,54 +461,36 @@ test("2026-10-31-005 AC-14: the engine checks contest's evidence and settled's e
   await t.run("spec-review", t.id, "check");
   await t.stage(5, { "goldfish-zoom-out": blocker("Goals") });
   const fixed = findingId(t);
-  const contest = (ev: string) =>
-    t.run("spec-review", t.id, "resolve", fixed, "contest", "--reason", "x", "--evidence", ev);
+  const contest = (id: string, ev: string) =>
+    t.run("spec-review", t.id, "resolve", id, "contest", "--reason", "x", "--evidence", ev);
   for (const bad of [
     "src/absent.ts:known",
     "src/known.ts:absent",
     "../outside.ts:known",
     "nocolon",
   ])
-    expect((await contest(bad)).code, bad).toBe(1);
+    expect((await contest(fixed, bad)).code, bad).toBe(1);
   await t.run("spec-review", t.id, "resolve", fixed, "propose-fix", "--reason", "x");
-  for (const s of [6, 7, 8, 9]) await t.stage(s);
+  // 2026-11-08-001: round 1 is not clean (the fixed Blocker), so round 2 runs; a contested
+  // finding of round 1 is what a later one may settle against.
+  await t.stage(7, { "goldfish-design": blocker("Risks") });
+  const contested = findingId(t);
+  expect((await contest(contested, "src/known.ts:known")).code).toBe(0);
+  await t.stage(9);
   await t.run("spec-review", t.id, "close");
   await t.run("spec-review", t.id, "check");
   await t.stage(5, { "goldfish-zoom-out": blocker("Goals") });
   const later = findingId(t);
-  const settle = (earlier: string) =>
-    t.run("spec-review", t.id, "resolve", later, "settled", "--reason", "x", "--earlier", earlier);
+  const settle = (id: string, earlier: string) =>
+    t.run("spec-review", t.id, "resolve", id, "settled", "--reason", "x", "--earlier", earlier);
   // Fixed, so it re-opens rather than settles; unknown; and this round's own id.
-  for (const bad of [fixed, "zoom-out-9.9-9", later]) expect((await settle(bad)).code, bad).toBe(1);
+  for (const bad of [fixed, "zoom-out-9.9-9", later])
+    expect((await settle(later, bad)).code, bad).toBe(1);
   // Evidence in the item's own document holds.
-  const own = await t.run(
-    "spec-review",
-    t.id,
-    "resolve",
-    later,
-    "contest",
-    "--reason",
-    "the spec decides it",
-    "--evidence",
-    "spec.md:The spec",
-  );
-  expect(own.code).toBe(0);
+  expect((await contest(later, "spec.md:The spec")).code).toBe(0);
   // Another scope does not settle against a contested finding.
-  for (const s of [6, 7, 8, 9]) await t.stage(s);
-  await t.run("spec-review", t.id, "close");
-  await t.run("spec-review", t.id, "check");
-  await t.stage(5, { "goldfish-zoom-out": blocker("Elsewhere") });
-  const other = await t.run(
-    "spec-review",
-    t.id,
-    "resolve",
-    findingId(t),
-    "settled",
-    "--reason",
-    "x",
-    "--earlier",
-    later,
-  );
+  await t.stage(7, { "goldfish-design": blocker("Elsewhere") });
+  const other = await settle(findingId(t), contested);
   expect(other.code).toBe(1);
   expect(other.text).toContain("scope");
 });
@@ -728,7 +682,6 @@ test("2026-10-31-007 AC-7: a lens's answer lands apart, brief refuses a review-m
 /** A review that converged, so an item may publish. */
 async function converged(t: Awaited<ReturnType<typeof item>>) {
   await t.quietRound();
-  await t.quietRound();
 }
 
 test("2026-10-31-007 AC-4: publish writes the document with the provenance and the sitemap row, and an unstamped item writes nothing", async () => {
@@ -866,133 +819,292 @@ test("2026-10-31-007 AC-4: crew learn publishes a stamped item's document, says 
   expect(existsSync(join(open.root, "docs/designs"))).toBe(false);
 });
 
-const majors = (n: number) =>
-  `## Findings\n${Array.from({ length: n }, (_, i) => `- F-${i + 1} · Major · Goals · gap ${i + 1}`).join("\n")}\n`;
-
-/** One round whose comprehension reviewer raises n Majors, every one given a fix, then closed. */
-async function countedRound(t: Awaited<ReturnType<typeof item>>, n: number, notRun = false) {
+test("2026-11-01-002 AC-11: a clean round ends the review whatever it raised: a settled Blocker leaves round 1 clean", async () => {
+  const t = await item();
   await t.run("spec-review", t.id, "check");
-  if (notRun)
-    await t.run(
-      "spec-review",
-      t.id,
-      "record",
-      "5",
-      "--not-run",
-      "goldfish-zoom-out",
-      "--reason",
-      "x",
-    );
-  else await t.stage(5);
-  await t.stage(6, { "goldfish-comprehension": majors(n) });
-  for (const s of [7, 8, 9]) await t.stage(s);
-  for (const f of record(t)?.rounds.at(-1)?.findings ?? [])
-    if (!f.disposition)
-      await t.run("spec-review", t.id, "resolve", f.id, "propose-fix", "--reason", "x");
-  return t.run("spec-review", t.id, "close");
+  await t.stage(5, { "goldfish-zoom-out": blocker("Goals", "the goal is false") });
+  const contested = await t.run(
+    "spec-review",
+    t.id,
+    "resolve",
+    findingId(t),
+    "contest",
+    "--reason",
+    "the spec decides it",
+    "--evidence",
+    "spec.md:The spec",
+  );
+  expect(contested.code).toBe(0);
+  for (const s of [7, 9]) await t.stage(s);
+  expect((await t.run("spec-review", t.id, "close")).text).toContain("done: round 1 clean");
+  expect((await t.run("spec-review", t.id, "status")).text).not.toContain("stopped");
+});
+
+/** Stages 7 and 9 recorded quiet: what follows stage 5 in a round of three stages (2026-11-08-001). */
+async function rest(t: Awaited<ReturnType<typeof item>>) {
+  await t.stage(7);
+  await t.stage(9);
 }
 
-test("2026-11-01-002 AC-9: a round that raises no fewer Blockers and Majors than the one before stops the review until accept", async () => {
-  const equal = await item();
-  expect((await countedRound(equal, 3)).code).toBe(0);
-  expect((await countedRound(equal, 3)).code).toBe(0);
-  const stopped = await equal.run("spec-review", equal.id, "check");
-  expect(stopped.code).toBe(1);
-  expect(stopped.text).toContain("no progress");
-  expect(stopped.text).toContain("round 2 raised 3 Blockers and Majors, round 1 raised 3");
-  expect((await equal.run("spec-review", equal.id, "status")).text).toContain("no progress");
-  expect((await equal.run("spec-review", equal.id, "accept", "--reason", "take it")).code).toBe(0);
-  expect((await equal.run("spec-review", equal.id, "status")).text).not.toContain("stopped");
-  expect((await equal.run("spec-review", equal.id, "check")).code).toBe(0);
-  // The acceptance covers its round alone: a further round that does not fall stops again, and at
-  // the fifth no progress is named before the cap.
-  for (const n of [3, 4, 5]) {
-    expect((await countedRound(equal, 3)).code).toBe(0);
-    const again = await equal.run("spec-review", equal.id, "check");
-    expect(again.code).toBe(1);
-    expect(again.text).toContain(
-      `round ${n} raised 3 Blockers and Majors, round ${n - 1} raised 3`,
-    );
-    expect(again.text).not.toContain("cap");
-    expect((await equal.run("spec-review", equal.id, "accept", "--reason", "go on")).code).toBe(0);
-  }
-  // A churn mark ranks before no progress.
-  const churned = await item();
-  await countedRound(churned, 3);
-  await churned.run("spec-review", churned.id, "check");
-  await churned.stage(5);
-  await churned.stage(6, { "goldfish-comprehension": majors(3) });
-  for (const st of [7, 8, 9]) await churned.stage(st);
-  const ids = (record(churned)?.rounds.at(-1)?.findings ?? []).map((f) => f.id);
-  for (const [i, id] of ids.entries())
-    await churned.run(
+test("2026-11-08-001 AC-3: a round has the stages 5, 7 and 9, in that order", async () => {
+  expect(STAGES.map((s) => [s.stage, s.reviewers])).toEqual([
+    [5, ["goldfish-zoom-out"]],
+    [7, ["goldfish-design", "goldfish-structural", "goldfish-style"]],
+    [9, ["goldfish-readiness", "goldfish-codebase"]],
+  ]);
+  const t = await item();
+  await t.run("spec-review", t.id, "check");
+  expect((await t.stage(5)).code).toBe(0);
+  const due = await t.run("spec-review", t.id, "status");
+  expect(due.text).toContain("stage 7");
+  expect((await t.run("spec-review", t.id, "record", "6")).code).toBe(1);
+  await rest(t);
+  expect((await t.run("spec-review", t.id, "close")).code).toBe(0);
+});
+
+test("2026-11-08-001 AC-7: at most two rounds; done after a clean round or after two; a churn mark still stops", async () => {
+  const { specReviewMissing } = await import("../src/spec-review.ts");
+  const once = await item();
+  expect((await once.quietRound()).text).toContain("done: round 1 clean");
+  const after = await once.run("spec-review", once.id, "check");
+  expect(after.code).toBe(1);
+  expect(after.text).toContain("the spec review is done");
+  expect(specReviewMissing(record(once))).toEqual([]);
+  // Round 1 not clean opens round 2; after round 2, clean or not, the review is done.
+  const twice = await item();
+  for (const scope of ["Goals", "Risks"]) {
+    expect((await twice.run("spec-review", twice.id, "check")).code).toBe(0);
+    await twice.stage(5, { "goldfish-zoom-out": blocker(scope) });
+    await twice.run(
       "spec-review",
-      churned.id,
+      twice.id,
       "resolve",
-      id,
+      findingId(twice),
       "propose-fix",
       "--reason",
       "x",
-      ...(i === 0 ? ["--churn"] : []),
     );
-  await churned.run("spec-review", churned.id, "close");
-  const marked = await churned.run("spec-review", churned.id, "check");
-  expect(marked.code).toBe(1);
-  expect(marked.text).toContain("churn");
-  expect(marked.text).not.toContain("no progress");
-  // Higher stops too; lower is progress; a fall to zero is a clean round.
-  const higher = await item();
-  await countedRound(higher, 2);
-  await countedRound(higher, 3);
-  expect((await higher.run("spec-review", higher.id, "check")).text).toContain("no progress");
-  const lower = await item();
-  await countedRound(lower, 3);
-  await countedRound(lower, 2);
-  expect((await lower.run("spec-review", lower.id, "check")).code).toBe(0);
-  expect((await lower.run("spec-review", lower.id, "status")).text).not.toContain("no progress");
-  expect((await lower.quietRound()).code).toBe(0);
-  expect((await lower.quietRound()).text).toContain("converged");
-  // A round with a reviewer not run never enters the comparison, and does not hide a stop either.
+    await rest(twice);
+    await twice.run("spec-review", twice.id, "close");
+  }
+  expect(record(twice)?.rounds.at(-1)?.clean).toBe(false);
+  expect((await twice.run("spec-review", twice.id, "status")).text).toContain("done: two rounds");
+  const third = await twice.run("spec-review", twice.id, "check");
+  expect(third.code).toBe(1);
+  expect(third.text).toContain("the spec review is done");
+  expect(specReviewMissing(record(twice))).toEqual([]);
+  // A reviewer not run in round 1 opens round 2 with no accept.
   const gap = await item();
-  await countedRound(gap, 3);
-  await countedRound(gap, 3, true);
-  // A reviewer not run keeps its round from being clean and does not block the next round.
-  const notRun = await gap.run("spec-review", gap.id, "check");
-  expect(notRun.code).toBe(0);
-  expect(notRun.text).not.toContain("no progress");
-  await countedRound(gap, 3);
-  const again = await gap.run("spec-review", gap.id, "check");
-  expect(again.code).toBe(1);
-  expect(again.text).toContain("round 3 raised 3 Blockers and Majors, round 1 raised 3");
-  // What a person may accept names the stop.
+  await gap.run("spec-review", gap.id, "check");
+  await gap.run(
+    "spec-review",
+    gap.id,
+    "record",
+    "5",
+    "--not-run",
+    "goldfish-zoom-out",
+    "--reason",
+    "x",
+  );
+  await rest(gap);
+  expect((await gap.run("spec-review", gap.id, "close")).text).toContain("not clean");
+  expect((await gap.run("spec-review", gap.id, "check")).code).toBe(0);
+  // A churn mark on round 1 stops before round 2 until accept, which ends the review.
+  const churn = await item();
+  await churn.run("spec-review", churn.id, "check");
+  await churn.stage(5, { "goldfish-zoom-out": blocker() });
+  await churn.run(
+    "spec-review",
+    churn.id,
+    "resolve",
+    findingId(churn),
+    "propose-fix",
+    "--reason",
+    "x",
+    "--churn",
+  );
+  await rest(churn);
+  await churn.run("spec-review", churn.id, "close");
+  const stopped = await churn.run("spec-review", churn.id, "check");
+  expect(stopped.code).toBe(1);
+  expect(stopped.text).toContain("churn");
+  expect((await churn.run("spec-review", churn.id, "accept", "--reason", "take it")).code).toBe(0);
+  expect(specReviewMissing(record(churn))).toEqual([]);
+  // Nothing stops a fresh review, so there is nothing to accept.
   const fresh = await item();
-  const nothing = await fresh.run("spec-review", fresh.id, "accept", "--reason", "x");
-  expect(nothing.code).toBe(1);
-  expect(nothing.text).toContain("no progress");
+  expect((await fresh.run("spec-review", fresh.id, "accept", "--reason", "x")).code).toBe(1);
 });
 
-test("2026-11-01-002 AC-11: a clean round is progress whatever it raised: two settled Blockers in a row converge", async () => {
-  const t = await item();
-  for (let i = 0; i < 2; i += 1) {
+test("2026-11-08-001 AC-8: only an unsettled Blocker keeps a round from being clean", async () => {
+  const major = await item();
+  await major.run("spec-review", major.id, "check");
+  await major.stage(5, { "goldfish-zoom-out": "## Findings\n- F-1 · Major · Plan · a detail\n" });
+  const id = findingId(major);
+  await rest(major);
+  const undecided = await major.run("spec-review", major.id, "close");
+  expect(undecided.code).toBe(1);
+  expect(undecided.text).toContain(id);
+  await major.run("spec-review", major.id, "resolve", id, "propose-fix", "--reason", "x");
+  expect((await major.run("spec-review", major.id, "close")).text).toContain("done: round 1 clean");
+  const cases: [string, string[], boolean][] = [
+    ["propose-fix", ["--reason", "x"], false],
+    ["contest", ["--reason", "x", "--evidence", "src/known.ts:known"], true],
+  ];
+  for (const [disposition, args, clean] of cases) {
+    const t = await item();
     await t.run("spec-review", t.id, "check");
-    await t.stage(5, { "goldfish-zoom-out": blocker("Goals", "the goal is false") });
-    const contested = await t.run(
-      "spec-review",
-      t.id,
-      "resolve",
-      findingId(t),
-      "contest",
-      "--reason",
-      "the spec decides it",
-      "--evidence",
-      "spec.md:The spec",
-    );
-    expect(contested.code).toBe(0);
-    for (const s of [6, 7, 8, 9]) await t.stage(s);
-    const closed = await t.run("spec-review", t.id, "close");
-    expect(closed.text).toContain("clean");
-    expect(closed.text).not.toContain("no progress");
+    await t.stage(5, { "goldfish-zoom-out": blocker() });
+    await t.run("spec-review", t.id, "resolve", findingId(t), disposition, ...args);
+    await rest(t);
+    await t.run("spec-review", t.id, "close");
+    expect(record(t)?.rounds[0]?.clean, disposition).toBe(clean);
   }
-  expect((await t.run("spec-review", t.id, "check")).code).toBe(0);
-  expect((await t.run("spec-review", t.id, "status")).text).not.toContain("stopped");
+  for (const [choice, clean] of [
+    ["confirm", true],
+    ["add-fact", false],
+  ] as const) {
+    const t = await item();
+    await t.run("spec-review", t.id, "check");
+    await t.stage(5, { "goldfish-zoom-out": blocker() });
+    const b = findingId(t);
+    await t.run("spec-review", t.id, "resolve", b, "escalate", "--reason", "a convention");
+    await rest(t);
+    const refused = await t.run("spec-review", t.id, "close");
+    expect(refused.code).toBe(1);
+    expect(refused.text).toContain(b);
+    await t.run("spec-review", t.id, "answer", b, choice, "--reason", "their words");
+    await t.run("spec-review", t.id, "close");
+    expect(record(t)?.rounds[0]?.clean, choice).toBe(clean);
+  }
+});
+
+test("2026-11-08-001 AC-9: an edit once the review is done leaves it done; an edit in an open round restarts that round", async () => {
+  const { specReviewMissing } = await import("../src/spec-review.ts");
+  const t = await item();
+  await t.quietRound();
+  writeFileSync(join(t.dir, "spec.md"), "# Spec\n\nThe fixes applied.\n");
+  expect(specReviewMissing(record(t))).toEqual([]);
+  expect((await t.run("spec-review", t.id, "check")).text).toContain("the spec review is done");
+  const open = await item();
+  await open.run("spec-review", open.id, "check");
+  await open.stage(5);
+  writeFileSync(join(open.dir, "plan.md"), "# Plan\n\n1. Changed mid-round.\n");
+  const fresh = await open.run("spec-review", open.id, "check");
+  expect(fresh.code).toBe(0);
+  expect(fresh.text).toContain("round 1");
+  expect(fresh.text).toContain("stage 5");
+  expect(record(open)?.rounds.length).toBe(1);
+});
+
+test("2026-11-08-001 AC-10: a record written under the old rules is read as it stands", async () => {
+  const { specReviewMissing, closeSpecRound, renderSpecReview, resolveSpecFinding } = await import(
+    "../src/spec-review.ts"
+  );
+  const stagesOf = (ns: number[]) => ns.map((stage) => ({ stage, reviewers: {}, at: "t" }));
+  const round = (n: number, clean: boolean) => ({
+    n,
+    hash: "old",
+    openedAt: "t",
+    closedAt: "t",
+    clean,
+    stages: stagesOf([5, 6, 7, 8, 9]),
+    findings: [],
+  });
+  expect(
+    specReviewMissing({ rounds: [round(1, false), round(2, false), round(3, false)] } as never),
+  ).toEqual([]);
+  expect(specReviewMissing({ rounds: [round(1, true)] } as never)).toEqual([]);
+  // An old round is not judged again: one closed not clean for a Major alone leaves the review
+  // not done, and round 2 opens on it.
+  const majorOnly = {
+    rounds: [
+      {
+        ...round(1, false),
+        findings: [
+          { id: "x", severity: "Major", scope: "s", text: "t", disposition: "propose-fix" },
+        ],
+      },
+    ],
+  };
+  expect(specReviewMissing(majorOnly as never).join()).toContain("not done");
+  // An open round that holds stage 6 and not 8, or 8 and not 6, closes once 5, 7 and 9 are there.
+  for (const held of [
+    [5, 6, 7, 9],
+    [5, 7, 8, 9],
+  ]) {
+    const open = {
+      rounds: [{ n: 1, hash: "old", openedAt: "t", stages: stagesOf(held), findings: [] }],
+    };
+    expect(closeSpecRound(open as never, "t"), held.join()).toBeNull();
+    expect(open.rounds[0]).toMatchObject({ clean: true, closedAt: "t" });
+  }
+  // An old round's paraphrase is still rendered, and its comprehension finding still never contested.
+  const old = {
+    rounds: [
+      {
+        n: 1,
+        hash: "old",
+        openedAt: "t",
+        stages: stagesOf([5, 6]),
+        paraphrase: "**What this proposes**\nA thing.",
+        findings: [
+          {
+            id: "comprehension-1.6-1",
+            round: 1,
+            reviewer: "goldfish-comprehension",
+            severity: "Blocker",
+            scope: "Overview",
+            text: "a gap",
+          },
+        ],
+      },
+    ],
+  };
+  expect(renderSpecReview(old as never)).toContain("**What this proposes**");
+  const refused = resolveSpecFinding(old as never, {
+    finding: "comprehension-1.6-1",
+    disposition: "contest",
+    reason: "clear to me",
+    evidence: "src/known.ts:known",
+  });
+  expect(refused).toContain("comprehension");
+});
+
+test("2026-11-08-001 AC-11: the texts say two rounds, a Blocker-only clean round and stages 5, 7 and 9", () => {
+  const read = (path: string) => readFileSync(join(import.meta.dir, "../../..", path), "utf8");
+  const files = [
+    "plugins/core/skills/wizardingcode-spec-review/SKILL.md",
+    "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
+    "docs/adr/0019-the-document-is-reviewed-before-the-code.md",
+    "docs/sources/ledger.json",
+    "packages/engine/src/cli.ts",
+  ];
+  for (const file of files) {
+    const text = read(file);
+    expect(text, file).not.toContain("two consecutive clean rounds");
+    expect(text, file).not.toContain("cap of 5");
+  }
+  const loop = read("plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md");
+  expect(loop).toContain("two rounds");
+  expect(loop).toContain("only an unsettled Blocker");
+  const review = read("plugins/core/skills/wizardingcode-spec-review/SKILL.md");
+  expect(review).not.toContain("6, comprehension");
+  expect(review).not.toContain("8, second zoom out");
+  const adr = read("docs/adr/0019-the-document-is-reviewed-before-the-code.md");
+  for (const words of ["At most two rounds", "no Blocker is unsettled", "stages 5, 7 and 9"])
+    expect(adr, words).toContain(words);
+  expect(review).toContain("Runs three stages");
+  expect(review).toContain("At most two rounds");
+  const rows = (JSON.parse(read("docs/sources/ledger.json")) as { rows: Record<string, string>[] })
+    .rows;
+  const row = (rule: string) => rows.find((r) => r.rule === rule);
+  expect(row("review: the five stages in order")).toMatchObject({
+    status: "refused",
+    decision: "D-3",
+  });
+  expect(row("review: the five stages in order")?.reason).toContain("stages 5, 7 and 9");
+  const loopRow = row("review-loop: two clean rounds, the cap, churn");
+  expect(loopRow).toMatchObject({ status: "refused", decision: "D-1" });
+  expect(loopRow?.reason).toContain("at most two rounds");
+  expect(loopRow?.reason).toContain("only an unsettled Blocker");
 });
