@@ -1,0 +1,159 @@
+{
+  "run": "2026-11-08-1",
+  "at": "2026-11-08T00:00:06.722Z",
+  "targets": [
+    "site-synth",
+    "spec-bootstrap-gate"
+  ],
+  "baseline": {
+    "site-synth": {
+      "name": "site-synth",
+      "runs": [
+        {
+          "score": 0.25,
+          "errored": true,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "not-generic",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md",
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 0.25,
+          "errored": true,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "not-generic",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 0.25,
+          "errored": true,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "not-generic",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        }
+      ],
+      "mean": 0.25,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/build.md",
+        "plugins/core/skills/crew/references/receive.md",
+        "plugins/core/skills/crew/references/writing.md",
+        "plugins/core/skills/crew/rubrics/spec-feature.md",
+        "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+        "plugins/core/skills/crew/rubrics/spec-readiness.md",
+        "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+        "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+        "plugins/core/skills/crew/rubrics/strategy.md"
+      ],
+      "errored": true,
+      "costUsd": 15.440554200000003
+    },
+    "spec-bootstrap-gate": {
+      "name": "spec-bootstrap-gate",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/wizardingcode-spec-bootstrap/references/templates.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/wizardingcode-spec-bootstrap/references/templates.md"
+      ],
+      "errored": false,
+      "costUsd": 0.2984886
+    }
+  },
+  "proposals": [],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 15.739042800000004,
+  "lessons": [],
+  "exit": 3,
+  "unmeasured": []
+}
