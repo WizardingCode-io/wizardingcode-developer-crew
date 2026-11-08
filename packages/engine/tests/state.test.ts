@@ -1,8 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import * as stateModule from "../src/state.ts";
-import { loadState, oneLine } from "../src/state.ts";
+import { loadState, oneLine, recordAdapterVersion, updateSession } from "../src/state.ts";
 import * as worktreeModule from "../src/worktree.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
 
@@ -91,4 +91,44 @@ test("DEBT-AC-7-worktree-of: isWorktreeOf reads a gitdir written with backslashe
   } finally {
     run.mockRestore();
   }
+});
+
+test("2026-11-08-002 AC-1: the adapters record survives a load and an unrelated update", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  mkdirSync(paths.localDir, { recursive: true });
+  const file = join(paths.localDir, "state.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      active: null,
+      sessions: { s: { baseline: null, stopBlocks: 0 } },
+      adapters: { "/r/a": "0.21.0", "/r/b": "x", "": "0.1.0" },
+    }),
+  );
+  expect(loadState(paths).adapters).toEqual({ "/r/a": "0.21.0" });
+  updateSession(paths, "s", (s) => {
+    s.stopBlocks = 1;
+  });
+  const raw = JSON.parse(readFileSync(file, "utf8")) as { adapters?: unknown };
+  expect(raw.adapters).toEqual({ "/r/a": "0.21.0" });
+  writeFileSync(file, JSON.stringify({ active: null, sessions: {}, adapters: [] }));
+  expect("adapters" in loadState(paths)).toBe(false);
+});
+
+test("2026-11-08-002 AC-8: a record write drops the roots that are gone", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  mkdirSync(paths.localDir, { recursive: true });
+  const live = tempDir();
+  mkdirSync(join(live, "dist"));
+  writeFileSync(join(live, "dist", "crew.mjs"), "");
+  const gone = join(tempDir(), "gone");
+  const run = tempDir();
+  mkdirSync(join(run, "dist"));
+  writeFileSync(join(run, "dist", "crew.mjs"), "");
+  writeFileSync(
+    join(paths.localDir, "state.json"),
+    JSON.stringify({ active: null, sessions: {}, adapters: { [live]: "0.1.0", [gone]: "0.1.0" } }),
+  );
+  recordAdapterVersion(paths, run, "0.2.0");
+  expect(loadState(paths).adapters).toEqual({ [live]: "0.1.0", [run]: "0.2.0" });
 });

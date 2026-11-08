@@ -47,6 +47,12 @@ export interface LocalState {
   active: string | null;
   sessions: Record<string, SessionState>;
   working?: WorkingRole[];
+  /**
+   * Canonical plugin root → the engine version that last brought that root's runtime adapters up
+   * to date in this checkout (item 2026-11-08-002). A skip key for SessionStart: absent or another
+   * version, the adapters are checked; written only through `recordAdapterVersion`.
+   */
+  adapters?: Record<string, string>;
 }
 
 /** A session is live within ten minutes of its last hook and until its SessionEnd (session lanes, AC-1). */
@@ -173,13 +179,45 @@ function wellShapedSessions(raw: unknown): Record<string, SessionState> {
   return kept;
 }
 
+const VERSION_SHAPE = /^\d+\.\d+\.\d+$/;
+
+/**
+ * The adapters record of a state file as the engine writes it: a non-empty root to an `X.Y.Z`
+ * version (the release script writes only such versions). Any other entry is dropped, and a record
+ * with nothing left is absent, so a malformed file never makes a start throw.
+ */
+function wellShapedAdapters(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const kept: Record<string, string> = {};
+  for (const [root, version] of Object.entries(raw))
+    if (root !== "" && typeof version === "string" && VERSION_SHAPE.test(version))
+      kept[root] = version;
+  return Object.keys(kept).length > 0 ? kept : undefined;
+}
+
 export function loadState(paths: CrewPaths): LocalState {
   const raw = readJson<Partial<LocalState>>(statePath(paths)) ?? {};
+  const adapters = wellShapedAdapters(raw.adapters);
   return {
     active: typeof raw.active === "string" ? raw.active : null,
     sessions: wellShapedSessions(raw.sessions),
     ...(Array.isArray(raw.working) ? { working: wellShaped(raw.working) } : {}),
+    ...(adapters ? { adapters } : {}),
   };
+}
+
+/**
+ * The one writer of the adapters record: `root` now stands at `version`, and the entries of roots
+ * that no longer hold `dist/crew.mjs` (a plugin-cache version folder Claude Code deleted) go.
+ */
+export function recordAdapterVersion(paths: CrewPaths, root: string, version: string): void {
+  updateState(paths, (state) => {
+    const kept: Record<string, string> = {};
+    for (const [entry, at] of Object.entries(state.adapters ?? {}))
+      if (entry === root || existsSync(join(entry, "dist", "crew.mjs"))) kept[entry] = at;
+    kept[root] = version;
+    state.adapters = kept;
+  });
 }
 
 export function saveState(paths: CrewPaths, state: LocalState): void {
