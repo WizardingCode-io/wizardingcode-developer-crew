@@ -105,9 +105,17 @@ function runner(
   fail: (cmd: readonly string[]) => Scripted = () => false,
   before: (cmd: readonly string[]) => void = () => {},
   answers: Partial<Record<"start" | "done", (version: string) => RecordResult>> = {},
+  extra: {
+    /** The fake tar writes the install's bundle too, so step 12 has a command to run (item 2026-11-08-002). */
+    installBundle?: boolean;
+    /** What the install's `crew projects update` answers; status 0 with no output otherwise. */
+    projectsUpdate?: ReturnType<CommandRunner>;
+  } = {},
 ): {
   run: CommandRunner;
   seen: string[][];
+  /** Each command's options, in `seen`'s order (item 2026-11-08-002: the bound and the home of step 12). */
+  seenOpts: Parameters<CommandRunner>[1][];
   world: World;
   /** The commands and the record calls in one order, the records as `record:start` and `record:done`. */
   events: string[];
@@ -115,6 +123,7 @@ function runner(
   record: ReleaseRecord;
 } {
   const seen: string[][] = [];
+  const seenOpts: Parameters<CommandRunner>[1][] = [];
   const events: string[] = [];
   const recorded: [string, string][] = [];
   const answer = (what: "start" | "done", version: string): RecordResult => {
@@ -153,6 +162,7 @@ function runner(
   const ok = (stdout = "") => ({ status: 0, exit: 0, stdout, stderr: "" });
   const run: CommandRunner = (cmd, opts) => {
     seen.push([...cmd]);
+    seenOpts.push(opts);
     events.push(cmd.join(" "));
     if (opts.env?.GH_TOKEN) world.tokened.push([...cmd]);
     before(cmd);
@@ -229,15 +239,20 @@ function runner(
       return ok("{}");
     }
     if (cmd[0] === "tar") {
-      // The archive extracted: its top folder with the new bin.
+      // The archive extracted: its top folder with the new bin, and the bundle when a row asks for it.
       const dest = cmd[cmd.indexOf("-C") + 1] as string;
       mkdirSync(join(dest, "wizardingcode-developer-crew", "bin"), { recursive: true });
       writeFileSync(join(dest, "wizardingcode-developer-crew", "bin", "crew"), "new");
+      if (extra.installBundle) {
+        mkdirSync(join(dest, "wizardingcode-developer-crew", "dist"), { recursive: true });
+        writeFileSync(join(dest, "wizardingcode-developer-crew", "dist", "crew.mjs"), "bundle");
+      }
       return ok();
     }
+    if (cmd[0] === "node" && cmd.includes("projects")) return extra.projectsUpdate ?? ok();
     return ok();
   };
-  return { run, seen, world, events, recorded, record };
+  return { run, seen, seenOpts, world, events, recorded, record };
 }
 
 const versionsIn = (root: string): string[] =>
@@ -306,7 +321,7 @@ test("2026-10-31-002 AC-4: a zero exit with empty output is no token: the releas
   expect(seen.filter((c) => c[0] === "gh" && c[1] === "release")).toEqual([]);
 });
 
-test("2026-10-25-005 AC-7: a patch release writes the version into every release file, the two test literals and the packs' bound, runs the twelve steps in order, and the marketplace, the tag and the local install follow", async () => {
+test("2026-10-25-005 AC-7: a patch release writes the version into every release file, the two test literals and the packs' bound, runs the thirteen steps in order, and the marketplace, the tag and the local install follow", async () => {
   const { root, origin, home } = fixture();
   const { run, seen, world } = runner(root);
   const log: string[] = [];
@@ -333,7 +348,7 @@ test("2026-10-25-005 AC-7: a patch release writes the version into every release
   expect(JSON.parse(readFileSync(join(root, "packs/laravel/pack.json"), "utf8")).core).toBe(
     `>=${NEW}`,
   );
-  // Steps 2 to 12 in order, by their commands.
+  // Steps 2 to 13 in order, by their commands (step 12 runs none: the fixture's install holds no bundle).
   expect(programs(seen)).toEqual([
     "bun run build",
     "bun run check",
@@ -387,12 +402,12 @@ test("2026-10-25-005 AC-7: a patch release writes the version into every release
     readFileSync(join(home, ".local/share/wizardingcode-developer-crew/bin/crew"), "utf8"),
   ).toBe("new");
   expect(existsSync(join(home, ".local/share/wizardingcode-developer-crew.previous"))).toBe(false);
-  // Step 12: the notification names the version.
+  // Step 13: the notification names the version.
   const notify = seen.find((c) => c[0] === "osascript") as string[];
   expect(notify.join(" ")).toContain(`crew ${NEW}`);
 });
 
-test("2026-10-25-005 AC-7: --dry-run prints the twelve steps and changes nothing; a dirty tree or another branch is refused before anything is written", async () => {
+test("2026-10-25-005 AC-7: --dry-run prints the thirteen steps and changes nothing; a dirty tree or another branch is refused before anything is written", async () => {
   const { root, home } = fixture();
   const dry = runner(root);
   const log: string[] = [];
@@ -402,7 +417,7 @@ test("2026-10-25-005 AC-7: --dry-run prints the twelve steps and changes nothing
       { run: dry.run, log: (l) => log.push(l) },
     ),
   ).toBe(0);
-  expect(log.filter((l) => /^\s*\d+\. /.test(l))).toHaveLength(12);
+  expect(log.filter((l) => /^\s*\d+\. /.test(l))).toHaveLength(13);
   expect(log.join("\n")).toContain(`Release ${NEW}: x`);
   expect(programs(dry.seen)).toEqual([]);
   expect(staleReleaseFiles(root, OLD)).toEqual([]);
@@ -672,9 +687,9 @@ test("2026-11-01-003 AC-40: the notification's failure is logged with its head a
   );
   const { code, lines } = await releaseLog(root, home, at.run);
   expect(code).toBe(0);
-  const head = lines.findIndex((l) => l.startsWith("step 12 (the notification) failed: "));
+  const head = lines.findIndex((l) => l.startsWith("step 13 (the notification) failed: "));
   expect(head).toBeGreaterThan(0);
-  expect(lines[head]).toContain(`dist/release-${NEW}-step-12.log`);
+  expect(lines[head]).toContain(`dist/release-${NEW}-step-13.log`);
   expect(lines[head]?.endsWith(" (not fatal: the release is out)")).toBe(true);
   expect(lines.slice(head + 1, head + 3)).toEqual([
     "  last lines:",
@@ -767,7 +782,7 @@ test("2026-11-01-003 AC-40: a green run leaves no step file", async () => {
   const { root, home } = fixture();
   const { run } = runner(root);
   expect(await release({ root, bump: "patch", reason: "x", home }, { run, log: () => {} })).toBe(0);
-  for (let n = 1; n <= 12; n++) expect(existsSync(stepLog(root, n)), `step ${n}`).toBe(false);
+  for (let n = 1; n <= 13; n++) expect(existsSync(stepLog(root, n)), `step ${n}`).toBe(false);
 });
 
 test("2026-11-01-003 AC-41: the real runner captures 64 MiB per stream and names a signal with a null exit while the status stays a number", () => {
@@ -896,7 +911,7 @@ test("2026-11-01-003 AC-43: a start that recorded nothing, refused or threw is l
     expect(code, lines.join("\n")).toBe(0);
     for (const line of logged) expect(lines).toContain(line);
     expect(at.recorded.length).toBe(calls);
-    expect(lines).toContain("  12. the notification: ok");
+    expect(lines).toContain("  13. the notification: ok");
   }
 });
 
@@ -1028,4 +1043,146 @@ test("2026-11-01-003 AC-43: step 5 commits only what the release wrote on the co
   expect(sixth.code).toBe(1);
   expect(sixth.lines.some((l) => l.startsWith("  discarded by the rollback"))).toBe(false);
   expect(sh(tracked.root, "status", "--porcelain").trim()).toBe("");
+});
+
+test("2026-11-08-002 AC-6: the project update runs before the notification, soft and bounded", async () => {
+  // The plan: thirteen steps, the update twelfth, from the tarball install's bundle.
+  const planned = fixture();
+  const dry = runner(planned.root);
+  const planLog: string[] = [];
+  expect(
+    await release(
+      { root: planned.root, bump: "patch", reason: "x", home: planned.home, dryRun: true },
+      { run: dry.run, log: (l) => planLog.push(l) },
+    ),
+  ).toBe(0);
+  const steps = planLog.filter((l) => /^\s*\d+\. /.test(l));
+  expect(steps).toHaveLength(13);
+  expect(steps[11]).toContain("12. the project update: node ");
+  expect(steps[11]).toContain("/dist/crew.mjs projects update (skipped when absent; 300 s bound)");
+  expect(steps[12]).toContain("13. the notification: ");
+  // The install holds a bundle: the step runs it with the bound and the release's home, and the
+  // notification carries its count line.
+  const count =
+    "1 updated, 0 would update, 2 up to date, 0 stale, 0 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone";
+  const answers = async (
+    update: ReturnType<CommandRunner> | undefined,
+    tar: { installBundle?: boolean } = { installBundle: true },
+  ) => {
+    const { root, home } = fixture();
+    const at = runner(root, undefined, undefined, {}, { ...tar, projectsUpdate: update });
+    const log: string[] = [];
+    const code = await release(
+      { root, bump: "patch", reason: "x", home, githubAccount: "andreagroferreira" },
+      { run: at.run, log: (l) => log.push(l) },
+    );
+    const notify = (at.seen.find((c) => c[0] === "osascript") ?? []).join(" ");
+    const update12 = at.seen.find((c) => c[0] === "node" && c.includes("projects"));
+    const opts12 = at.seenOpts[at.seen.findIndex((c) => c[0] === "node" && c.includes("projects"))];
+    return { code, log, notify, update12, opts12, home };
+  };
+  const ok = await answers({ status: 0, exit: 0, stdout: `${count}\n`, stderr: "" });
+  expect(ok.code, ok.log.join("\n")).toBe(0);
+  expect(ok.update12).toEqual([
+    "node",
+    join(ok.home, ".local/share/wizardingcode-developer-crew/dist/crew.mjs"),
+    "projects",
+    "update",
+  ]);
+  expect(ok.opts12?.timeoutMs).toBe(300_000);
+  expect(ok.opts12?.env?.HOME).toBe(ok.home);
+  expect(ok.notify).toContain(`projects: ${count}`);
+  expect(ok.log).toContain("  12. the project update: ok");
+  expect(ok.log).toContain("  13. the notification: ok");
+  // Exit 1 with a count line: the line and the exit, the release still 0.
+  const refused = await answers({
+    status: 1,
+    exit: 1,
+    stdout:
+      "0 updated, 0 would update, 1 up to date, 0 stale, 1 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone\n",
+    stderr: "",
+  });
+  expect(refused.code).toBe(0);
+  expect(refused.notify).toContain(
+    "projects: 0 updated, 0 would update, 1 up to date, 0 stale, 1 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone (exit 1)",
+  );
+  // A failure with no count line: not updated with the cause, logged soft, the release 0.
+  const boom = await answers({ status: 1, exit: 1, stdout: "", stderr: "boom\n" });
+  expect(boom.code).toBe(0);
+  expect(boom.notify).toContain("projects: not updated (boom)");
+  expect(
+    boom.log.some(
+      (l) =>
+        l.startsWith("step 12 (the project update) failed: ") &&
+        l.endsWith("(not fatal: the release is out)"),
+    ),
+  ).toBe(true);
+  // Killed at the bound with two project lines out: the signal and the lines printed.
+  const killed = await answers({
+    status: 1,
+    exit: null,
+    stdout: "a /x: copilot updated (1 differed, 0 removed)\nb /y: up to date\n",
+    stderr: "",
+    signal: "SIGTERM",
+  });
+  expect(killed.code).toBe(0);
+  expect(killed.notify).toContain(
+    "projects: not updated (killed by SIGTERM; 2 project lines printed)",
+  );
+  // Status 0 and no output at all: done.
+  const silent = await answers({ status: 0, exit: 0, stdout: "", stderr: "" });
+  expect(silent.notify).toContain("projects: done");
+  // No bundle in the install (the fixture's tar writes bin/crew alone): the step runs no command.
+  const absent = await answers(undefined, {});
+  expect(absent.code).toBe(0);
+  expect(absent.update12).toBeUndefined();
+  expect(absent.notify).toContain("projects: skipped (no local install)");
+  expect(absent.log).toContain("  12. the project update: ok");
+  // A resume from the notification runs no update: not run; a resume from 12 runs both.
+  const { root, home } = fixture();
+  const first = runner(root);
+  expect(
+    await release(
+      { root, bump: "patch", reason: "x", home, githubAccount: "andreagroferreira" },
+      { run: first.run, log: () => {} },
+    ),
+  ).toBe(0);
+  const from13 = runner(root, undefined, undefined, {}, { installBundle: true });
+  from13.world.released.add(`v${NEW}`);
+  expect(
+    await release(
+      { root, resume: NEW, fromStep: 13, reason: "x", home },
+      { run: from13.run, log: () => {} },
+    ),
+  ).toBe(0);
+  expect(from13.seen.some((c) => c[0] === "node" && c.includes("projects"))).toBe(false);
+  expect((from13.seen.find((c) => c[0] === "osascript") ?? []).join(" ")).toContain(
+    "projects: not run",
+  );
+  // A resume from 12 runs no step 11, so the install's bundle is already there.
+  mkdirSync(join(home, ".local/share/wizardingcode-developer-crew/dist"), { recursive: true });
+  writeFileSync(join(home, ".local/share/wizardingcode-developer-crew/dist/crew.mjs"), "bundle");
+  const from12 = runner(
+    root,
+    undefined,
+    undefined,
+    {},
+    {
+      projectsUpdate: { status: 0, exit: 0, stdout: `${count}\n`, stderr: "" },
+    },
+  );
+  from12.world.released.add(`v${NEW}`);
+  expect(
+    await release(
+      { root, resume: NEW, fromStep: 12, reason: "x", home },
+      { run: from12.run, log: () => {} },
+    ),
+  ).toBe(0);
+  expect(programs(from12.seen)).toEqual([
+    `node ${join(home, ".local/share/wizardingcode-developer-crew/dist/crew.mjs")} projects`,
+    "osascript -e",
+  ]);
+  expect((from12.seen.find((c) => c[0] === "osascript") ?? []).join(" ")).toContain(
+    `projects: ${count}`,
+  );
 });

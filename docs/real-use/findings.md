@@ -1806,6 +1806,14 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Evidence: `git reflog` (`0d99e4f HEAD@{2026-11-05 15:44:50 +0000}: merge origin/main: Fast-forward`), `git show --stat 0d99e4f` (three files under `docs/improve/`), `.crew/local/state.json` (this session's baseline `sha256:fe3203e9…`, the tree's fingerprint then `sha256:dc5429da…`).
 - Outcome: fixed in 2026-11-05-001: the session keeps the commit its no-item baseline was measured from (`baselineCommit`, set at SessionStart and by the release's end record), and the no-item Stop rule measures the tree from that commit; a commit with watched changes, the loop's included, still blocks (the user's D-1 of 2026-11-06).
 
+### 226. A release never reaches the runtime adapters installed in a project
+
+- Date: 2026-11-06. Project: cf-ecommerce-v3 and rockport-new. Category: `bug`. Severity: medium.
+- What happened: `crew runtime check copilot` in each project said `skill: stale (30 files differ)` and `agents: stale (16 files differ)`. The Copilot configuration of each names the tarball install (`~/.local/share/wizardingcode-developer-crew`), which the release refreshes at its step 11, but nothing installs the copies inside a project again, and no file under `.crew/` records which engine version last wrote them.
+- Expected: a release reaches the adapters installed in every project, and each checkout says which engine version last brought them up to date (D-2 of item 2026-11-04-001).
+- Evidence: the two `.github/hooks/crew.json` files, each with `node ~/.local/share/wizardingcode-developer-crew/dist/crew.mjs hook …` commands; the two `crew runtime check copilot` outputs of 2026-11-06.
+- Outcome: fixed in 2026-11-08-002 (ADR 0023): the adapters whose configuration names the running engine's root are refreshed at the project's next session start and by `crew projects update`, which the release runs as its step 12; the version is recorded per root in the checkout's local state.
+
 ### 227. The document review of a spec runs to its cap and never converges, so the work circles in every project
 
 - Date: 2026-11-08. Project: this repository, item `2026-11-06-001` (the adapters item), and the user's projects (reported by the user). Category: `friction`. Severity: high.

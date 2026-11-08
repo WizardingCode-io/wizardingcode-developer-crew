@@ -1,0 +1,28 @@
+# 0023. A release reaches the runtime adapters of every project
+
+- Status: accepted (the user, 2026-11-06 to 2026-11-08: decisions D-1 to D-9 of item 2026-11-08-002).
+- Date: 2026-11-08
+
+## Context
+
+A runtime adapter is the copy of the crew's skill, its agents and a hook configuration that Copilot, Codex, Cursor, Gemini or OpenCode keep inside a project (ADR 0011). A release refreshed the plugin root the configuration names (the tarball install, `scripts/release.ts` step 11) and nothing installed the copies inside a project again: on 2026-11-06 the Copilot adapters of two client projects were stale by 30 skill files and 16 agents, and no checkout recorded which engine version last updated it (finding 226; finding 223's analysis).
+
+A session with no active item takes a baseline of the files the gates watch and stops a turn while one differs from it, measured against the session's baseline commit, so a refresh that rewrites a watched file after another session's baseline blocks that session's Stops until it starts a new session. Of an adapter's files only the configuration files, OpenCode's plugin file and Codex's `crew-*.toml` agents are watched.
+
+## Decision
+
+1. **Own root only.** An engine refreshes only the adapters whose configuration names its own plugin root, and never re-roots an adapter: one on another root is reported (gone, an older folder of Claude Code's plugin cache with the command that fixes it, another engine's), never rewritten (D-4).
+2. **The record is a skip key.** The checkout's local state (`.crew/local/state.json`, never committed) records, per canonical root, the engine version that last brought that root's adapters up to date; it is written only once a check after the refresh says every adapter is ok, and read only to skip the check at the same version. An engine shipped before this item erases it at its next write, at the cost of one check per start.
+3. **When nothing is written.** A refresh writes nothing in a task worktree, while the checkout has an active item, in a resumed or compacted session or beside a live one when a configuration or a Codex agent would change (D-5: the watch list is kept), over a register changed outside the engine, outside a git repository, and over adapter files that are uncommitted, untracked or ignored, the engine's own earlier refresh included (D-1, D-9). Each reason is said; the exact commit command is printed when a refresh wrote.
+4. **Every own-root adapter is installed together**, under one hold of the checkout's `adapters` lock, the checks run again first, the link walk and the git status repeated under the hold, the deadline checked before each install; the install writes the configuration last and only when its value differs, prunes only the leftovers git can bring back (tracked and unchanged), and refuses a symbolic link or a path that leaves the project; the check compares the configuration with what the install would write, and its parts are data.
+5. **SessionStart** runs the refresh inside an 8 s deadline before it takes its baseline, then waits for the `adapters` lock before the baseline whatever it did, so no baseline is taken while a refresh writes; its line follows the engine's, and `crew status` prints the last register entry for the runtimes with no context at start.
+6. **`crew projects update [--dry-run] [--json]`** does the same for every registered project under its rules, checks the user scope and never writes it (D-6), and is asked by the PreToolUse guard before a real run (D-7). The release runs it from the tarball's bundle as step 12, soft and bounded at five minutes (D-3), an unattended release by the improvement loop too (D-8).
+7. **Every text a repository controls** (a root, a path, a message) passes `quotedText` at 200 characters before it reaches a context line, a register entry or the command's output, and every git call on these paths passes `-c core.fsmonitor=false`.
+
+## Consequences
+
+- An engine shipped before this item erases the record; while such a session is open each start pays one check per own-root adapter and writes nothing when the adapters are ok.
+- A project whose item stays active for days, or that never commits a refresh, keeps a stale adapter until the item closes or a person commits; the line and the fleet's count say so.
+- One window remains where a refresh blocks a live session's Stops: a neighbour idle for more than 10 minutes, only when a watched file changes; a new session ends it. A start whose wait for the lock outruns its deadline is named.
+- The shared `.agents/skills/crew-method` follows the engine that ran last when two roots meet in one project; reported, not fixed.
+- Alternatives (the spec's "Alternatives considered"): the running engine refreshing every adapter from the root each names; a child `crew runtime install` per adapter; no record and a hash check at every start; `crew projects update` alone; re-rooting to the running root; leaving crew's paths out of the watch list; writing the user scope; the skill copy as its own unit; an older engine never touching a newer record; `removeRuntime` then `installRuntime` as the prune; no committed copy at all; one lock hold per install.

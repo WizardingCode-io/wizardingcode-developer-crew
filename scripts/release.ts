@@ -18,6 +18,7 @@ import {
   recordReleaseDone,
   recordReleaseStart,
 } from "../packages/engine/src/release-record.ts";
+import { compareVersions } from "../packages/engine/src/version.ts";
 import { improveState } from "./improve-home.ts";
 
 /** The bundle the build writes and the release commits beside the version files. */
@@ -53,19 +54,13 @@ export type Bump = "patch" | "minor" | "major" | { version: string };
 export function nextVersion(current: string, bump: Bump): string {
   const [major, minor, patch] = current.split(".").map(Number) as [number, number, number];
   if (typeof bump === "object") {
-    if (compare(bump.version, current) <= 0)
+    if (compareVersions(bump.version, current) <= 0)
       throw new Error(`${bump.version} is not above ${current}`);
     return bump.version;
   }
   if (bump === "major") return `${major + 1}.0.0`;
   if (bump === "minor") return `${major}.${minor + 1}.0`;
   return `${major}.${minor}.${patch + 1}`;
-}
-
-function compare(a: string, b: string): number {
-  const [x, y] = [a.split(".").map(Number), b.split(".").map(Number)];
-  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0);
-  return 0;
 }
 
 /** The two tests that assert the version by a literal, beside the files CLAUDE.md lists. */
@@ -151,6 +146,8 @@ export type CommandRunner = (
     input?: string;
     /** The command's output is a secret (a token): never printed. */
     quiet?: boolean;
+    /** The command is killed past this many milliseconds (the project update's bound, item 2026-11-08-002). */
+    timeoutMs?: number;
   },
 ) => CommandResult;
 
@@ -288,7 +285,7 @@ export const MARKETPLACE_REPO = "WizardingCode-io/wizardingcode-plugins";
 export const MARKETPLACE_FILE = ".claude-plugin/marketplace.json";
 export const PLUGIN_NAME = "wizardingcode-developer-crew";
 const PUSH_STEP = 6;
-/** The twelve steps by name, for the plan, the log and the loop's report. */
+/** The thirteen steps by name, for the plan, the log and the loop's report. */
 export const RELEASE_STEP_NAMES = [
   "the version files",
   "bun run build",
@@ -301,8 +298,11 @@ export const RELEASE_STEP_NAMES = [
   "the marketplace entry",
   "the plugin update here",
   "the local install",
+  "the project update",
   "the notification",
 ] as const;
+/** The bound of the project update (step 12): the registry's 45 entries at under 6 s each (the spec's Risks). */
+const PROJECT_UPDATE_TIMEOUT_MS = 300_000;
 
 /** The marketplace's own version for a plugin version: `2.Y.Z` of our `X.Y.Z`. */
 export function marketplaceVersion(version: string): string {
@@ -494,6 +494,8 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   };
   const notify = (body: string) => sh(notificationCommand(`crew ${version}`, body));
 
+  // What step 12 did, for the notification: its count line, or why it did not update.
+  let projectCounts = "not run";
   const steps: Step[] = [
     {
       n: 1,
@@ -691,10 +693,50 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     {
       n: 12,
       name: RELEASE_STEP_NAMES[11],
+      command: `node ${install}/dist/crew.mjs projects update (skipped when absent; 300 s bound)`,
+      soft: true,
+      run: () => {
+        // The adapters of every registered project, refreshed by the bundle step 11 swapped in,
+        // so the root they name is the tarball's (item 2026-11-08-002, AC-6; D-3: soft; D-8: an
+        // unattended release runs it the same way).
+        const bundle = join(install, "dist", "crew.mjs");
+        if (!existsSync(bundle)) {
+          projectCounts = "skipped (no local install)";
+          return null;
+        }
+        const r = deps.run(["node", bundle, "projects", "update"], {
+          cwd: root,
+          timeoutMs: PROJECT_UPDATE_TIMEOUT_MS,
+          env: { HOME: home },
+        });
+        const count = r.stdout.split("\n").find((l) => /^\d+ updated, /.test(l));
+        // The project lines come first, before the user scope's line: what a killed run printed.
+        const userLine = r.stdout.indexOf("user scope: ");
+        const printed = (userLine >= 0 ? r.stdout.slice(0, userLine) : r.stdout)
+          .split("\n")
+          .filter((l) => l.trim() !== "").length;
+        if (r.signal)
+          projectCounts = `not updated (killed by ${r.signal}; ${printed} project lines printed)`;
+        else if (count) projectCounts = r.status === 0 ? count : `${count} (exit ${r.status})`;
+        else if (r.status === 0) projectCounts = "done";
+        else {
+          const first = (r.stderr.trim() || r.stdout.trim()).split("\n")[0] ?? "";
+          projectCounts = `not updated (${first})`;
+        }
+        return ok(r, "the project update", 12);
+      },
+    },
+    {
+      n: 13,
+      name: RELEASE_STEP_NAMES[12],
       command: `osascript: crew ${version}: ${reason}`,
       soft: true,
       run: () =>
-        ok(notify(`${reason}. Released, published and installed here.`), "the notification", 12),
+        ok(
+          notify(`${reason}. Released, published and installed here; projects: ${projectCounts}.`),
+          "the notification",
+          13,
+        ),
     },
   ];
 
@@ -811,6 +853,7 @@ export function spawnRunner(print: boolean): CommandRunner {
       encoding: "utf8",
       stdio: opts.input === undefined ? ["inherit", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
       maxBuffer: CAPTURE_BYTES,
+      ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
     });
     if (print && r.stdout && !opts.quiet) process.stdout.write(r.stdout);
     return {
