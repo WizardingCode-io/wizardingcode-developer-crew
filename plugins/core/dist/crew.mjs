@@ -3965,7 +3965,7 @@ function adoptMainFiles(paths) {
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.21.0";
+var VERSION = "0.22.0";
 function compareVersions(a, b) {
   const x = a.split(".").map(Number);
   const y = b.split(".").map(Number);
