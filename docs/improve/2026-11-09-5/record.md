@@ -1,0 +1,58 @@
+# Improvement run 2026-11-09-5
+
+- At: 2026-11-09T21:00:07.074Z
+- Targets: root-cause-not-repeated, unknown-stack
+- Provider: runtime (agent claude-sonnet-5-5, judge claude-opus-5-5)
+
+## Baseline
+
+| Case | Scores | Mean | Spread |
+| :- | :- | -: | -: |
+| root-cause-not-repeated | 1.00, 1.00, 1.00 | 1.00 | 0.00 |
+| unknown-stack | 0.67, 0.67, 1.00 | 0.78 | 0.33 |
+
+## P-1: lose
+
+- Diff: M plugins/core/skills/crew/SKILL.md
+- Rationale: I changed one harness page and nothing else: `plugins/core/skills/crew/SKILL.md`. Nothing was run in this session (no shell), so there is no test run and no eval rerun, and whether the score moves is unmeasured. `root-cause-not-repeated` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `unknown-stack`, `proposed-command` counts a Bash call matching `crew profile set test`. A mean of 0.78 with spread 0.33 fits one run of three passing all three graders and two losing only this one. I had no traces from this baseline; the 2026-11-02-4 runs show this grader failing with `reads: []`, so I took the skill page as the only harness text the lead reads. The cause is inferred from the page and the engine: step 2 of the fast route offered `-- <cmd>` with no word on an empty profile, so the lead most likely passed `-- make test` to `crew tdd red`, met `test unavailable` at the gate run and ended "not proven" with the command only offered in prose. Step 2 now opens with: "No test command: propose one, `crew profile set test "<cmd>"` (rule 4; set with `--mode`: say unconfirmed), never only `--`." That puts the proposal on record through the engine, as the engine's own `Propose one:` line asks. It keeps the decision the user's under rule 4. The ending still says the command is unconfirmed when the agent set it with nobody present, which matters because the engine confirms a command as it sets it. The page is capped at 9254 bytes and sat at 9251, so the 124 added bytes were paid for with nine small trims that no test in `packages/engine/tests` matches: the opening line, the typed-questions sentence, the fast-route heading's ", in three calls", "is on this page", the Gate row's " as subagents", rule 4's "the command runs with no prompt", rule 6's "The answers are required; " and "Write the test for the criterion". Length probes put the page at 9250 to 9254 bytes afterwards (my hand count says 9252).
+- Probe set: root-cause-not-repeated, unknown-stack
+- Gain: -0.11
+
+| Case | Scores | Mean | Spread |
+| :- | :- | -: | -: |
+| root-cause-not-repeated | 1.00, 1.00, 1.00 | 1.00 | 0.00 |
+| unknown-stack | 1.00, 0.00, 1.00 | 0.67 | 1.00 |
+
+## P-2: lose
+
+- Diff: M plugins/core/skills/crew/SKILL.md
+- Rationale: I changed one harness page and nothing else: `plugins/core/skills/crew/SKILL.md`. Nothing was run in this session (no shell), so there are no tests and no eval rerun, and whether the score moves is unmeasured. `root-cause-not-repeated` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `unknown-stack`, `proposed-command` wants a Bash call containing `crew profile set test`. The fixture is a Makefile project no detector knows, and earlier records show `reads: []`, so the skill page is the only harness text the lead reads. On that page, fast-route step 2 offered only `-- <cmd>` for the red, while rule 4 lists `crew profile set` as the user's decision. My reading is that a lead with nobody present therefore passes `-- make test`, meets `test unavailable` at the gate run, and ends "not proven" with the command offered only in prose. Step 2 now ends with: "No test command: first `crew profile set test "<cmd>"` (rule 4; with `--mode`, say unconfirmed), never only `--`." That makes the proposal a typed command before the red, and it keeps the ending honest for the `needs-confirmation` grader: the engine marks the command confirmed as it is set, so the lead must say no person confirmed it. The page sits 3 bytes under its 9254-byte cap, so the 114-byte sentence is paid for by trims of wording I checked no test pins:
+
+- "The `crew` command is the engine" → "`crew` is the engine"
+- "when the work is done" → "when work is done"
+- "; they go to `crew start` as `--answers`" → ", for `crew start --answers`"
+- "sends the work to" → "means"
+- the fast-route heading's ", in three calls" removed
+- "is on this page" → "is here"
+- "Write the test for the criterion" → "Write the criterion's test"
+- "then run the command" → "then the command"
+- "the command runs with no prompt" → "no prompt appears"
+- rule 6's "The answers are required; " removed
+
+Regex probes put the page at 9243–9250 characters with two `…`, so at most 9254 bytes.
+- Probe set: root-cause-not-repeated, unknown-stack
+- Gain: -0.44
+
+| Case | Scores | Mean | Spread |
+| :- | :- | -: | -: |
+| root-cause-not-repeated | 1.00, 1.00, 1.00 | 1.00 | 0.00 |
+| unknown-stack | 0.67, 0.00, 0.33 | 0.33 | 0.67 |
+
+## Outcome
+
+- Composition: none
+- Kept: nothing
+- Lessons: K-339, K-340
+- Cases no run has measured (never probed): none
+- Cost: 6.37 USD
+- Exit status: 0
