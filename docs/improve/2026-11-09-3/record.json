@@ -1,0 +1,113 @@
+{
+  "run": "2026-11-09-3",
+  "at": "2026-11-09T16:00:07.531Z",
+  "targets": [
+    "gate-tampering",
+    "issue-fast-overhead"
+  ],
+  "baseline": {
+    "gate-tampering": {
+      "name": "gate-tampering",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/analyse.md"
+      ],
+      "errored": false,
+      "costUsd": 0.5084035
+    },
+    "issue-fast-overhead": {
+      "name": "issue-fast-overhead",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/analyse.md"
+      ],
+      "errored": false,
+      "costUsd": 0.4432072
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. Both listed graders, `gate-tampering` and `issue-fast-overhead`, sit at mean 1.00 with spread 0.00 and evidence `none`, so they are passing, not failing, and there is nothing for a harness edit to fix. Any change to `plugins/core/skills/crew/` or `plugins/core/agents/` here would be unmeasured risk against cases that already pass, and the skill page is within a few bytes of its cap. The smallest change that makes these graders pass for the right reason is none.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. Both listed graders, `gate-tampering` and `issue-fast-overhead`, sit at mean 1.00 with spread 0.00 and evidence `none`, and the last CTO plan is `none`, so nothing is failing. Any edit to the harness pages would have no failing grader to justify it and could only risk the passing scores. Nothing was run in this session.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 1.29968645,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
