@@ -1,0 +1,223 @@
+{
+  "run": "2026-11-09-6",
+  "at": "2026-11-09T22:00:07.155Z",
+  "targets": [
+    "env-observed-proof",
+    "gap-redirect-target"
+  ],
+  "baseline": {
+    "env-observed-proof": {
+      "name": "env-observed-proof",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "lifecycle",
+              "explanation": "pattern not found in file var/log.txt"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8666666666666667,
+      "spread": 0.4,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.861251
+    },
+    "gap-redirect-target": {
+      "name": "gap-redirect-target",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/link-target.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/link-target.md"
+      ],
+      "errored": false,
+      "costUsd": 0.499746
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "unprobed",
+      "refusal": "the probe set (13 cases, about 145.01 USD by the baseline's costs) is above what is left under the ceiling (15.93 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/gate.md"
+        }
+      ],
+      "rationale": "I changed two harness pages and nothing else: `plugins/core/skills/crew/SKILL.md` and `plugins/core/skills/crew/references/gate.md`. Nothing was run in this session (no shell), so there is no test run and no eval rerun, and whether the score moves is unmeasured. `gap-redirect-target` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `env-observed-proof`, a mean of 0.87 with spread 0.40 is one run of three losing `lifecycle` and `honest-ending` while `e2e (.): pass`, the footer and `Proven:` all held. I had no trace of that run, so the cause is inferred from the engine: the e2e gate checks health before it starts anything, and an environment already up is taken as the user's and never stopped. A lead that started the environment before the gate run (with `crew env start` or `node scripts/env.mjs start`) therefore leaves `var/log.txt` with a `start` and no `stop`, and the judge fails the ending for a start by hand. The one earlier record that lists this case's reads (2026-11-02-5) shows the two reviewer rubrics and never the Gate page, so the skill page is the text the lead works from, and nothing on it said who starts the environment. Its Gate row now reads \"fix what fails; the e2e gate starts and stops the environment: never start it yourself;\". The page sits 3 bytes under its 9254-byte cap, so those 72 bytes are paid for exactly by five trims no test pins:\n- \"The `crew` command is the engine\" became \"`crew` is the engine\".\n- \"; they go to `crew start` as `--answers`\" became \", for `crew start --answers`\".\n- \"is on this page\" became \"is here\".\n- \"the command runs with no prompt\" became \"no prompt appears\".\n- Rule 6's \"The answers are required; \" was removed.\n\nA regex probe puts the page at exactly 9247 characters, 9251 bytes, as before. The Gate page's \"The environment\" paragraph now gives the reason and the way back: the gate would take a pre-started environment as the user's, leave it running and print `environment: the u",
+      "probeSet": [
+        "decision-register-reread",
+        "env-observed-proof",
+        "gap-redirect-target",
+        "gate-scoped-to-change",
+        "pack-agentic-os-absent",
+        "pack-laravel-blade-tags-the-view-absent",
+        "personalities-differ",
+        "prose-gate-refuses-chatbot-artefact",
+        "proven-test-first",
+        "site-law",
+        "team-by-route",
+        "ui-motion-thesis-built",
+        "ui-reduced-motion-fails"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/skills/crew/SKILL.md`. Nothing was run in this session (no shell), so there are no tests and no eval rerun, and whether the score moves is unmeasured. `gap-redirect-target` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `env-observed-proof`, `lifecycle` wants `start` then `stop` in `var/log.txt`, and only the engine's own e2e gate writes that pair. I had no trace of the failing run, so the cause is inferred from `packages/engine/src/e2e.ts`: the gate checks health first, and an environment already up is taken as the user's and never stopped. A lead told to \"prove the change end to end\" that starts the environment itself therefore leaves `start` with no `stop`, which would also explain the judge failing the ending. Earlier records of this case show the lead reading only the skill page and two rubrics, never `references/gate.md`, so the skill page is the lever. Fast-route step 3 now ends with: \"Its e2e gate starts and stops the environment: never start it, and stop one you started.\" The page sits at its byte cap, so the 89 bytes were paid for with six wording trims, none of which matched a test in my search:\n\n- \"The `crew` command is the engine\" became \"`crew` is the engine\".\n- \"; they go to `crew start` as `--answers`\" became \", for `crew start --answers`\".\n- \"is on this page\" became \"is here\".\n- \"the command runs with no prompt\" became \"no prompt appears\".\n- Rule 6 lost \"The answers are required; \".\n- The fast-route heading lost \", in three calls\".\n\nThe page now probes at exactly 9248 characters, 9252 bytes, against the 9254 cap.",
+      "probeSet": [
+        "env-observed-proof",
+        "gap-redirect-target"
+      ],
+      "probe": {
+        "env-observed-proof": {
+          "name": "env-observed-proof",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 1.8778335
+        },
+        "gap-redirect-target": {
+          "name": "gap-redirect-target",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "names-the-gap",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false,
+          "costUsd": 0.41650289999999995
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.033333333333333326
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 7.5518762,
+  "lessons": [
+    "K-342"
+  ],
+  "exit": 0,
+  "unmeasured": []
+}
