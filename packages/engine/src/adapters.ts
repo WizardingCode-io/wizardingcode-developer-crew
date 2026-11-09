@@ -99,11 +99,10 @@ const LOCK_WAIT_MS = 2000;
 const PATHS_NAMED = 3;
 
 type Check = ReturnType<typeof checkRuntime>;
-/** An own-root adapter: the runtime, the root as its configuration names it, its configuration file and its first check. */
+/** An own-root adapter: the runtime, the root as its configuration names it and its first check. */
 interface Own {
   runtime: Runtime;
   root: string;
-  configPath: string;
   first: Check;
 }
 
@@ -300,7 +299,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
       );
       continue;
     }
-    own.push({ runtime, root: named, configPath, first: check(runtime, named) });
+    own.push({ runtime, root: named, first: check(runtime, named) });
   }
   // 3: the first check decides what an install fixes; an event failure is the engine's own fault.
   const results = new Map<RuntimeName, AdapterResult>();

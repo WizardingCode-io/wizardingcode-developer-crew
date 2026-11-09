@@ -1,3 +1,13 @@
+/**
+ * The not-committed mark of a checkout (item 2026-11-09-001, ADR 0023): what a refresh of the
+ * runtime adapters updated and the commit the checkout stood at, kept in a file of its own beside
+ * the adapters lock, so an engine of another version never drops it with a state it rewrites. A
+ * refresh writes it; every engine's SessionStart, `crew status` and the fleet read it to remind
+ * the person to commit; an entry goes once its adapter paths are clean in git, or hold only
+ * changes a commit made after the refresh already touched. The file holds no path and no command:
+ * both come from the reading engine's own runtime table.
+ */
+
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gitStatusEntries } from "./fingerprint.ts";
@@ -8,16 +18,6 @@ import { quotedText } from "./quote.ts";
 import { RUNTIME_NAMES, RUNTIMES, type RuntimeName } from "./runtimes.ts";
 import { compareVersions } from "./version.ts";
 import { gitRun } from "./worktree.ts";
-
-/**
- * The not-committed mark of a checkout (item 2026-11-09-001, ADR 0023): what a refresh of the
- * runtime adapters updated and the commit the checkout stood at, kept in a file of its own beside
- * the adapters lock, so an engine of another version never drops it with a state it rewrites. A
- * refresh writes it; every engine's SessionStart, `crew status` and the fleet read it to remind
- * the person to commit; an entry goes once its adapter paths are clean in git, or hold only
- * changes a commit made after the refresh already touched. The file holds no path and no command:
- * both come from the reading engine's own runtime table.
- */
 
 /** What one refresh updated for one engine root. */
 export interface UncommittedEntry {

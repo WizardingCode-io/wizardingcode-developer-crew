@@ -4227,7 +4227,7 @@ function refreshAdapters(paths, o) {
       foreign(named, cached?.[1] && compareVersions(cached[1], o.version) < 0 ? "older plugin folder" : "another root");
       continue;
     }
-    own.push({ runtime, root: named, configPath, first: check(runtime, named) });
+    own.push({ runtime, root: named, first: check(runtime, named) });
   }
   const results = new Map;
   const set = (a, status, why, extra = {}) => results.set(a.runtime.name, {
