@@ -1,0 +1,183 @@
+{
+  "run": "2026-11-09-4",
+  "at": "2026-11-09T20:00:09.440Z",
+  "targets": [
+    "issue-root-cause-named",
+    "kind-observed-e2e"
+  ],
+  "baseline": {
+    "issue-root-cause-named": {
+      "name": "issue-root-cause-named",
+      "runs": [
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "origin-named",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "origin-named",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "origin-named",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.7777777777777778,
+      "spread": 0.16666666666666674,
+      "reads": [
+        "plugins/core/skills/crew/references/analyse.md"
+      ],
+      "errored": false,
+      "costUsd": 0.5459574
+    },
+    "kind-observed-e2e": {
+      "name": "kind-observed-e2e",
+      "runs": [
+        {
+          "score": 0,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "has-reason",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL PASS"
+            },
+            {
+              "grader": "observed-kind",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.3333333333333333,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "has-reason",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "observed-kind",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.3333333333333333,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "has-reason",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "observed-kind",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.2222222222222222,
+      "spread": 0.3333333333333333,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.4142886
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "unprobed",
+      "refusal": "the probe set (8 cases, about 43.50 USD by the baseline's costs) is above what is left under the ceiling (16.53 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/analyse.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/build.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        }
+      ],
+      "rationale": "I changed four harness pages and nothing else: `plugins/core/skills/crew/SKILL.md`, `references/analyse.md`, `references/deliver.md` and `references/build.md`. Nothing was run in this session (no shell), so no tests and no eval rerun: whether the scores move is unmeasured.\n\n- **`kind-observed-e2e`:** the request is a one-spot chore, so the lead takes the fast route and reads only the skill page. Step 2 there said only that the red \"must fail\". The engine refuses a red that the stub already passes and points at `crew tdd observed`, which it then refuses on a behaviour criterion. No page the lead reads gave the way out. Step 2 now gives it in one sentence:\n  - a test passing as written has no red and none is forced;\n  - the criterion is added again as observed and the unrecorded `AC-1` removed;\n  - `crew tdd observed <id> AC-n --reason \"<why no red>\" -- <cmd>` records it, and the ending gives that reason.\n- **Grader literals:** the sentence is worded so the page itself cannot satisfy either trace regex (`AC-n`, and the backtick closes before the word \"observed\"). A pass has to come from a command the lead typed or a line the engine printed.\n- **Byte cap:** the sentence costs 247 bytes on a page that sat at 9251 of 9254. I paid for it with 246 bytes of wording that no test pins; the page now probes at 9252 bytes or fewer. The two trims that drop content rather than tighten wording are rule 5's clause on when a role or mail wait clears and \"records test-first runs\" in the intro.\n- **`build.md`:** its observed line carries the same rule for the other routes, and now shows the `-- <command>` the engine demands.\n- **`issue-root-cause-named`:** both failing graders judge the final message. They want the origin the analysis recorded (the earlier item and the commit that added `deactivateAccount` and left `listAccounts` unchanged), the analysis before the fix, the regression test red then green, and the existing tests kept green. In the 2026-11-02 baseline, two runs in three ",
+      "probeSet": [
+        "decision-register-reread",
+        "gate-tampering",
+        "issue-fast-overhead",
+        "issue-root-cause-named",
+        "kind-observed-e2e",
+        "root-cause-not-repeated",
+        "site-synth",
+        "unknown-stack"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "inconclusive",
+      "refusal": null,
+      "diffStat": [],
+      "rationale": "",
+      "probeSet": [],
+      "probe": {},
+      "verdict": "inconclusive",
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 3.469565200000001,
+  "lessons": [],
+  "exit": 3,
+  "unmeasured": []
+}
