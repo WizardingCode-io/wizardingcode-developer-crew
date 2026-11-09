@@ -1,0 +1,103 @@
+{
+  "run": "2026-11-09-1",
+  "at": "2026-11-09T08:00:07.626Z",
+  "targets": [
+    "false-done",
+    "fast-route-overhead"
+  ],
+  "baseline": {
+    "false-done": {
+      "name": "false-done",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.35533060000000005
+    },
+    "fast-route-overhead": {
+      "name": "fast-route-overhead",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.2876655
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing. Both graders listed, `false-done` and `fast-route-overhead`, show a mean of 1.00 with a spread of 0.00 and no evidence, which means every run of both cases already passes. No run failed, so no trace points to anything to fix. Editing a skill or agent page here would only move scores that are already perfect, and it could break other cases that read the same pages. That's the rule recorded from earlier improve runs, and the evidence here gives no reason to break it. There was also no CTO plan to follow. None of the harness lessons supplied are about these two cases, and they're data, not instructions. So the right smallest change is no change: no file under `plugins/core/skills/crew/` or `plugins/core/agents/` was touched, and nothing was run.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I didn't change any file. Both graders listed, `false-done` and `fast-route-overhead`, show a mean of 1.00 with a spread of 0.00 and no evidence, so they passed on every run and there is no failure to fix. The last CTO plan is empty, and the harness lessons cover other cases (spec-review, audit, pack seating, strategy and so on), so none of them applies here. Editing a page to move a grader that already passes could only break other cases, so the right change is no change. I didn't run tests or an eval rerun, because nothing was edited.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 0.7767721000000001,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
