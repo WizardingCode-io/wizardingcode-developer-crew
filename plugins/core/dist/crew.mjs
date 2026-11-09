@@ -3189,7 +3189,7 @@ function configText(runtime, scope, dirs, root) {
   return { path, text: `${JSON.stringify(value, null, 2)}
 `, value };
 }
-function adapterLinkProblem(runtime, dirs, root) {
+function adapterLinkProblem(runtime, dirs, root, resolveReal = realpathSync2) {
   const base = dirs.project;
   const paths = new Set([resolveScoped(runtime.config.project, dirs)]);
   const skillTarget = join6(resolveScoped(runtime.skillsDir.project, dirs), SKILL_FOLDER);
@@ -3214,7 +3214,7 @@ function adapterLinkProblem(runtime, dirs, root) {
   for (const path of paths)
     for (let parent = dirname3(path);parent.startsWith(base + sep2); parent = dirname3(parent))
       all.add(parent);
-  const realBase = realpathSync2(base);
+  const realBase = resolveReal(base);
   for (const path of [...all].sort()) {
     const rel = relative2(base, path).split(sep2).join("/");
     let stat;
@@ -3230,7 +3230,7 @@ function adapterLinkProblem(runtime, dirs, root) {
     }
     if (stat.isSymbolicLink())
       return `${rel} is a symbolic link`;
-    const real = realpathSync2(path);
+    const real = resolveReal(path);
     if (real !== realBase && !real.startsWith(realBase + sep2))
       return `${rel} leaves the project`;
     if (agentEntries.has(path) && !stat.isFile())
@@ -3494,6 +3494,7 @@ function copyState(expected, actualDir, actual, extras = false) {
   }
   return { state: differ ? "stale" : "ok", differ };
 }
+var shown = (text) => quotedText(text, 200);
 function checkRuntime(runtime, scope, dirs, fallbackRoot) {
   const lines = [];
   const problems = [];
@@ -3515,7 +3516,7 @@ function checkRuntime(runtime, scope, dirs, fallbackRoot) {
   });
   const found = candidates.find(([, path]) => existsSync2(path));
   if (!found)
-    return early(`missing: ${candidates.map(([, p]) => p).join(" | ")}`, {
+    return early(`missing: ${candidates.map(([, p]) => shown(p)).join(" | ")}`, {
       state: "missing",
       differ: 1
     });
@@ -3523,23 +3524,23 @@ function checkRuntime(runtime, scope, dirs, fallbackRoot) {
   const text = readFileSync4(configPath, "utf8");
   const root = rootOf(text, runtime, fallbackRoot);
   if (!root)
-    return early(`config: ${configPath} holds no crew hook`, { state: "stale", differ: 1 });
-  lines.push(`config: ${configPath}`);
+    return early(`config: ${shown(configPath)} holds no crew hook`, { state: "stale", differ: 1 });
+  lines.push(`config: ${shown(configPath)}`);
   if (!existsSync2(join6(root, "dist", "crew.mjs")))
-    return early(`root: ${root} missing dist/crew.mjs`, { state: "stale", differ: 1 });
+    return early(`root: ${shown(root)} missing dist/crew.mjs`, { state: "stale", differ: 1 });
   let config = { state: "ok", differ: 0 };
   const wanted = configText(runtime, foundScope, dirs, root);
   if (wanted) {
     if ("refused" in wanted)
       configRefused = wanted.refused;
-    const line = "refused" in wanted ? `config: stale (${wanted.refused})` : holdsValue(text, wanted.value) ? null : "config: stale (differs from what crew runtime install writes)";
+    const line = "refused" in wanted ? `config: stale (${shown(wanted.refused)})` : holdsValue(text, wanted.value) ? null : "config: stale (differs from what crew runtime install writes)";
     if (line) {
       config = { state: "stale", differ: 1 };
       lines.push(line);
       problems.push(line);
     }
   }
-  lines.push(`root: ${root} ok`);
+  lines.push(`root: ${shown(root)} ok`);
   let failedEvents = 0;
   for (const event of ENGINE_EVENTS) {
     const line = eventResult(runtime, event);

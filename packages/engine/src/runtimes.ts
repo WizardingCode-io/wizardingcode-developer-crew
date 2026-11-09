@@ -17,6 +17,7 @@ import { gitStatusEntries, trackedPaths } from "./fingerprint.ts";
 import { FRONT_MATTER, frontMatterProblems, parseQuoted } from "./front-matter.ts";
 import { sha256 as hashOf, writeText } from "./fs.ts";
 import type { HookPayload, HookResponse } from "./hooks/types.ts";
+import { quotedText } from "./quote.ts";
 import { opencodePlugin } from "./runtimes/opencode-plugin.ts";
 import { ROLE_NAMES } from "./team.ts";
 
@@ -1284,11 +1285,15 @@ function configText(
  * configuration file, the skill folder and every entry it holds or would hold, the agents folder,
  * its `crew-*` entries and the ones the install writes, and each of their parents up to the project
  * root, which is not checked itself, so a project reached through a link installs. Null when none.
+ * `resolveReal` gives a path's real path, `realpathSync` unless a test passes its own: with no link
+ * among a path's parents, which the walk refuses first, an entry leaves the project only through a
+ * mount, which no test can make (item 2026-11-09-001).
  */
 export function adapterLinkProblem(
   runtime: Runtime,
   dirs: InstallDirs,
   root: string,
+  resolveReal: (path: string) => string = realpathSync,
 ): string | null {
   const base = dirs.project;
   const paths = new Set<string>([resolveScoped(runtime.config.project, dirs)]);
@@ -1311,7 +1316,7 @@ export function adapterLinkProblem(
   for (const path of paths)
     for (let parent = dirname(path); parent.startsWith(base + sep); parent = dirname(parent))
       all.add(parent);
-  const realBase = realpathSync(base);
+  const realBase = resolveReal(base);
   for (const path of [...all].sort()) {
     const rel = relative(base, path).split(sep).join("/");
     let stat: ReturnType<typeof lstatSync>;
@@ -1324,7 +1329,7 @@ export function adapterLinkProblem(
       throw error;
     }
     if (stat.isSymbolicLink()) return `${rel} is a symbolic link`;
-    const real = realpathSync(path);
+    const real = resolveReal(path);
     if (real !== realBase && !real.startsWith(realBase + sep)) return `${rel} leaves the project`;
     if (agentEntries.has(path) && !stat.isFile()) return `${rel} is not a file`;
   }
@@ -1663,6 +1668,9 @@ function copyState(
   return { state: differ ? "stale" : "ok", differ };
 }
 
+/** A root or a path as the check prints it: text a repository controls, through `quotedText` (item 2026-11-09-001). */
+const shown = (text: string): string => quotedText(text, 200);
+
 /**
  * Reads the configuration back (project scope then user when none is named), names the root its
  * crew command points at and whether it holds the bundle, compares the configuration with what the
@@ -1712,7 +1720,7 @@ export function checkRuntime(
   });
   const found = candidates.find(([, path]) => existsSync(path));
   if (!found)
-    return early(`missing: ${candidates.map(([, p]) => p).join(" | ")}`, {
+    return early(`missing: ${candidates.map(([, p]) => shown(p)).join(" | ")}`, {
       state: "missing",
       differ: 1,
     });
@@ -1720,19 +1728,19 @@ export function checkRuntime(
   const text = readFileSync(configPath, "utf8");
   const root = rootOf(text, runtime, fallbackRoot);
   if (!root)
-    return early(`config: ${configPath} holds no crew hook`, { state: "stale", differ: 1 });
-  lines.push(`config: ${configPath}`);
+    return early(`config: ${shown(configPath)} holds no crew hook`, { state: "stale", differ: 1 });
+  lines.push(`config: ${shown(configPath)}`);
   // A root without the bundle is said before anything is compared against it: nothing could be
   // installed from it, so the configuration's comparison has no source.
   if (!existsSync(join(root, "dist", "crew.mjs")))
-    return early(`root: ${root} missing dist/crew.mjs`, { state: "stale", differ: 1 });
+    return early(`root: ${shown(root)} missing dist/crew.mjs`, { state: "stale", differ: 1 });
   let config: PartState = { state: "ok", differ: 0 };
   const wanted = configText(runtime, foundScope, dirs, root);
   if (wanted) {
     if ("refused" in wanted) configRefused = wanted.refused;
     const line =
       "refused" in wanted
-        ? `config: stale (${wanted.refused})`
+        ? `config: stale (${shown(wanted.refused)})`
         : holdsValue(text, wanted.value)
           ? null
           : "config: stale (differs from what crew runtime install writes)";
@@ -1742,7 +1750,7 @@ export function checkRuntime(
       problems.push(line);
     }
   }
-  lines.push(`root: ${root} ok`);
+  lines.push(`root: ${shown(root)} ok`);
   let failedEvents = 0;
   for (const event of ENGINE_EVENTS) {
     const line = eventResult(runtime, event);

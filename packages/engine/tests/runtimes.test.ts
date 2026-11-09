@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -18,6 +19,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { HookPayload, HookResponse } from "../src/hooks/types.ts";
 import { opencodePlugin } from "../src/runtimes/opencode-plugin.ts";
 import {
+  adapterLinkProblem,
   checkRuntime,
   ENGINE_EVENTS,
   type EngineEvent,
@@ -1581,4 +1583,114 @@ test("2026-11-08-002 AC-13 (install): crew runtime install refuses a link at pro
     expect(refused.refused).toContain(".agents/skills/crew-method/references is a symbolic link");
   expect(readFileSync(join(outside, "keep.md"), "utf8")).toBe("keep\n");
   expect(hashesBelow(dirs.project)).toEqual(before);
+});
+
+// Item 2026-11-09-001, Task 4: the link check's resolver and crew runtime check's quoted lines (AC-15, AC-18).
+
+test("2026-11-09-001 AC-15: an entry that resolves outside the project is refused, and the install refuses each link case", () => {
+  const root = fakeRoot();
+  // The resolver seam: no link among the parents, and one entry's real path outside the project.
+  const seam = gitFixture(RUNTIMES.copilot, root);
+  expect(adapterLinkProblem(RUNTIMES.copilot, seam.dirs, root)).toBeNull();
+  expect(
+    adapterLinkProblem(RUNTIMES.copilot, seam.dirs, root, (path) =>
+      path.endsWith("/crew-method/SKILL.md") ? "/elsewhere/SKILL.md" : realpathSync(path),
+    ),
+  ).toBe(".agents/skills/crew-method/SKILL.md leaves the project");
+  // Each case on a fresh installed project: refused with its text, nothing written, the target kept.
+  const refuses = (text: string, make: (project: string, outside: string) => void) => {
+    const { project, dirs } = gitFixture(RUNTIMES.copilot, root);
+    const outside = tempDir("crew-outside-");
+    make(project, outside);
+    const before = hashesBelow(project);
+    const outsideBefore = hashesBelow(outside);
+    const refused = installRuntime(RUNTIMES.copilot, "project", dirs, root);
+    expect("refused" in refused, text).toBe(true);
+    if ("refused" in refused) expect(refused.refused).toContain(text);
+    expect(hashesBelow(project), text).toEqual(before);
+    expect(hashesBelow(outside), text).toEqual(outsideBefore);
+  };
+  /** The entry replaced by a link to a copy of itself outside the project. */
+  const linked = (rel: string) => (project: string, outside: string) => {
+    const copy = join(outside, "copy");
+    writeFileSync(copy, readFileSync(join(project, rel)));
+    rmSync(join(project, rel));
+    symlinkSync(copy, join(project, rel));
+  };
+  const agent = ".github/agents/crew-tech-lead.agent.md";
+  refuses(".github/hooks/crew.json is a symbolic link", linked(".github/hooks/crew.json"));
+  refuses(
+    ".agents/skills/crew-method/SKILL.md is a symbolic link",
+    linked(".agents/skills/crew-method/SKILL.md"),
+  );
+  refuses(`${agent} is a symbolic link`, linked(agent));
+  refuses(".agents is a symbolic link", (project, outside) => {
+    renameSync(join(project, ".agents"), join(outside, "agents"));
+    symlinkSync(join(outside, "agents"), join(project, ".agents"));
+  });
+  refuses(`${agent} is not a file`, (project) => {
+    rmSync(join(project, agent));
+    mkdirSync(join(project, agent));
+  });
+});
+
+test("2026-11-09-001 AC-18: crew runtime check prints the root and the configuration's path quoted", () => {
+  const root = fakeRoot();
+  const clean = (lines: string[]) => {
+    for (const line of lines) {
+      expect(line).not.toContain("\x1b");
+      expect(line).not.toContain("\n");
+      expect(line).not.toContain("‮");
+    }
+  };
+  // A root with an escape sequence and 300 characters more, named by a configuration written by hand.
+  const dirs = { project: realpathSync(tempDir("crew-project-")), home: tempDir("crew-home-") };
+  const escRoot = `/tmp/y\x1b[2J${"y".repeat(300)}`;
+  write(
+    dirs.project,
+    ".cursor/hooks.json",
+    `{"version":1,"hooks":{"stop":[{"command":"node ${escRoot}/dist/crew.mjs hook stop --runtime cursor"}]}}\n`,
+  );
+  const cursor = checkRuntime(RUNTIMES.cursor, "project", dirs, root).lines;
+  clean(cursor);
+  const missing = " missing dist/crew.mjs";
+  const rootLine = cursor.find((l) => l.startsWith("root: ")) ?? "";
+  expect(rootLine.endsWith(missing)).toBe(true);
+  expect(rootLine.slice("root: ".length, -missing.length).length).toBeLessThanOrEqual(200);
+  // A bidi-override character in the root.
+  write(
+    dirs.project,
+    ".gemini/settings.json",
+    JSON.stringify({
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: "node /tmp/‮z/dist/crew.mjs hook stop --runtime gemini",
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  const gemini = checkRuntime(RUNTIMES.gemini, "project", dirs, root).lines;
+  clean(gemini);
+  expect(gemini.some((l) => l.startsWith("root: /tmp/"))).toBe(true);
+  // A project folder whose parent's name holds a newline and an escape sequence.
+  const hostile = join(realpathSync(tempDir("crew-evil-")), "evil\n\x1b[2J", "project");
+  mkdirSync(hostile, { recursive: true });
+  const hostileDirs = { project: hostile, home: tempDir("crew-home-") };
+  const done = installRuntime(RUNTIMES.copilot, "project", hostileDirs, root);
+  if ("refused" in done) throw new Error(done.refused);
+  const installed = checkRuntime(RUNTIMES.copilot, "project", hostileDirs, root).lines;
+  clean(installed);
+  expect(installed.some((l) => l.startsWith("config: "))).toBe(true);
+  expect(installed.some((l) => l.startsWith("root: ") && l.endsWith(" ok"))).toBe(true);
+  // A configuration that is absent, in the same folder.
+  const absent = checkRuntime(RUNTIMES.codex, "project", hostileDirs, root).lines;
+  clean(absent);
+  expect(absent.some((l) => l.startsWith("missing: "))).toBe(true);
 });
