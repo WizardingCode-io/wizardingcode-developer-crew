@@ -410,6 +410,32 @@ test("2026-11-09-001 AC-6: the start that updates says it once", () => {
   expect(text).not.toContain("and not committed");
 });
 
+test("2026-11-09-001 AC-9 (SessionStart): a status that fails is said in the adapters text, and the context stays", () => {
+  // A folder with an empty `.git`: git answers that it is no repository, to the mark's reader too.
+  const root = tempDir("crew-broken-git-");
+  write(root, ".crew/.gitignore", "local/\n");
+  write(root, "package.json", JSON.stringify({ scripts: { test: "exit 0" } }));
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  ensureProfile(paths);
+  mkdirSync(join(root, ".git"));
+  noteUpdated(paths, "/r/a", {
+    version: "1.2.3",
+    at: new Date().toISOString(),
+    head: "0".repeat(40),
+    runtimes: [{ name: "copilot", config: false }],
+    register: false,
+  });
+  const text = context(start({ project: root, env }));
+  expect(
+    afterEngine(text).startsWith(
+      "adapters: not-committed check failed (fatal: not a git repository",
+    ),
+  ).toBe(true);
+  expect(text).not.toContain("Commit:");
+  expect(existsSync(markPath(paths))).toBe(true);
+});
+
 test("2026-11-09-001 AC-10: a mark that cannot be written is said, and the command is still printed", () => {
   const f = fixture([RUNTIMES.copilot]);
   // A folder where the mark goes: the rename of the temporary file over it throws.
@@ -436,7 +462,7 @@ test("2026-11-09-001 AC-13: a throw in the adapter step changes the adapters tex
   expect(thrown.match(sentence)).toHaveLength(1);
   expect(thrown.replace(sentence, "")).toBe(plain);
   expect(plain).not.toContain("adapters:");
-  expect(thrownBaseline).not.toBeNull();
+  expect(typeof thrownBaseline).toBe("string");
   expect(thrownBaseline).toBe(plainBaseline);
 });
 

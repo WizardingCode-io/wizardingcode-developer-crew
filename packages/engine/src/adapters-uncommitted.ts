@@ -179,7 +179,7 @@ function committedSince(root: string, head: string, pathspec: string[]): Set<str
  */
 export function uncommittedAdapters(
   paths: CrewPaths,
-  opts: { clear: boolean; also?: { root: string; entry: UncommittedEntry } },
+  opts: { clear: boolean; also?: { root: string; entry: UncommittedEntry } | undefined },
 ): Reminder | null {
   const marks = readMarks(paths);
   if (opts.also) marks[opts.also.root] = opts.also.entry;
@@ -192,11 +192,11 @@ export function uncommittedAdapters(
   const clean: string[] = [];
   for (const root of roots) {
     const entry = marks[root] as UncommittedEntry;
-    const isClean = () => {
+    const markClean = () => {
       if (opts.also?.root !== root) clean.push(root);
     };
     if (!repo) {
-      isClean();
+      markClean();
       continue;
     }
     const adapterSpecs = [
@@ -212,14 +212,14 @@ export function uncommittedAdapters(
       continue;
     }
     if (changes.length === 0) {
-      isClean();
+      markClean();
       continue;
     }
     const since = committedSince(paths.root, entry.head, pathspec);
     const counting = changes.filter((path) => !since.has(path));
     const holds = (spec: string) => counting.some((path) => belongs(path, spec));
     if (!adapterSpecs.some(holds)) {
-      isClean();
+      markClean();
       continue;
     }
     const names = entry.runtimes.map((r) => r.name).join(", ");
@@ -230,7 +230,9 @@ export function uncommittedAdapters(
   }
   if (versions.length) {
     const newest = versions.reduce((a, b) => (compareVersions(a, b) >= 0 ? a : b));
-    const quotedSpecs = named.map((spec) => `'${spec}'`).join(" ");
+    // Each pathspec single-quoted for a shell, a quote inside one escaped: the table holds none
+    // today, and a runtime added to it later cannot break out.
+    const quotedSpecs = named.map((spec) => `'${spec.replace(/'/g, "'\\''")}'`).join(" ");
     reminder.command = `git add -A -- ${quotedSpecs} && git commit -m 'adapters refreshed by crew ${newest}'`;
   }
   if (opts.clear && clean.length) {

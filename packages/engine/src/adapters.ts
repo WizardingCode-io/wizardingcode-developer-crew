@@ -193,6 +193,24 @@ export function adaptersEntryText(refresh: Refresh, root: string): string {
 }
 
 /**
+ * The entry of a refresh whose own write of the mark failed, for the reader's `also`: the caller
+ * then reminds from what the refresh holds in memory. Undefined when the mark was written, when
+ * nothing was updated, or with no refresh.
+ */
+export function unwrittenMark(
+  refresh: Refresh | null,
+): { root: string; entry: UncommittedEntry } | undefined {
+  return refresh?.markFailed && refresh.entry
+    ? { root: refresh.root, entry: refresh.entry }
+    : undefined;
+}
+
+/** What every output says of a mark that could not be written, with the quoted reason. */
+export function markFailedText(why: string): string {
+  return `the not-committed mark was not written (${why})`;
+}
+
+/**
  * The SessionStart line of the adapters, or null when there is nothing to say: each result of the
  * refresh that is not up to date, each foreign adapter that is not simply another engine's, what
  * the not-committed mark says is still to commit (left out for the root this same refresh
@@ -224,8 +242,7 @@ export function adaptersLine(
   reminder?.parts.forEach((part, i) => {
     if (!(updated && reminder.roots[i] === refresh?.root)) parts.push(part);
   });
-  if (refresh?.markFailed)
-    parts.push(`the not-committed mark was not written (${refresh.markFailed})`);
+  if (refresh?.markFailed) parts.push(markFailedText(refresh.markFailed));
   if (reminder?.failed) parts.push(`not-committed check failed (${reminder.failed})`);
   parts.push(...extra);
   if (!parts.length) return null;

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { adaptersLine, quoted, refreshAdapters } from "../adapters.ts";
+import { adaptersLine, quoted, refreshAdapters, unwrittenMark } from "../adapters.ts";
 import { uncommittedAdapters } from "../adapters-uncommitted.ts";
 import { appendDecision, lastEntryText } from "../decisions.ts";
 import {
@@ -119,9 +119,7 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     // whose own mark could not be written reminds from the entry it holds.
     const reminder = uncommittedAdapters(ctx.paths, {
       clear: true,
-      ...(refresh?.markFailed && refresh.entry
-        ? { also: { root: refresh.root, entry: refresh.entry } }
-        : {}),
+      also: unwrittenMark(refresh),
     });
     adaptersText = adaptersLine(refresh, busy ? ["another session is updating"] : [], reminder);
   } catch (error) {

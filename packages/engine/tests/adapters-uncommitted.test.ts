@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
   markPath,
   noteUpdated,
+  REGISTER,
   readMarks,
   type UncommittedEntry,
   uncommittedAdapters,
@@ -26,7 +27,6 @@ import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts"
 
 const engineRoot = canonical(pluginRoot());
 const SKILL = ".agents/skills/crew-method/SKILL.md";
-const REGISTER = ".crew/decisions.json";
 const AT = "2026-11-09T00:00:00.000Z";
 
 /** A repository with `.crew/` and Copilot's adapter installed from the engine's own root and committed. */

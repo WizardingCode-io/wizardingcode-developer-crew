@@ -13605,6 +13605,27 @@ test("2026-11-09-001 AC-7: crew status reminds while the mark's paths are uncomm
   ]);
 });
 
+test("2026-11-09-001 AC-9 (crew status): a status that fails is said, with no command", async () => {
+  // A folder with an empty `.git`: git answers that it is no repository, to the mark's reader too.
+  const root = tempDir("crew-broken-git-");
+  write(root, ".crew/.gitignore", "local/\n");
+  mkdirSync(join(root, ".git"));
+  const c = io(root);
+  noteUpdated(repoPaths(root, c.env), "/r/a", {
+    version: "1.2.3",
+    at: nowIso(),
+    head: "0".repeat(40),
+    runtimes: [{ name: "copilot", config: false }],
+    register: false,
+  });
+  const lines = (await c.run("status")).out
+    .split("\n")
+    .filter((l) => l.startsWith("adapters not committed: "));
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain("adapters not committed: check failed (fatal: not a git repository");
+  expect(lines[0]).not.toContain("Commit:");
+});
+
 test("2026-11-09-001 AC-8: the fleet prints the commit line for what it updated and for what it holds back", async () => {
   const env = fleetEnv();
   const A = await adapterProject(env, ["copilot"], { stale: true });

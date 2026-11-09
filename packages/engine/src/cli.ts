@@ -4,9 +4,11 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   type AdapterStatus,
   foreignText,
+  markFailedText,
   quoted,
   refreshAdapters,
   resultText,
+  unwrittenMark,
 } from "./adapters.ts";
 import { uncommittedAdapters } from "./adapters-uncommitted.ts";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
@@ -2246,16 +2248,12 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
       // and of one whose adapters name another root.
       const reminder = uncommittedAdapters(paths, {
         clear: !dryRun,
-        ...(refresh.markFailed && refresh.entry
-          ? { also: { root: refresh.root, entry: refresh.entry } }
-          : {}),
+        also: unwrittenMark(refresh),
       });
       const units = [
         ...refresh.results.map(resultText),
         ...refresh.foreign.map(foreignText),
-        ...(refresh.markFailed
-          ? [`the not-committed mark was not written (${refresh.markFailed})`]
-          : []),
+        ...(refresh.markFailed ? [markFailedText(refresh.markFailed)] : []),
       ];
       const bucket =
         UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ??

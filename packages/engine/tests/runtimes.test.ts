@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -1693,4 +1694,31 @@ test("2026-11-09-001 AC-18: crew runtime check prints the root and the configura
   const absent = checkRuntime(RUNTIMES.codex, "project", hostileDirs, root).lines;
   clean(absent);
   expect(absent.some((l) => l.startsWith("missing: "))).toBe(true);
+  // A configuration that holds no crew hook, in the same folder.
+  write(hostile, ".codex/hooks.json", "{}\n");
+  const hookless = checkRuntime(RUNTIMES.codex, "project", hostileDirs, root).lines;
+  clean(hookless);
+  expect(hookless.some((l) => l.endsWith(" holds no crew hook"))).toBe(true);
+  // A configuration the install would refuse (its closing brace cut), in the same folder: the
+  // refusal names the path.
+  const copilotConfig = join(hostile, ".github", "hooks", "crew.json");
+  writeFileSync(copilotConfig, readFileSync(copilotConfig, "utf8").trimEnd().replace(/\}$/, ""));
+  const refusedLines = checkRuntime(RUNTIMES.copilot, "project", hostileDirs, root).lines;
+  clean(refusedLines);
+  expect(refusedLines.some((l) => l.startsWith("config: stale ("))).toBe(true);
+  // A root that holds a bundle and whose path holds a newline, an escape sequence and a bidi
+  // override, named by OpenCode's plugin file (the one configuration whose root is a JSON string,
+  // so a newline survives in it): the check reaches the root's `ok` line.
+  const hostileRoot = join(realpathSync(tempDir("crew-evil-root-")), "evil\n\x1b[2J\u202eroot");
+  cpSync(root, hostileRoot, { recursive: true });
+  const opencodeDirs = {
+    project: realpathSync(tempDir("crew-project-")),
+    home: tempDir("crew-home-"),
+  };
+  const viaHostile = installRuntime(RUNTIMES.opencode, "project", opencodeDirs, hostileRoot);
+  if ("refused" in viaHostile) throw new Error(viaHostile.refused);
+  const opencode = checkRuntime(RUNTIMES.opencode, "project", opencodeDirs, root).lines;
+  clean(opencode);
+  const okLine = opencode.find((l) => l.startsWith("root: ") && l.endsWith(" ok")) ?? "";
+  expect(okLine).toContain("evil");
 });

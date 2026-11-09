@@ -46,3 +46,4 @@ What follows from it:
 - A run killed inside an install leaves files written in part and no mark for that adapter. The own-root start and every later fleet run say `uncommitted changes`; a session on another root is silent for that project.
 - A clone that lacks the mark's commit, or a rewritten history, makes every change count: the reminder errs towards saying it, and stops when the paths are clean.
 - When the command names the register, it commits every entry pending in it under the adapters' message.
+- A person's edit of one of the mark's paths, made after the refresh and before the first commit, is staged with the refresh's own change: git cannot split a file, and the command names the path.

@@ -3728,12 +3728,12 @@ function uncommittedAdapters(paths, opts) {
   const clean = [];
   for (const root of roots) {
     const entry = marks[root];
-    const isClean = () => {
+    const markClean = () => {
       if (opts.also?.root !== root)
         clean.push(root);
     };
     if (!repo) {
-      isClean();
+      markClean();
       continue;
     }
     const adapterSpecs = [
@@ -3749,14 +3749,14 @@ function uncommittedAdapters(paths, opts) {
       continue;
     }
     if (changes.length === 0) {
-      isClean();
+      markClean();
       continue;
     }
     const since = committedSince(paths.root, entry.head, pathspec);
     const counting = changes.filter((path) => !since.has(path));
     const holds = (spec) => counting.some((path) => belongs(path, spec));
     if (!adapterSpecs.some(holds)) {
-      isClean();
+      markClean();
       continue;
     }
     const names = entry.runtimes.map((r) => r.name).join(", ");
@@ -3769,7 +3769,7 @@ function uncommittedAdapters(paths, opts) {
   }
   if (versions.length) {
     const newest = versions.reduce((a, b) => compareVersions(a, b) >= 0 ? a : b);
-    const quotedSpecs = named.map((spec) => `'${spec}'`).join(" ");
+    const quotedSpecs = named.map((spec) => `'${spec.replace(/'/g, "'\\''")}'`).join(" ");
     reminder.command = `git add -A -- ${quotedSpecs} && git commit -m 'adapters refreshed by crew ${newest}'`;
   }
   if (opts.clear && clean.length) {
@@ -4229,6 +4229,12 @@ function adaptersEntryText(refresh, root) {
   const results = refresh.results.map(resultText).join(", ");
   return `adapters: ${results} (from ${refresh.from ?? "none"} to ${refresh.version} at ${quoted(root)})`;
 }
+function unwrittenMark(refresh) {
+  return refresh?.markFailed && refresh.entry ? { root: refresh.root, entry: refresh.entry } : undefined;
+}
+function markFailedText(why) {
+  return `the not-committed mark was not written (${why})`;
+}
 function adaptersLine(refresh, extra = [], reminder = null) {
   const results = refresh?.results ?? [];
   const updated = results.some((r) => r.status === "updated");
@@ -4251,7 +4257,7 @@ function adaptersLine(refresh, extra = [], reminder = null) {
       parts.push(part);
   });
   if (refresh?.markFailed)
-    parts.push(`the not-committed mark was not written (${refresh.markFailed})`);
+    parts.push(markFailedText(refresh.markFailed));
   if (reminder?.failed)
     parts.push(`not-committed check failed (${reminder.failed})`);
   parts.push(...extra);
@@ -20577,7 +20583,7 @@ function onSessionStart(ctx, payload = {}) {
     }
     const reminder = uncommittedAdapters(ctx.paths, {
       clear: true,
-      ...refresh?.markFailed && refresh.entry ? { also: { root: refresh.root, entry: refresh.entry } } : {}
+      also: unwrittenMark(refresh)
     });
     adaptersText = adaptersLine(refresh, busy ? ["another session is updating"] : [], reminder);
   } catch (error) {
@@ -23631,12 +23637,12 @@ function projectsUpdate(env, parsed, args, io) {
       });
       const reminder = uncommittedAdapters(paths, {
         clear: !dryRun,
-        ...refresh.markFailed && refresh.entry ? { also: { root: refresh.root, entry: refresh.entry } } : {}
+        also: unwrittenMark(refresh)
       });
       const units = [
         ...refresh.results.map(resultText),
         ...refresh.foreign.map(foreignText),
-        ...refresh.markFailed ? [`the not-committed mark was not written (${refresh.markFailed})`] : []
+        ...refresh.markFailed ? [markFailedText(refresh.markFailed)] : []
       ];
       const bucket = UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ?? (refresh.foreign.length ? "other root" : "no adapter");
       const allOk = refresh.results.length > 0 && refresh.results.every((r) => r.status === "up to date") && refresh.foreign.length === 0 && !refresh.markFailed;

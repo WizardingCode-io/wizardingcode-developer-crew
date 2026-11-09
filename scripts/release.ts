@@ -685,7 +685,9 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           if (extracted) return extracted;
           // The install already is this release (a resumed step 11, AC-23): the staged bundle and
           // the installed one are the same bytes, and a swap would put the install just made in
-          // the place of the rollback target.
+          // the place of the rollback target. The bundle alone is compared, since it carries the
+          // version: a tarball of the same version cut again with the same bundle is taken as
+          // installed, and its other files (bin/, the skills, the agents) are not written again.
           const staged = join(staging, PLUGIN_NAME, "dist", "crew.mjs");
           const installed = join(install, "dist", "crew.mjs");
           if (
