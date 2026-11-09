@@ -270,8 +270,9 @@ function committedSince(root: string, head: string, pathspec: string[]): Set<str
  * the finished ones would commit a part-written copy. With `clear`, the clean entries of the file
  * are removed under the adapters lock, in one attempt, each only when it is still, key for key,
  * the entry that was judged: every write of an entry changes it. `also` stands for the root of a
- * write whose own note failed, and is read as that note would have been written. Never throws: a mark that cannot be read counts as absent, a status
- * that fails is said in `failed`, and a clear that fails removes nothing.
+ * write whose own note failed, and is read as that note would have been written. Never throws: a
+ * mark that cannot be read counts as absent, a status that fails is said in `failed`, and a clear
+ * that fails removes nothing.
  */
 export function uncommittedAdapters(
   paths: CrewPaths,
