@@ -193,30 +193,6 @@ export function adaptersEntryText(refresh: Refresh, root: string): string {
 }
 
 /**
- * The command that commits a refresh: the configuration files it wrote, the shared skill folder,
- * the `crew-*` agents of each updated runtime and the register when an entry was appended, each
- * single-quoted; `-A` with the pathspecs stages the prune's deletions too; `-m` so it runs with no
- * editor. Null when nothing was updated.
- */
-export function commitCommand(refresh: Refresh): string | null {
-  const updated = refresh.results.filter((r) => r.status === "updated");
-  if (!updated.length) return null;
-  const paths: string[] = [];
-  const add = (p: string) => {
-    if (!paths.includes(p)) paths.push(p);
-  };
-  for (const r of updated) if (r.configWritten) add(RUNTIMES[r.runtime].config.project);
-  for (const r of updated) add(`${RUNTIMES[r.runtime].skillsDir.project}/crew-method`);
-  for (const r of updated) {
-    const agents = RUNTIMES[r.runtime].agentsDir;
-    if (agents) add(`${agents.project}/crew-*`);
-  }
-  if (refresh.appended) add(".crew/decisions.json");
-  const q = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
-  return `git add -A -- ${paths.map(q).join(" ")} && git commit -m 'adapters refreshed by crew ${refresh.version}'`;
-}
-
-/**
  * The SessionStart line of the adapters, or null when there is nothing to say: each result of the
  * refresh that is not up to date, each foreign adapter that is not simply another engine's, what
  * the not-committed mark says is still to commit (left out for the root this same refresh

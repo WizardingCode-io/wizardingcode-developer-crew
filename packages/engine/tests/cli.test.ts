@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -21,6 +22,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { markPath, noteUpdated } from "../src/adapters-uncommitted.ts";
 import { ROUTE_QUESTIONS } from "../src/classify.ts";
 import { type CliIo, main } from "../src/cli.ts";
 import { appendDecision, listDecisions } from "../src/decisions.ts";
@@ -13542,4 +13544,187 @@ test("2026-11-08-002 AC-12: left out, held back, and never the user scope", asyn
   expect(run.out).toContain(`${tampered}: left out (decisions.json changed outside the engine)`);
   expect(existsSync(join(home, ".copilot"))).toBe(false);
   expect(run.out).toContain("user scope: no adapter on this root");
+});
+
+// Item 2026-11-09-001, Task 3: crew status and the fleet read the not-committed mark (AC-7, AC-8, AC-10, AC-16, AC-24, AC-29).
+
+const SKILL_PAGE_OF_AN_ADAPTER = ".agents/skills/crew-method/SKILL.md";
+const fleetEnv = () => ({
+  ...testEnv(),
+  TMPDIR: tempDir("crew-scratch-"),
+  HOME: tempDir("crew-home-"),
+});
+/** A mark entry for Copilot alone, at the checkout's `HEAD` of this moment. */
+const copilotMark = (root: string, version = VERSION) => ({
+  version,
+  at: nowIso(),
+  head: git(root, "rev-parse", "HEAD"),
+  runtimes: [{ name: "copilot" as const, config: false }],
+  register: false,
+});
+/** A second engine root that holds a bundle: copies of the plugin's bundle, skill and agents. */
+function otherEngineRoot(): string {
+  const at = tempDir("crew-other-root-");
+  mkdirSync(join(at, "dist"), { recursive: true });
+  cpSync(join(pluginRoot(), "dist", "crew.mjs"), join(at, "dist", "crew.mjs"));
+  cpSync(join(pluginRoot(), "skills", "crew"), join(at, "skills", "crew"), { recursive: true });
+  cpSync(join(pluginRoot(), "agents"), join(at, "agents"), { recursive: true });
+  return realpathSync(at);
+}
+const commitLineOf = (out: string, root: string) =>
+  out.split("\n").find((l) => l.startsWith(`commit in ${basename(root)}: `)) ?? null;
+
+test("2026-11-09-001 AC-7: crew status reminds while the mark's paths are uncommitted, and writes nothing", async () => {
+  const env = fleetEnv();
+  const A = await adapterProject(env, ["copilot"], { stale: true });
+  const c = io(A, env);
+  expect((await c.run("projects", "update")).code).toBe(0);
+  const mark = markPath(repoPaths(A, env));
+  const before = readFileSync(mark);
+  const command = `git add -A -- '.agents/skills/crew-method' '.crew/decisions.json' && git commit -m 'adapters refreshed by crew ${VERSION}'`;
+  const status = await c.run("status");
+  const lines = status.out.split("\n").filter((l) => l.startsWith("adapters not committed: "));
+  expect(lines).toEqual([
+    `adapters not committed: copilot updated by crew ${VERSION} and not committed. Commit: ${command}`,
+  ]);
+  expect(readFileSync(mark).equals(before)).toBe(true);
+  const json = await c.run("status", "--json");
+  expect(
+    (JSON.parse(json.out) as { adaptersUncommitted: { parts: string[]; command: string } })
+      .adaptersUncommitted,
+  ).toEqual({ parts: [`copilot updated by crew ${VERSION} and not committed`], command });
+  expect(readFileSync(mark).equals(before)).toBe(true);
+  // No adapters entry in the register: the reminder does not wait for one.
+  const B = await adapterProject(env, ["copilot"]);
+  noteUpdated(repoPaths(B, env), "/r/elsewhere", copilotMark(B, "9.9.9"));
+  write(B, SKILL_PAGE_OF_AN_ADAPTER, "# edited and not committed\n");
+  const other = (await io(B, env).run("status")).out.split("\n");
+  expect(other.filter((l) => l.startsWith("adapters: "))).toHaveLength(0);
+  expect(other.filter((l) => l.startsWith("adapters not committed: "))).toEqual([
+    "adapters not committed: copilot updated by crew 9.9.9 and not committed. Commit: git add -A -- '.agents/skills/crew-method' && git commit -m 'adapters refreshed by crew 9.9.9'",
+  ]);
+});
+
+test("2026-11-09-001 AC-8: the fleet prints the commit line for what it updated and for what it holds back", async () => {
+  const env = fleetEnv();
+  const A = await adapterProject(env, ["copilot"], { stale: true });
+  const B = await adapterProject(env, ["copilot"]);
+  const c = io(A, env);
+  // B: up to date, a mark and nothing uncommitted.
+  const markB = markPath(repoPaths(B, env));
+  noteUpdated(repoPaths(B, env), canonical(pluginRoot()), copilotMark(B));
+  const dryFirst = await c.run("projects", "update", "--dry-run");
+  expect(existsSync(markB)).toBe(true);
+  expect(commitLineOf(dryFirst.out, B)).toBeNull();
+  // A: updated by the run, its commit line printed.
+  const first = await c.run("projects", "update");
+  expect(first.code, first.err).toBe(0);
+  expect(first.out).toContain(`${basename(A)} ${A}: copilot updated (`);
+  expect(commitLineOf(first.out, A)).toContain("git add -A -- '.agents/skills/crew-method'");
+  expect(commitLineOf(first.out, B)).toBeNull();
+  expect(existsSync(markB)).toBe(false);
+  // A made stale again over its uncommitted files: held back, and the commit line printed again.
+  write(A, ".agents/skills/crew-method/SKILL.md", "# stale again, not committed\n");
+  const markA = markPath(repoPaths(A, env));
+  const before = readFileSync(markA);
+  const dry = await c.run("projects", "update", "--dry-run");
+  expect(dry.out).toContain(`${basename(A)} ${A}: copilot stale (uncommitted changes in `);
+  expect(commitLineOf(dry.out, A)).toContain("git add -A -- '.agents/skills/crew-method'");
+  expect(readFileSync(markA).equals(before)).toBe(true);
+  const real = await c.run("projects", "update");
+  expect(real.out).toContain(`${basename(A)} ${A}: copilot stale (uncommitted changes in `);
+  expect(commitLineOf(real.out, A)).toContain("git add -A -- '.agents/skills/crew-method'");
+  expect(readFileSync(markA).equals(before)).toBe(true);
+});
+
+test("2026-11-09-001 AC-10 (the fleet): a mark that cannot be written is said in the project's line, and its commit line is printed", async () => {
+  const env = fleetEnv();
+  const M = await adapterProject(env, ["copilot"], { stale: true });
+  // A folder where the mark goes: the rename of the temporary file over it throws.
+  const mark = markPath(repoPaths(M, env));
+  mkdirSync(mark, { recursive: true });
+  writeFileSync(join(mark, "in-the-way"), "");
+  const run = await io(M, env).run("projects", "update");
+  expect(run.code, run.err).toBe(0);
+  const lines = run.out.split("\n").filter((l) => l.startsWith(`${basename(M)} ${M}: `));
+  expect(lines).toHaveLength(1);
+  expect(lines[0]).toContain(
+    "copilot updated (1 differed, 0 removed), the not-committed mark was not written (",
+  );
+  expect(run.out).toContain(
+    "\n1 updated, 0 would update, 0 up to date, 0 stale, 0 refused, 0 failed, ",
+  );
+  expect(commitLineOf(run.out, M)).toContain("git add -A -- '.agents/skills/crew-method'");
+});
+
+test("2026-11-09-001 AC-16: a failed project gets one register entry, once", async () => {
+  const env = fleetEnv();
+  const F = await adapterProject(env, ["copilot"], { stale: true });
+  // A skill folder nothing can be written into: the real install fails.
+  const skill = join(F, ".agents", "skills", "crew-method");
+  const files = filesBelow(skill).map((rel) => join(skill, rel));
+  const folders = new Set<string>([skill]);
+  for (const file of files)
+    for (let dir = dirname(file); dir !== skill; dir = dirname(dir)) folders.add(dir);
+  const entries = () => listDecisions(repoPaths(F, env)).filter((d) => d.kind === "adapters");
+  for (const file of files) chmodSync(file, 0o444);
+  for (const folder of folders) chmodSync(folder, 0o555);
+  try {
+    const c = io(F, env);
+    const run = await c.run("projects", "update");
+    expect(run.code).toBe(1);
+    expect(run.out).toContain(`${basename(F)} ${F}: copilot failed (`);
+    expect(entries()).toHaveLength(1);
+    expect(entries()[0]?.text).toContain("copilot failed (");
+    expect((await c.run("projects", "update")).code).toBe(1);
+    expect(entries()).toHaveLength(1);
+  } finally {
+    for (const folder of folders) chmodSync(folder, 0o755);
+    for (const file of files) chmodSync(file, 0o644);
+  }
+});
+
+test("2026-11-09-001 AC-24: the fleet prints the commit line for a project on another root", async () => {
+  const env = fleetEnv();
+  const other = otherEngineRoot();
+  const root = realpathSync(
+    makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) }),
+  );
+  await io(root, env).run("status");
+  write(root, ".crew/.gitignore", "local/\nwork/*/logs/\nwork/*/review/ui/\nworktrees/\n");
+  const done = installRuntime(
+    RUNTIMES.copilot,
+    "project",
+    { project: root, home: env.HOME ?? "" },
+    other,
+  );
+  if ("refused" in done) throw new Error(done.refused);
+  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A");
+  git(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "adapters");
+  noteUpdated(repoPaths(root, env), other, copilotMark(root, "9.9.9"));
+  write(root, SKILL_PAGE_OF_AN_ADAPTER, "# edited and not committed\n");
+  const run = await io(root, env).run("projects", "update");
+  expect(run.out).toContain(`${basename(root)} ${root}: copilot on another root (`);
+  expect(commitLineOf(run.out, root)).toBe(
+    `commit in ${basename(root)}: git add -A -- '.agents/skills/crew-method' && git commit -m 'adapters refreshed by crew 9.9.9'`,
+  );
+});
+
+test("2026-11-09-001 AC-29: the user scope line is written as soon as the last project is done", async () => {
+  const env = fleetEnv();
+  const P = await adapterProject(env, ["copilot"]);
+  const writes: string[] = [];
+  const cli: CliIo = {
+    stdout: (t) => writes.push(t),
+    stderr: () => {},
+    stdin: async () => "",
+    env,
+    cwd: P,
+  };
+  expect(await main(["projects", "update"], cli)).toBe(0);
+  expect(writes).toEqual([
+    `${basename(P)} ${P}: up to date\n`,
+    "user scope: no adapter on this root\n",
+    "0 updated, 0 would update, 1 up to date, 0 stale, 0 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone\n",
+  ]);
 });

@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   type AdapterStatus,
-  commitCommand,
   foreignText,
   quoted,
   refreshAdapters,
   resultText,
 } from "./adapters.ts";
+import { uncommittedAdapters } from "./adapters-uncommitted.ts";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
 import { assembleAuditReport, renderAuditHtml, renderAuditMarkdown } from "./audit-report.ts";
@@ -2240,22 +2240,38 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
         worktree: worktreeMainRoot(root) !== null,
         live: Object.keys(liveSessions(paths)).length > 0,
       });
-      const units = [...refresh.results.map(resultText), ...refresh.foreign.map(foreignText)];
+      // What the not-committed mark says is still to commit (item 2026-11-09-001): read before
+      // the project's line is printed, never thrown from, cleared on a real run alone. It gives
+      // the commit line of a project updated now, of one held back over its uncommitted files,
+      // and of one whose adapters name another root.
+      const reminder = uncommittedAdapters(paths, {
+        clear: !dryRun,
+        ...(refresh.markFailed && refresh.entry
+          ? { also: { root: refresh.root, entry: refresh.entry } }
+          : {}),
+      });
+      const units = [
+        ...refresh.results.map(resultText),
+        ...refresh.foreign.map(foreignText),
+        ...(refresh.markFailed
+          ? [`the not-committed mark was not written (${refresh.markFailed})`]
+          : []),
+      ];
       const bucket =
         UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ??
         (refresh.foreign.length ? "other root" : "no adapter");
       const allOk =
         refresh.results.length > 0 &&
         refresh.results.every((r) => r.status === "up to date") &&
-        refresh.foreign.length === 0;
+        refresh.foreign.length === 0 &&
+        !refresh.markFailed;
       emit({
         name,
         root,
         status: bucket,
         units: allOk ? ["up to date"] : units.length ? units : ["no adapter on this root"],
       });
-      const command = commitCommand(refresh);
-      if (command) commits.push({ name, command });
+      if (reminder?.command) commits.push({ name, command: reminder.command });
     } catch (error) {
       const reason = quoted((error as Error).message);
       emit({ name, root, status: "failed", units: [`failed (${reason})`], reason });
@@ -2303,11 +2319,13 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
   const code = counts.refused || counts.failed ? 1 : 0;
   const data = { projects: lines, user, counts };
   if (json) return { code, text: countLine, stdout: true, data };
-  const text = [
-    userText,
-    countLine,
-    ...commits.map((c) => `commit in ${quoted(c.name)}: ${c.command}`),
-  ].join("\n");
+  // The user scope's line in a write of its own, as soon as the last project is done (item
+  // 2026-11-09-001, AC-29): it tells a run killed after every project from one killed between
+  // two. The whole output keeps its bytes and their order.
+  io.stdout(`${userText}\n`);
+  const text = [countLine, ...commits.map((c) => `commit in ${quoted(c.name)}: ${c.command}`)].join(
+    "\n",
+  );
   return { code, text, stdout: true, data };
 }
 
@@ -6939,14 +6957,35 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The checkout's last adapters entry (item 2026-11-08-002, AC-25): what the last refresh
       // did or held back, readable in every runtime, OpenCode's included.
       const last = lastEntryText(env.paths, "adapters");
-      if (last === null) return outcome;
-      const adapters = quoted(
-        last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last,
-      );
+      const adapters =
+        last === null
+          ? null
+          : quoted(last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last);
+      // What the not-committed mark says is still to commit (item 2026-11-09-001, AC-7), whether
+      // or not the register holds an entry: read here, never written.
+      const reminder = uncommittedAdapters(env.paths, { clear: false });
+      if (adapters === null && reminder === null) return outcome;
+      const text = [outcome.text];
+      if (adapters !== null) text.push(`adapters: ${adapters}`);
+      if (reminder) {
+        const said = [
+          ...reminder.parts,
+          ...(reminder.failed ? [`check failed (${reminder.failed})`] : []),
+        ].join("; ");
+        text.push(
+          `adapters not committed: ${said}${reminder.command ? `. Commit: ${reminder.command}` : ""}`,
+        );
+      }
       return {
         ...outcome,
-        text: `${outcome.text}\nadapters: ${adapters}`,
-        data: { ...outcome.data, adapters },
+        text: text.join("\n"),
+        data: {
+          ...outcome.data,
+          ...(adapters !== null ? { adapters } : {}),
+          ...(reminder
+            ? { adaptersUncommitted: { parts: reminder.parts, command: reminder.command } }
+            : {}),
+        },
       };
     }
     case "mail":

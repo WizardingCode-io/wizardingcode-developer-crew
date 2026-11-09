@@ -4228,30 +4228,6 @@ function adaptersEntryText(refresh, root) {
   const results = refresh.results.map(resultText).join(", ");
   return `adapters: ${results} (from ${refresh.from ?? "none"} to ${refresh.version} at ${quoted(root)})`;
 }
-function commitCommand(refresh) {
-  const updated = refresh.results.filter((r) => r.status === "updated");
-  if (!updated.length)
-    return null;
-  const paths = [];
-  const add = (p) => {
-    if (!paths.includes(p))
-      paths.push(p);
-  };
-  for (const r of updated)
-    if (r.configWritten)
-      add(RUNTIMES[r.runtime].config.project);
-  for (const r of updated)
-    add(`${RUNTIMES[r.runtime].skillsDir.project}/crew-method`);
-  for (const r of updated) {
-    const agents = RUNTIMES[r.runtime].agentsDir;
-    if (agents)
-      add(`${agents.project}/crew-*`);
-  }
-  if (refresh.appended)
-    add(".crew/decisions.json");
-  const q = (p) => `'${p.replace(/'/g, "'\\''")}'`;
-  return `git add -A -- ${paths.map(q).join(" ")} && git commit -m 'adapters refreshed by crew ${refresh.version}'`;
-}
 function adaptersLine(refresh, extra = [], reminder = null) {
   const results = refresh?.results ?? [];
   const updated = results.some((r) => r.status === "updated");
@@ -23652,18 +23628,25 @@ function projectsUpdate(env, parsed, args, io) {
         worktree: worktreeMainRoot(root) !== null,
         live: Object.keys(liveSessions(paths)).length > 0
       });
-      const units = [...refresh.results.map(resultText), ...refresh.foreign.map(foreignText)];
+      const reminder = uncommittedAdapters(paths, {
+        clear: !dryRun,
+        ...refresh.markFailed && refresh.entry ? { also: { root: refresh.root, entry: refresh.entry } } : {}
+      });
+      const units = [
+        ...refresh.results.map(resultText),
+        ...refresh.foreign.map(foreignText),
+        ...refresh.markFailed ? [`the not-committed mark was not written (${refresh.markFailed})`] : []
+      ];
       const bucket = UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ?? (refresh.foreign.length ? "other root" : "no adapter");
-      const allOk = refresh.results.length > 0 && refresh.results.every((r) => r.status === "up to date") && refresh.foreign.length === 0;
+      const allOk = refresh.results.length > 0 && refresh.results.every((r) => r.status === "up to date") && refresh.foreign.length === 0 && !refresh.markFailed;
       emit({
         name,
         root,
         status: bucket,
         units: allOk ? ["up to date"] : units.length ? units : ["no adapter on this root"]
       });
-      const command = commitCommand(refresh);
-      if (command)
-        commits.push({ name, command });
+      if (reminder?.command)
+        commits.push({ name, command: reminder.command });
     } catch (error) {
       const reason = quoted(error.message);
       emit({ name, root, status: "failed", units: [`failed (${reason})`], reason });
@@ -23701,11 +23684,9 @@ function projectsUpdate(env, parsed, args, io) {
   const data = { projects: lines, user, counts };
   if (json)
     return { code, text: countLine, stdout: true, data };
-  const text = [
-    userText,
-    countLine,
-    ...commits.map((c) => `commit in ${quoted(c.name)}: ${c.command}`)
-  ].join(`
+  io.stdout(`${userText}
+`);
+  const text = [countLine, ...commits.map((c) => `commit in ${quoted(c.name)}: ${c.command}`)].join(`
 `);
   return { code, text, stdout: true, data };
 }
@@ -27365,14 +27346,29 @@ ${lines.join(`
       const active = named ?? activeWork(env.paths);
       const outcome = active?.work ? statusView(env, { work: active.work, tampered: active.tampered }) : ok("no active work item", { active: null });
       const last = lastEntryText(env.paths, "adapters");
-      if (last === null)
+      const adapters = last === null ? null : quoted(last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last);
+      const reminder = uncommittedAdapters(env.paths, { clear: false });
+      if (adapters === null && reminder === null)
         return outcome;
-      const adapters = quoted(last.startsWith("adapters: ") ? last.slice("adapters: ".length) : last);
+      const text = [outcome.text];
+      if (adapters !== null)
+        text.push(`adapters: ${adapters}`);
+      if (reminder) {
+        const said = [
+          ...reminder.parts,
+          ...reminder.failed ? [`check failed (${reminder.failed})`] : []
+        ].join("; ");
+        text.push(`adapters not committed: ${said}${reminder.command ? `. Commit: ${reminder.command}` : ""}`);
+      }
       return {
         ...outcome,
-        text: `${outcome.text}
-adapters: ${adapters}`,
-        data: { ...outcome.data, adapters }
+        text: text.join(`
+`),
+        data: {
+          ...outcome.data,
+          ...adapters !== null ? { adapters } : {},
+          ...reminder ? { adaptersUncommitted: { parts: reminder.parts, command: reminder.command } } : {}
+        }
       };
     }
     case "mail":

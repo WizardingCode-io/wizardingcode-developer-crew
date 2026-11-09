@@ -18,12 +18,15 @@ import { fileURLToPath } from "node:url";
 import {
   adaptersEntryText,
   adaptersLine,
-  commitCommand,
   type Refresh,
   type RefreshOptions,
   refreshAdapters,
 } from "../src/adapters.ts";
-import { markPath, type UncommittedEntry } from "../src/adapters-uncommitted.ts";
+import {
+  markPath,
+  type UncommittedEntry,
+  uncommittedAdapters,
+} from "../src/adapters-uncommitted.ts";
 import { appendDecision, listDecisions } from "../src/decisions.ts";
 import { nowIso } from "../src/fs.ts";
 import { withLock } from "../src/lock.ts";
@@ -432,7 +435,7 @@ test("2026-11-08-002 AC-22: the printed commit command leaves the next start cle
   const refresh = refreshAdapters(f.paths, options(f));
   expect(result(refresh, "copilot")).toMatchObject({ status: "updated", removed: 1 });
   expect(existsSync(join(f.project, ".github", "agents", "crew-retired.agent.md"))).toBe(false);
-  const command = commitCommand(refresh);
+  const command = uncommittedAdapters(f.paths, { clear: false })?.command ?? null;
   expect(command).toContain("&& git commit -m 'adapters refreshed by crew 0.21.0'");
   expect(command).toContain("'.crew/decisions.json'");
   execFileSync("sh", ["-c", command ?? ""], { cwd: f.project, stdio: "ignore" });
