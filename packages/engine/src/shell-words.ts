@@ -83,10 +83,15 @@ export function takesNext(wrapper: CommandWrapper, option: string): boolean {
   return false;
 }
 
+/** A word in single quotes for a POSIX shell, each quote inside it written `'\''`. The engine's one escape. */
+export function singleQuoted(word: string): string {
+  return `'${word.replace(/'/g, "'\\''")}'`;
+}
+
 const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
 /** One word, quoted for a POSIX shell's reading: a word of safe characters stays as it is, the rest goes in single quotes. The engine's one rule, for the words after `crew tdd --`, the words `env -S "a b" c` appends to its string and `find -exec`'s, so a comma list stays a bare word and a `#` or a `;` stays the word it is. */
 export function quoteWord(word: string): string {
-  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+  return SAFE_WORD.test(word) ? word : singleQuoted(word);
 }
 
 /**

@@ -19,6 +19,7 @@ import { backoffHours } from "../packages/engine/src/backoff.ts";
 import { readJson, writeTextNew } from "../packages/engine/src/fs.ts";
 import { userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
+import { singleQuoted } from "../packages/engine/src/shell-words.ts";
 import { DEFAULT_AGENT_MODEL, JUDGE_MODEL, kitEnvironment } from "./eval.ts";
 import {
   allCases,
@@ -1661,11 +1662,6 @@ export async function tick(
 
 export const LABEL = "io.wizardingcode.crew-improve";
 
-/** `text` as one `sh` word: single-quoted, an embedded `'` written as `'\''`. */
-function shQuote(text: string): string {
-  return `'${text.replace(/'/g, "'\\''")}'`;
-}
-
 /**
  * The agent's launcher, `<home>/tick.sh`, run by launchd as `/bin/sh <path>` (finding 169): a clone
  * without the loop's script (synced to an origin/main that had none) is brought to origin/main
@@ -1678,8 +1674,8 @@ export function launcherScript(input: { bun: string; repo: string }): string {
   return [
     "#!/bin/sh",
     "# The harness-improvement loop's launcher, written by `bun scripts/improve-loop.ts install`.",
-    `repo=${shQuote(input.repo)}`,
-    `bun=${shQuote(input.bun)}`,
+    `repo=${singleQuoted(input.repo)}`,
+    `bun=${singleQuoted(input.bun)}`,
     'if [ ! -f "$repo/scripts/improve-loop.ts" ]; then',
     '  git -C "$repo" fetch -q origin &&',
     '    git -C "$repo" cat-file -e origin/main:scripts/improve-loop.ts 2>/dev/null &&',

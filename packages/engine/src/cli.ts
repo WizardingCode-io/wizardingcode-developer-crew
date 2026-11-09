@@ -10,7 +10,7 @@ import {
   resultText,
   unwrittenMark,
 } from "./adapters.ts";
-import { uncommittedAdapters } from "./adapters-uncommitted.ts";
+import { notCommittedLine, reminderParts, uncommittedAdapters } from "./adapters-uncommitted.ts";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
 import { assembleAuditReport, renderAuditHtml, renderAuditMarkdown } from "./audit-report.ts";
@@ -6965,15 +6965,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (adapters === null && reminder === null) return outcome;
       const text = [outcome.text];
       if (adapters !== null) text.push(`adapters: ${adapters}`);
-      if (reminder) {
-        const said = [
-          ...reminder.parts,
-          ...(reminder.failed ? [`check failed (${reminder.failed})`] : []),
-        ].join("; ");
-        text.push(
-          `adapters not committed: ${said}${reminder.command ? `. Commit: ${reminder.command}` : ""}`,
-        );
-      }
+      const own = canonical(pluginRoot());
+      if (reminder) text.push(notCommittedLine(reminder, own));
       return {
         ...outcome,
         text: text.join("\n"),
@@ -6981,7 +6974,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ...outcome.data,
           ...(adapters !== null ? { adapters } : {}),
           ...(reminder
-            ? { adaptersUncommitted: { parts: reminder.parts, command: reminder.command } }
+            ? {
+                adaptersUncommitted: {
+                  parts: reminderParts(reminder, { own }),
+                  command: reminder.command,
+                },
+              }
             : {}),
         },
       };

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -12,10 +13,13 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
+  dropRuntime,
   markPath,
   noteUpdated,
   REGISTER,
+  type Reminder,
   readMarks,
+  reminderParts,
   type UncommittedEntry,
   uncommittedAdapters,
 } from "../src/adapters-uncommitted.ts";
@@ -63,6 +67,9 @@ const commit = (root: string, message: string) => {
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", message);
 };
+/** A reminder's sentences as a reader on no entry's root says them; undefined for no reminder. */
+const partsOf = (reminder: Reminder | null) =>
+  reminder ? reminderParts(reminder, { own: "" }) : undefined;
 /** One tracked agent file of Copilot, by its path from the project root. */
 const anAgent = (root: string) => git(root, "ls-files", ".github/agents").split("\n")[0] as string;
 
@@ -72,8 +79,8 @@ test("2026-11-09-001 AC-4: the command names only the pathspecs that hold a chan
   write(p.root, SKILL, "# edited\n");
   write(p.root, REGISTER, "[]\n");
   const reminder = uncommittedAdapters(p.paths, { clear: false });
-  expect(reminder?.parts).toEqual(["copilot updated by crew 1.2.3 and not committed"]);
-  expect(reminder?.roots).toEqual(["/r/a"]);
+  expect(partsOf(reminder)).toEqual(["copilot updated by crew 1.2.3 and not committed"]);
+  expect(reminder?.entries.map((e) => e.root)).toEqual(["/r/a"]);
   expect(reminder?.command).toBe(
     "git add -A -- '.agents/skills/crew-method' '.crew/decisions.json' && git commit -m 'adapters refreshed by crew 1.2.3'",
   );
@@ -113,14 +120,24 @@ test("2026-11-09-001 AC-4: the command names only the pathspecs that hold a chan
   // Two roots: each pathspec once, the newest version in the message.
   const two = project();
   noteUpdated(two.paths, "/r/a", entry(two.root, { register: false }));
-  noteUpdated(two.paths, "/r/b", entry(two.root, { version: "1.10.0", register: false }));
+  // A runtime is named under one root (item 2026-11-09-003), so the second root holds Codex,
+  // whose skill folder is the same one.
+  noteUpdated(
+    two.paths,
+    "/r/b",
+    entry(two.root, {
+      version: "1.10.0",
+      register: false,
+      runtimes: [{ name: "codex", config: false }],
+    }),
+  );
   write(two.root, SKILL, "# edited\n");
   const both = uncommittedAdapters(two.paths, { clear: false });
-  expect(both?.parts).toEqual([
+  expect(partsOf(both)).toEqual([
     "copilot updated by crew 1.2.3 and not committed",
-    "copilot updated by crew 1.10.0 and not committed",
+    "codex updated by crew 1.10.0 and not committed",
   ]);
-  expect(both?.roots).toEqual(["/r/a", "/r/b"]);
+  expect(both?.entries.map((e) => e.root)).toEqual(["/r/a", "/r/b"]);
   expect(both?.command).toBe(
     "git add -A -- '.agents/skills/crew-method' && git commit -m 'adapters refreshed by crew 1.10.0'",
   );
@@ -162,7 +179,7 @@ test("2026-11-09-001 AC-9: a mark that cannot be trusted says nothing, a status 
   const brokenPaths = repoPaths(broken, testEnv());
   noteUpdated(brokenPaths, "/r/a", good);
   const failing = uncommittedAdapters(brokenPaths, { clear: true });
-  expect(failing?.parts).toEqual([]);
+  expect(failing?.entries).toEqual([]);
   expect(failing?.command).toBeNull();
   expect(failing?.failed).toContain("not a git repository");
   expect(failing?.failed).not.toContain("\n");
@@ -262,7 +279,7 @@ test("2026-11-09-001 AC-27: a change is the refresh's only until a commit touche
   const p = project();
   noteUpdated(p.paths, "/r/a", entry(p.root, { register: false }));
   write(p.root, SKILL, "# what the refresh wrote\n");
-  expect(uncommittedAdapters(p.paths, { clear: false })?.parts).toHaveLength(1);
+  expect(uncommittedAdapters(p.paths, { clear: false })?.entries).toHaveLength(1);
   commit(p.root, "adapters refreshed");
   write(p.root, SKILL, "# the person's own edit, later\n");
   expect(uncommittedAdapters(p.paths, { clear: true })).toBeNull();
@@ -312,7 +329,7 @@ test("2026-11-09-001 AC-27: a change is the refresh's only until a commit touche
     entry(unknown.root, { head: "0".repeat(40), register: false }),
   );
   write(unknown.root, SKILL, "# refreshed\n");
-  expect(uncommittedAdapters(unknown.paths, { clear: false })?.parts).toEqual([
+  expect(partsOf(uncommittedAdapters(unknown.paths, { clear: false }))).toEqual([
     "copilot updated by crew 1.2.3 and not committed",
   ]);
 });
@@ -335,9 +352,218 @@ test("2026-11-09-001 AC-31: an entry this engine does not recognise survives its
   const raw = () => JSON.parse(readFileSync(markPath(p.paths), "utf8")) as Record<string, unknown>;
   expect(readMarks(p.paths)["/r/new"]).toBeUndefined();
   expect(uncommittedAdapters(p.paths, { clear: false })).toBeNull();
-  noteUpdated(p.paths, "/r/b", entry(p.root, { register: false }));
+  // Codex under the second root: a runtime is named under one root (item 2026-11-09-003).
+  noteUpdated(
+    p.paths,
+    "/r/b",
+    entry(p.root, { register: false, runtimes: [{ name: "codex", config: false }] }),
+  );
   expect(raw()["/r/new"]).toEqual(future);
   expect(Object.keys(raw()).sort()).toEqual(["/r/a", "/r/b", "/r/new"]);
   expect(uncommittedAdapters(p.paths, { clear: true })).toBeNull();
   expect(raw()).toEqual({ "/r/new": future });
+});
+
+// Item 2026-11-09-003, Task 1: an unfinished runtime, one root per runtime, the whole-entry clear (AC-6, AC-12, AC-39, AC-41, AC-43).
+
+const CONFIG = ".github/hooks/crew.json";
+const UNFINISHED = [{ name: "copilot" as const, config: false, unfinished: true as const }];
+const CODEX = [{ name: "codex" as const, config: false }];
+/** The sentence of an unfinished runtime read from another root than its own. */
+const unfinishedElsewhere = (name: string, version: string) =>
+  `${name} left unfinished by crew ${version} (an install cut short or failed): run crew runtime install ${name} again with the crew of its root, such as ~/.local/share/wizardingcode-developer-crew/bin/crew, then commit`;
+const rawMark = (paths: CrewPaths) =>
+  JSON.parse(readFileSync(markPath(paths), "utf8")) as Record<string, Record<string, unknown>>;
+/** Writes the mark's file as given, by hand. */
+function plant(paths: CrewPaths, file: Record<string, unknown>): void {
+  mkdirSync(join(paths.localDir, "adapters"), { recursive: true });
+  writeFileSync(markPath(paths), JSON.stringify(file));
+}
+
+test("2026-11-09-003 AC-6: an unfinished runtime's configuration is watched whatever its config says", () => {
+  const p = project();
+  noteUpdated(p.paths, "/r/a", entry(p.root, { register: false, runtimes: UNFINISHED }));
+  write(p.root, CONFIG, `${readFileSync(join(p.root, CONFIG), "utf8")}\n`);
+  const reminder = uncommittedAdapters(p.paths, { clear: false });
+  expect(reminder?.entries).toEqual([
+    { root: "/r/a", version: "1.2.3", updated: [], unfinished: ["copilot"] },
+  ]);
+  expect(reminder?.command).toBeNull();
+  // The same change under a finished runtime whose install wrote no configuration: not watched.
+  const q = project();
+  noteUpdated(q.paths, "/r/a", entry(q.root, { register: false }));
+  write(q.root, CONFIG, `${readFileSync(join(q.root, CONFIG), "utf8")}\n`);
+  expect(uncommittedAdapters(q.paths, { clear: false })).toBeNull();
+});
+
+test("2026-11-09-003 AC-12: a runtime is named under one root, and what is not recognised survives", () => {
+  const p = project();
+  const of = (runtimes: unknown[], extra: Record<string, unknown> = {}) => ({
+    version: "1.2.3",
+    at: AT,
+    head: head(p.root),
+    runtimes,
+    register: false,
+    ...extra,
+  });
+  const unknown = { shape: 2 };
+  plant(p.paths, {
+    "/r/a": of(
+      [
+        { name: "copilot", config: true },
+        { name: "codex", config: false },
+      ],
+      { kept: 1 },
+    ),
+    "/r/b": of([{ name: "copilot", config: false }]),
+    "/r/x": unknown,
+  });
+  noteUpdated(p.paths, "/r/c", entry(p.root, { register: false }));
+  expect(Object.keys(rawMark(p.paths)).sort()).toEqual(["/r/a", "/r/c", "/r/x"]);
+  expect(rawMark(p.paths)["/r/a"]).toEqual(of([{ name: "codex", config: false }], { kept: 1 }));
+  expect(rawMark(p.paths)["/r/x"]).toEqual(unknown);
+  expect(rawMark(p.paths)["/r/c"]?.runtimes).toEqual([{ name: "copilot", config: false }]);
+  dropRuntime(p.paths, "codex");
+  expect(Object.keys(rawMark(p.paths)).sort()).toEqual(["/r/c", "/r/x"]);
+  dropRuntime(p.paths, "copilot");
+  expect(rawMark(p.paths)).toEqual({ "/r/x": unknown });
+  const bytes = readFileSync(markPath(p.paths), "utf8");
+  dropRuntime(p.paths, "copilot");
+  expect(readFileSync(markPath(p.paths), "utf8")).toBe(bytes);
+});
+
+test("2026-11-09-003 AC-39: no command while an entry holds an unfinished runtime, and a clean entry goes", () => {
+  // Two roots: Copilot unfinished under one, Codex finished under the other, the shared skill page changed.
+  const p = project();
+  noteUpdated(p.paths, "/r/a", entry(p.root, { register: false, runtimes: UNFINISHED }));
+  noteUpdated(p.paths, "/r/b", entry(p.root, { register: false, runtimes: CODEX }));
+  write(p.root, SKILL, "# edited\n");
+  const two = uncommittedAdapters(p.paths, { clear: false });
+  expect(two?.entries.map((e) => e.root)).toEqual(["/r/a", "/r/b"]);
+  expect(two?.command).toBeNull();
+  expect(partsOf(two)).toEqual([
+    unfinishedElsewhere("copilot", "1.2.3"),
+    "codex updated by crew 1.2.3 and not committed",
+  ]);
+  // One root, Codex finished and Copilot unfinished: the entry is judged whole, whoever the change is of.
+  const q = project();
+  noteUpdated(
+    q.paths,
+    "/r/a",
+    entry(q.root, { register: false, runtimes: [...CODEX, ...UNFINISHED] }),
+  );
+  write(q.root, SKILL, "# edited\n");
+  const one = uncommittedAdapters(q.paths, { clear: true });
+  expect(one?.entries).toEqual([
+    { root: "/r/a", version: "1.2.3", updated: ["codex"], unfinished: ["copilot"] },
+  ]);
+  expect(one?.command).toBeNull();
+  // Its paths clean again: the entry goes, the unfinished runtime with it.
+  git(q.root, "checkout", "--", SKILL);
+  expect(uncommittedAdapters(q.paths, { clear: true })).toBeNull();
+  expect(existsSync(markPath(q.paths))).toBe(false);
+  // An unfinished entry whose paths are clean goes, and the command is given for what remains.
+  const r = project();
+  noteUpdated(r.paths, "/r/a", entry(r.root, { register: false, runtimes: UNFINISHED }));
+  noteUpdated(r.paths, "/r/b", entry(r.root, { register: false, runtimes: CODEX }));
+  write(r.root, ".codex/agents/crew-x.md", "new\n");
+  const rest = uncommittedAdapters(r.paths, { clear: true });
+  expect(rest?.entries.map((e) => e.root)).toEqual(["/r/b"]);
+  expect(rest?.command).toBe(
+    "git add -A -- '.codex/agents/crew-*' && git commit -m 'adapters refreshed by crew 1.2.3'",
+  );
+  expect(Object.keys(readMarks(r.paths))).toEqual(["/r/b"]);
+});
+
+test("2026-11-09-003 AC-41: the reader takes one entry per runtime, whatever the file holds", () => {
+  const p = project();
+  const of = (runtimes: unknown[]) => ({
+    version: "1.2.3",
+    at: AT,
+    head: head(p.root),
+    runtimes,
+    register: false,
+  });
+  // Twelve roots: the first five name the five runtimes, the other seven name Copilot again.
+  const names = ["codex", "cursor", "copilot", "gemini", "opencode"];
+  const file: Record<string, unknown> = {};
+  for (let i = 0; i < 12; i++)
+    file[`/r/${String(i).padStart(2, "0")}`] = of([
+      { name: i < 5 ? names[i] : "copilot", config: false },
+    ]);
+  plant(p.paths, file);
+  write(p.root, SKILL, "# edited\n");
+  const five = ["/r/00", "/r/01", "/r/02", "/r/03", "/r/04"];
+  expect(Object.keys(readMarks(p.paths))).toEqual(five);
+  expect(uncommittedAdapters(p.paths, { clear: false })?.entries.map((e) => e.root)).toEqual(five);
+  // An entry that names a runtime twice counts as absent, and a write leaves it as read.
+  const twice = of([
+    { name: "copilot", config: false },
+    { name: "copilot", config: true },
+  ]);
+  plant(p.paths, { "/r/a": twice });
+  expect(readMarks(p.paths)).toEqual({});
+  noteUpdated(
+    p.paths,
+    "/r/z",
+    entry(p.root, { register: false, runtimes: [{ name: "gemini", config: false }] }),
+  );
+  expect(rawMark(p.paths)["/r/a"]).toEqual(twice);
+  // An empty key is no root.
+  plant(p.paths, { "": entry(p.root, { register: false }) });
+  expect(readMarks(p.paths)).toEqual({});
+});
+
+test("2026-11-09-003 AC-43: an entry judged clean while unfinished stays once its install ended it finished", () => {
+  const p = project();
+  const unfinished = entry(p.root, {
+    register: false,
+    runtimes: [{ name: "copilot", config: false, unfinished: true }],
+  });
+  noteUpdated(p.paths, "/r/a", unfinished);
+  // What the install's last note writes: the same entry, finished, the same `at`.
+  const finished = join(tempDir("crew-finished-"), "mark.json");
+  writeFileSync(
+    finished,
+    JSON.stringify({ "/r/a": { ...unfinished, runtimes: [{ name: "copilot", config: true }] } }),
+  );
+  // A git that answers as the real one and, at its first status, lets the install end right after.
+  const stub = tempDir("crew-stub-");
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const once = join(stub, "once");
+  writeFileSync(
+    join(stub, "git"),
+    `#!/bin/sh
+out="${stub}/out"
+"${real}" "$@" > "$out"
+rc=$?
+case " $* " in
+  *" status "*)
+    if [ ! -e "${once}" ]; then
+      : > "${once}"
+      cp "${finished}" "${markPath(p.paths)}"
+      printf '# written by the install\\n' >> "${join(p.root, SKILL)}"
+    fi
+    ;;
+esac
+cat "$out"
+exit $rc
+`,
+  );
+  chmodSync(join(stub, "git"), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${stub}:${path}`;
+  let first: ReturnType<typeof uncommittedAdapters>;
+  try {
+    first = uncommittedAdapters(p.paths, { clear: true });
+  } finally {
+    process.env.PATH = path;
+  }
+  // The status it saw was clean, so it says nothing; the entry it would clear is no longer the one it judged.
+  expect(first).toBeNull();
+  expect(existsSync(once)).toBe(true);
+  expect(Object.keys(readMarks(p.paths))).toEqual(["/r/a"]);
+  const second = uncommittedAdapters(p.paths, { clear: false });
+  expect(partsOf(second)).toEqual(["copilot updated by crew 1.2.3 and not committed"]);
+  expect(second?.command).toContain("git add -A -- ");
 });

@@ -1,7 +1,16 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { noteUpdated, uncommittedAdapters } from "../src/adapters-uncommitted.ts";
 import { startsItem } from "../src/hooks/pre-tool-use.ts";
 import { readCommand } from "../src/hooks/shell.ts";
-import { WRAPPERS } from "../src/shell-words.ts";
+import { canonical } from "../src/paths.ts";
+import { shellWord } from "../src/run.ts";
+import { installRuntime, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
+import { quoteWord, singleQuoted, WRAPPERS } from "../src/shell-words.ts";
+import { git, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 const words = (command: string) =>
   readCommand(command).pieces.map((p) => p.tokens.map((t) => t.word));
@@ -144,4 +153,58 @@ test("DEBT-AC-4-stands-alone: a wrapper with a script option appends its followi
     expect(startsItem(line), line).toBe(false);
   for (const line of ["env -S crew start x", "flock /tmp/l -c crew start x"])
     expect(startsItem(line), line).toBe(true);
+});
+
+// Item 2026-11-09-003, Task 1: the engine's one single-quote escape (AC-23, AC-34).
+
+test("2026-11-09-003 AC-23: singleQuoted carries a quote through a shell, and the commit command keeps its bytes", () => {
+  expect(singleQuoted("a'b c")).toBe("'a'\\''b c'");
+  expect(
+    execFileSync("sh", ["-c", `printf %s ${singleQuoted("a'b c")}`], { encoding: "utf8" }),
+  ).toBe("a'b c");
+  expect(quoteWord("a'b")).toBe(singleQuoted("a'b"));
+  expect(quoteWord("a.b")).toBe("a.b");
+  // The mark's commit command quotes every pathspec with it, as before.
+  const root = makeRepo({ "README.md": "# test\n", ".crew/.gitignore": "local/\n" });
+  git(root, "config", "user.email", "crew@test.invalid");
+  git(root, "config", "user.name", "Crew Test");
+  const env = testEnv();
+  const done = installRuntime(
+    RUNTIMES.copilot,
+    "project",
+    { project: root, home: env.HOME ?? "" },
+    canonical(pluginRoot()),
+  );
+  if ("refused" in done) throw new Error(done.refused);
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "adapters");
+  const paths = repoPaths(root, env);
+  noteUpdated(paths, "/r/a", {
+    version: "1.2.3",
+    at: "2026-11-09T00:00:00.000Z",
+    head: git(root, "rev-parse", "HEAD"),
+    runtimes: [{ name: "copilot", config: false }],
+    register: false,
+  });
+  write(root, ".agents/skills/crew-method/SKILL.md", "# edited\n");
+  const agent = git(root, "ls-files", ".github/agents").split("\n")[0] as string;
+  write(root, agent, "edited\n");
+  expect(uncommittedAdapters(paths, { clear: false })?.command).toBe(
+    "git add -A -- '.agents/skills/crew-method' '.github/agents/crew-*' && git commit -m 'adapters refreshed by crew 1.2.3'",
+  );
+});
+
+test("2026-11-09-003 AC-34: the escape is written once, and its other callers return the bytes they returned", () => {
+  // The call that writes the escape, as it stands in source; a doc comment's escaped quote is not this call.
+  const call = ".replace(/'/g, \"'\\\\''\")";
+  const repo = fileURLToPath(new URL("../../../", import.meta.url));
+  const holders: string[] = [];
+  for (const folder of ["packages/engine/src", "scripts"])
+    for (const name of readdirSync(join(repo, folder), { recursive: true }) as string[])
+      if (name.endsWith(".ts") && readFileSync(join(repo, folder, name), "utf8").includes(call))
+        holders.push(`${folder}/${name}`);
+  expect(holders).toEqual(["packages/engine/src/shell-words.ts"]);
+  expect(shellWord("a b")).toBe("'a b'");
+  expect(shellWord("-x")).toBe("./-x");
+  expect(shellWord("it's")).toBe("'it'\\''s'");
 });

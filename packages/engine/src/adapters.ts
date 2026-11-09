@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
+  KEPT_ROOT_CREW,
   noteUpdated,
   type Reminder,
+  reminderParts,
   runtimePathspecs,
   type UncommittedEntry,
 } from "./adapters-uncommitted.ts";
@@ -213,16 +215,18 @@ export function markFailedText(why: string): string {
 /**
  * The SessionStart line of the adapters, or null when there is nothing to say: each result of the
  * refresh that is not up to date, each foreign adapter that is not simply another engine's, what
- * the not-committed mark says is still to commit (left out for the root this same refresh
- * updated, whose result already says it), a mark that could not be written or read, then once
- * each the note that an update applies from the runtime's next session, the commit command the
- * mark's reader built, and the hold-back suffixes that tell the person what ends the hold-back.
- * With no reminder it says the parts and no command.
+ * the not-committed mark says is still to commit (the runtimes this same refresh updated left
+ * out of its own root's entry, whose results already say them), a mark that could not be written
+ * or read, then once each the note that an update applies from the runtime's next session, the
+ * commit command the mark's reader built, and the hold-back suffixes that tell the person what
+ * ends the hold-back. With no reminder it says the parts and no command. `own` is the reading
+ * engine's root: the refresh's when there is one.
  */
 export function adaptersLine(
   refresh: Refresh | null,
   extra: string[] = [],
   reminder: Reminder | null = null,
+  own: string = refresh?.root ?? "",
 ): string | null {
   const results = refresh?.results ?? [];
   const updated = results.some((r) => r.status === "updated");
@@ -236,12 +240,11 @@ export function adaptersLine(
     if (f.why === "root unreadable") parts.push(foreignText(f));
     else
       parts.push(
-        `${foreignText(f)}: run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`,
+        `${foreignText(f)}: run crew runtime install ${f.runtime} with the crew of the root to keep, such as ${KEPT_ROOT_CREW}`,
       );
   }
-  reminder?.parts.forEach((part, i) => {
-    if (!(updated && reminder.roots[i] === refresh?.root)) parts.push(part);
-  });
+  const updatedNow = results.filter((r) => r.status === "updated").map((r) => r.runtime);
+  if (reminder) parts.push(...reminderParts(reminder, { own, updatedNow }));
   if (refresh?.markFailed) parts.push(markFailedText(refresh.markFailed));
   if (reminder?.failed) parts.push(`not-committed check failed (${reminder.failed})`);
   parts.push(...extra);

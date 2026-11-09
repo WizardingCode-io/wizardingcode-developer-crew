@@ -943,3 +943,23 @@ test("2026-11-09-001 AC-28: the mark is written before the version is recorded",
   expect(entry?.register).toBe(true);
   expect(loadState(f.paths).adapters?.[f.root]).toBe(VERSION);
 });
+
+// Item 2026-11-09-003, Task 1: the tarball crew's path is one constant (AC-38).
+
+test("2026-11-09-003 AC-38: the path of the root to keep is written once, and the foreign adapter's line takes it", () => {
+  const text = "~/.local/share/wizardingcode-developer-crew/bin/crew";
+  const src = fileURLToPath(new URL("../src/", import.meta.url));
+  const holders = (readdirSync(src, { recursive: true }) as string[])
+    .filter((name) => name.endsWith(".ts"))
+    .filter((name) => readFileSync(join(src, name), "utf8").includes(text));
+  expect(holders).toEqual(["adapters-uncommitted.ts"]);
+  // A configuration that names a root with no bundle: the refresh's own account, never one written by hand.
+  const f = fixture([RUNTIMES.copilot]);
+  const config = join(f.project, RUNTIMES.copilot.config.project);
+  writeFileSync(config, readFileSync(config, "utf8").split(f.root).join("/gone"));
+  git(f.project, "add", "-A");
+  git(f.project, "commit", "-q", "-m", "a root that is gone");
+  const refresh = refreshAdapters(f.paths, options(f));
+  expect(refresh.foreign.map((x) => x.why)).toEqual(["root gone"]);
+  expect(adaptersLine(refresh)).toContain(`such as ${text}`);
+});

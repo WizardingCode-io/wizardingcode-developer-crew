@@ -3600,6 +3600,146 @@ function checkRuntime(runtime, scope, dirs, fallbackRoot) {
   };
 }
 
+// packages/engine/src/shell-words.ts
+var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
+var SHELL_VALUED = {
+  short: "oO",
+  long: ["--rcfile", "--init-file"]
+};
+function shellTakesNext(option) {
+  if (option.startsWith("--"))
+    return SHELL_VALUED.long.includes(option);
+  return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
+}
+var JS_RUNNERS = ["node", "bun"];
+var NPX_RUNNERS = ["npx", "bunx"];
+var RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] };
+function runnerSuffix(suffixes) {
+  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
+}
+var COMMAND_WRAPPERS = [
+  {
+    name: "env",
+    valued: "uCPLU",
+    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
+    positionals: 0,
+    assignments: true,
+    scriptOptions: ["-S", "--split-string"],
+    unsetOptions: ["-u", "--unset"]
+  },
+  { name: "command", valued: "", longValued: [], positionals: 0 }
+];
+function takesNext(wrapper, option) {
+  if (option.includes("="))
+    return false;
+  if (option.startsWith("--"))
+    return wrapper.longValued.includes(option);
+  for (let i = 1;i < option.length; i++)
+    if (wrapper.valued.includes(option.charAt(i)))
+      return i === option.length - 1;
+  return false;
+}
+function singleQuoted(word) {
+  return `'${word.replace(/'/g, "'\\''")}'`;
+}
+var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+function quoteWord(word) {
+  return SAFE_WORD.test(word) ? word : singleQuoted(word);
+}
+var WRAPPERS = [
+  { name: "function", valued: "", longValued: [], positionals: 1 },
+  { name: "case", valued: "", longValued: [], positionals: 1 },
+  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
+  {
+    name: "timeout",
+    valued: "sk",
+    longValued: ["--signal", "--kill-after"],
+    positionals: 1
+  },
+  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
+  {
+    name: "flock",
+    valued: "w",
+    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+    scriptTrailing: true
+  },
+  {
+    name: "script",
+    valued: "FtEBIOomT",
+    longValued: [
+      "--echo",
+      "--log-in",
+      "--log-out",
+      "--log-io",
+      "--log-timing",
+      "--logging-format",
+      "--output-limit"
+    ],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+    scriptStandsAlone: true
+  },
+  {
+    name: "su",
+    valued: "gGsw",
+    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command", "--session-command"],
+    scriptStandsAlone: true
+  },
+  {
+    name: "sudo",
+    valued: "ugpChDTrt",
+    longValued: [
+      "--user",
+      "--group",
+      "--prompt",
+      "--close-from",
+      "--host",
+      "--chdir",
+      "--command-timeout",
+      "--role",
+      "--type",
+      "--other-user"
+    ],
+    positionals: 0
+  },
+  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
+  ...COMMAND_WRAPPERS,
+  { name: "exec", valued: "a", longValued: [], positionals: 0 },
+  {
+    name: "xargs",
+    valued: "nILPdEsa",
+    longValued: [
+      "--max-args",
+      "--replace",
+      "--max-lines",
+      "--max-procs",
+      "--delimiter",
+      "--eof",
+      "--max-chars",
+      "--arg-file",
+      "--process-slot-var"
+    ],
+    positionals: 0
+  },
+  { name: "nohup", valued: "", longValued: [], positionals: 0 },
+  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
+  { name: "builtin", valued: "", longValued: [], positionals: 0 },
+  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
+  {
+    name: "ionice",
+    valued: "cnp",
+    longValued: ["--class", "--classdata", "--pid"],
+    positionals: 0
+  },
+  { name: "noglob", valued: "", longValued: [], positionals: 0 },
+  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
+  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
+];
+
 // packages/engine/src/version.ts
 var VERSION = "0.22.0";
 function compareVersions(a, b) {
@@ -3617,6 +3757,7 @@ function compareVersions(a, b) {
 
 // packages/engine/src/adapters-uncommitted.ts
 var REGISTER = ".crew/decisions.json";
+var KEPT_ROOT_CREW = "~/.local/share/wizardingcode-developer-crew/bin/crew";
 var VERSION_SHAPE = /^\d+\.\d+\.\d+$/;
 var HEAD_SHAPE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 function markPath(paths) {
@@ -3661,25 +3802,56 @@ function recognised(value) {
   for (const item of v.runtimes) {
     if (item === null || typeof item !== "object")
       return null;
-    const { name, config } = item;
+    const { name, config, unfinished } = item;
     if (typeof name !== "string" || name === "claude")
       return null;
     if (!RUNTIME_NAMES.includes(name))
       return null;
+    if (runtimes.some((r) => r.name === name))
+      return null;
     if (typeof config !== "boolean")
       return null;
-    runtimes.push({ name, config });
+    if (unfinished !== undefined && typeof unfinished !== "boolean")
+      return null;
+    runtimes.push({
+      name,
+      config,
+      ...unfinished === true ? { unfinished: true } : {}
+    });
   }
   return { version: v.version, at: v.at, head: v.head, runtimes, register: v.register };
 }
 function readMarks(paths) {
   const marks = {};
-  for (const [root, value] of Object.entries(readRaw(paths))) {
-    const entry = root === "" ? null : recognised(value);
-    if (entry)
-      marks[root] = entry;
+  const named = new Set;
+  const raw = readRaw(paths);
+  for (const root of Object.keys(raw).sort()) {
+    const entry = root === "" ? null : recognised(raw[root]);
+    if (!entry || entry.runtimes.some((r) => named.has(r.name)))
+      continue;
+    for (const r of entry.runtimes)
+      named.add(r.name);
+    marks[root] = entry;
   }
   return marks;
+}
+function withoutRuntimes(raw, names, keep) {
+  let changed = false;
+  for (const root of Object.keys(raw)) {
+    if (root === keep || !recognised(raw[root]))
+      continue;
+    const value = raw[root];
+    const items = value.runtimes;
+    const kept = items.filter((item) => !names.has(item.name));
+    if (kept.length === items.length)
+      continue;
+    changed = true;
+    if (kept.length === 0)
+      delete raw[root];
+    else
+      raw[root] = { ...value, runtimes: kept };
+  }
+  return changed;
 }
 function noteUpdated(paths, root, entry) {
   const raw = readRaw(paths);
@@ -3687,11 +3859,17 @@ function noteUpdated(paths, root, entry) {
   const runtimes = (earlier?.runtimes ?? []).map((r) => ({ ...r }));
   for (const next of entry.runtimes) {
     const held = runtimes.find((r) => r.name === next.name);
-    if (held)
-      held.config = held.config || next.config;
-    else
+    if (!held) {
       runtimes.push({ ...next });
+      continue;
+    }
+    held.config = held.config || next.config;
+    if (next.unfinished)
+      held.unfinished = true;
+    else
+      delete held.unfinished;
   }
+  withoutRuntimes(raw, new Set(entry.runtimes.map((r) => r.name)), root);
   raw[root] = {
     version: entry.version,
     at: entry.at,
@@ -3715,14 +3893,19 @@ function committedSince(root, head, pathspec) {
   }
 }
 function uncommittedAdapters(paths, opts) {
-  const marks = readMarks(paths);
-  if (opts.also)
-    marks[opts.also.root] = opts.also.entry;
+  const adaptersDir = join7(paths.localDir, "adapters");
+  let marks = readMarks(paths);
+  if (opts.also) {
+    const also = opts.also;
+    const names = new Set(also.entry.runtimes.map((r) => r.name));
+    marks = Object.fromEntries(Object.entries(marks).filter(([root, entry]) => root !== also.root && !entry.runtimes.some((r) => names.has(r.name))));
+    marks[also.root] = also.entry;
+  }
   const roots = Object.keys(marks).sort();
   if (roots.length === 0)
     return null;
   const repo = existsSync3(join7(paths.root, ".git"));
-  const reminder = { parts: [], roots: [], command: null };
+  const reminder = { entries: [], command: null };
   const named = [];
   const versions = [];
   const clean = [];
@@ -3737,7 +3920,7 @@ function uncommittedAdapters(paths, opts) {
       continue;
     }
     const adapterSpecs = [
-      ...new Set(entry.runtimes.flatMap((r) => runtimePathspecs(r.name, r.config)))
+      ...new Set(entry.runtimes.flatMap((r) => runtimePathspecs(r.name, r.config || r.unfinished === true)))
     ];
     const specs = entry.register ? [...adapterSpecs, REGISTER] : adapterSpecs;
     const pathspec = specs.map((spec) => join7(paths.root, spec));
@@ -3759,26 +3942,28 @@ function uncommittedAdapters(paths, opts) {
       markClean();
       continue;
     }
-    const names = entry.runtimes.map((r) => r.name).join(", ");
-    reminder.parts.push(`${names} updated by crew ${entry.version} and not committed`);
-    reminder.roots.push(root);
+    reminder.entries.push({
+      root,
+      version: entry.version,
+      updated: entry.runtimes.filter((r) => !r.unfinished).map((r) => r.name),
+      unfinished: entry.runtimes.filter((r) => r.unfinished).map((r) => r.name)
+    });
     versions.push(entry.version);
     for (const spec of specs)
       if (holds(spec) && !named.includes(spec))
         named.push(spec);
   }
-  if (versions.length) {
+  if (versions.length && !reminder.entries.some((e) => e.unfinished.length)) {
     const newest = versions.reduce((a, b) => compareVersions(a, b) >= 0 ? a : b);
-    const quotedSpecs = named.map((spec) => `'${spec.replace(/'/g, "'\\''")}'`).join(" ");
-    reminder.command = `git add -A -- ${quotedSpecs} && git commit -m 'adapters refreshed by crew ${newest}'`;
+    reminder.command = `git add -A -- ${named.map(singleQuoted).join(" ")} && git commit -m 'adapters refreshed by crew ${newest}'`;
   }
   if (opts.clear && clean.length) {
     try {
-      withLock(join7(paths.localDir, "adapters"), () => {
+      withLock(adaptersDir, () => {
         const raw = readRaw(paths);
         let removed = false;
         for (const root of clean) {
-          if (recognised(raw[root])?.at !== marks[root].at)
+          if (JSON.stringify(recognised(raw[root])) !== JSON.stringify(marks[root]))
             continue;
           delete raw[root];
           removed = true;
@@ -3792,7 +3977,30 @@ function uncommittedAdapters(paths, opts) {
       }, { what: "adapter refresh", waitMs: 0 });
     } catch {}
   }
-  return reminder.parts.length === 0 && reminder.failed === undefined ? null : reminder;
+  return reminder.entries.length === 0 && reminder.failed === undefined ? null : reminder;
+}
+function unfinishedSentence(name, version, own) {
+  const how = own ? "again" : `again with the crew of its root, such as ${KEPT_ROOT_CREW}`;
+  return `${name} left unfinished by crew ${version} (an install cut short or failed): run crew runtime install ${name} ${how}, then commit`;
+}
+function reminderParts(reminder, opts) {
+  const parts = [];
+  for (const entry of reminder.entries) {
+    const now = entry.root === opts.own ? opts.updatedNow ?? [] : [];
+    const names = entry.updated.filter((name) => !now.includes(name));
+    if (names.length)
+      parts.push(names.length < entry.updated.length ? `${names.join(", ")} updated earlier and not committed` : `${names.join(", ")} updated by crew ${entry.version} and not committed`);
+    for (const name of entry.unfinished)
+      parts.push(unfinishedSentence(name, entry.version, entry.root === opts.own));
+  }
+  return parts;
+}
+function notCommittedLine(reminder, own) {
+  const said = [
+    ...reminderParts(reminder, { own }),
+    ...reminder.failed ? [`check failed (${reminder.failed})`] : []
+  ].join("; ");
+  return `adapters not committed: ${said}${reminder.command ? `. Commit: ${reminder.command}` : ""}`;
 }
 
 // packages/engine/src/decisions.ts
@@ -4235,7 +4443,7 @@ function unwrittenMark(refresh) {
 function markFailedText(why) {
   return `the not-committed mark was not written (${why})`;
 }
-function adaptersLine(refresh, extra = [], reminder = null) {
+function adaptersLine(refresh, extra = [], reminder = null, own = refresh?.root ?? "") {
   const results = refresh?.results ?? [];
   const updated = results.some((r) => r.status === "updated");
   const parts = [];
@@ -4250,12 +4458,11 @@ function adaptersLine(refresh, extra = [], reminder = null) {
     if (f.why === "root unreadable")
       parts.push(foreignText(f));
     else
-      parts.push(`${foreignText(f)}: run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`);
+      parts.push(`${foreignText(f)}: run crew runtime install ${f.runtime} with the crew of the root to keep, such as ${KEPT_ROOT_CREW}`);
   }
-  reminder?.parts.forEach((part, i) => {
-    if (!(updated && reminder.roots[i] === refresh?.root))
-      parts.push(part);
-  });
+  const updatedNow = results.filter((r) => r.status === "updated").map((r) => r.runtime);
+  if (reminder)
+    parts.push(...reminderParts(reminder, { own, updatedNow }));
   if (refresh?.markFailed)
     parts.push(markFailedText(refresh.markFailed));
   if (reminder?.failed)
@@ -5299,145 +5506,6 @@ import { join as join24 } from "node:path";
 import { spawn } from "node:child_process";
 import { appendFileSync, createWriteStream, mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
 import { basename as basename4, dirname as dirname6, extname, join as join14 } from "node:path";
-
-// packages/engine/src/shell-words.ts
-var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
-var SHELL_VALUED = {
-  short: "oO",
-  long: ["--rcfile", "--init-file"]
-};
-function shellTakesNext(option) {
-  if (option.startsWith("--"))
-    return SHELL_VALUED.long.includes(option);
-  return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
-}
-var JS_RUNNERS = ["node", "bun"];
-var NPX_RUNNERS = ["npx", "bunx"];
-var RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] };
-function runnerSuffix(suffixes) {
-  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
-}
-var COMMAND_WRAPPERS = [
-  {
-    name: "env",
-    valued: "uCPLU",
-    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
-    positionals: 0,
-    assignments: true,
-    scriptOptions: ["-S", "--split-string"],
-    unsetOptions: ["-u", "--unset"]
-  },
-  { name: "command", valued: "", longValued: [], positionals: 0 }
-];
-function takesNext(wrapper, option) {
-  if (option.includes("="))
-    return false;
-  if (option.startsWith("--"))
-    return wrapper.longValued.includes(option);
-  for (let i = 1;i < option.length; i++)
-    if (wrapper.valued.includes(option.charAt(i)))
-      return i === option.length - 1;
-  return false;
-}
-var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
-function quoteWord(word) {
-  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-}
-var WRAPPERS = [
-  { name: "function", valued: "", longValued: [], positionals: 1 },
-  { name: "case", valued: "", longValued: [], positionals: 1 },
-  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
-  {
-    name: "timeout",
-    valued: "sk",
-    longValued: ["--signal", "--kill-after"],
-    positionals: 1
-  },
-  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
-  {
-    name: "flock",
-    valued: "w",
-    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-    scriptTrailing: true
-  },
-  {
-    name: "script",
-    valued: "FtEBIOomT",
-    longValued: [
-      "--echo",
-      "--log-in",
-      "--log-out",
-      "--log-io",
-      "--log-timing",
-      "--logging-format",
-      "--output-limit"
-    ],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-    scriptStandsAlone: true
-  },
-  {
-    name: "su",
-    valued: "gGsw",
-    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command", "--session-command"],
-    scriptStandsAlone: true
-  },
-  {
-    name: "sudo",
-    valued: "ugpChDTrt",
-    longValued: [
-      "--user",
-      "--group",
-      "--prompt",
-      "--close-from",
-      "--host",
-      "--chdir",
-      "--command-timeout",
-      "--role",
-      "--type",
-      "--other-user"
-    ],
-    positionals: 0
-  },
-  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
-  ...COMMAND_WRAPPERS,
-  { name: "exec", valued: "a", longValued: [], positionals: 0 },
-  {
-    name: "xargs",
-    valued: "nILPdEsa",
-    longValued: [
-      "--max-args",
-      "--replace",
-      "--max-lines",
-      "--max-procs",
-      "--delimiter",
-      "--eof",
-      "--max-chars",
-      "--arg-file",
-      "--process-slot-var"
-    ],
-    positionals: 0
-  },
-  { name: "nohup", valued: "", longValued: [], positionals: 0 },
-  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
-  { name: "builtin", valued: "", longValued: [], positionals: 0 },
-  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
-  {
-    name: "ionice",
-    valued: "cnp",
-    longValued: ["--class", "--classdata", "--pid"],
-    positionals: 0
-  },
-  { name: "noglob", valued: "", longValued: [], positionals: 0 },
-  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
-  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
-];
-
-// packages/engine/src/run.ts
 function wrapperTakesNext(wrapper, option) {
   if (takesNext(wrapper, option))
     return true;
@@ -5644,7 +5712,7 @@ function runCommand(command, options) {
 }
 function shellWord(path) {
   const word = path.startsWith("-") ? `./${path}` : path;
-  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : singleQuoted(word);
 }
 
 // packages/engine/src/ui.ts
@@ -27360,13 +27428,9 @@ ${lines.join(`
       const text = [outcome.text];
       if (adapters !== null)
         text.push(`adapters: ${adapters}`);
-      if (reminder) {
-        const said = [
-          ...reminder.parts,
-          ...reminder.failed ? [`check failed (${reminder.failed})`] : []
-        ].join("; ");
-        text.push(`adapters not committed: ${said}${reminder.command ? `. Commit: ${reminder.command}` : ""}`);
-      }
+      const own = canonical(pluginRoot());
+      if (reminder)
+        text.push(notCommittedLine(reminder, own));
       return {
         ...outcome,
         text: text.join(`
@@ -27374,7 +27438,12 @@ ${lines.join(`
         data: {
           ...outcome.data,
           ...adapters !== null ? { adapters } : {},
-          ...reminder ? { adaptersUncommitted: { parts: reminder.parts, command: reminder.command } } : {}
+          ...reminder ? {
+            adaptersUncommitted: {
+              parts: reminderParts(reminder, { own }),
+              command: reminder.command
+            }
+          } : {}
         }
       };
     }

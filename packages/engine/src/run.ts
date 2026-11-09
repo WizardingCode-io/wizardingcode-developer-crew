@@ -8,6 +8,7 @@ import {
   quoteWord,
   SHELL_NAMES,
   shellTakesNext,
+  singleQuoted,
   takesNext,
 } from "./shell-words.ts";
 
@@ -273,5 +274,5 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
  */
 export function shellWord(path: string): string {
   const word = path.startsWith("-") ? `./${path}` : path;
-  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : singleQuoted(word);
 }
