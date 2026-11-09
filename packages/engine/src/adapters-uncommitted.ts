@@ -10,11 +10,11 @@
  * holds no path and no command: both come from the reading engine's own runtime table.
  */
 
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { gitStatusEntries } from "./fingerprint.ts";
-import { readText, writeJson } from "./fs.ts";
-import { withLock } from "./lock.ts";
+import { readText, writeJson, writeText } from "./fs.ts";
+import { lockHeld, withLock } from "./lock.ts";
 import type { CrewPaths } from "./paths.ts";
 import { quotedText } from "./quote.ts";
 import { RUNTIME_NAMES, RUNTIMES, type RuntimeName } from "./runtimes.ts";
@@ -55,6 +55,8 @@ export interface Reminder {
   command: string | null;
   /** The first `git status` failure, through `quotedText`. */
   failed?: string;
+  /** Whether the adapters lock was held at the read: an unfinished install may still be running. */
+  held: boolean;
 }
 
 /** The project's decision register, from the project root. */
@@ -199,6 +201,26 @@ export function noteUpdated(paths: CrewPaths, root: string, entry: UncommittedEn
   writeJson(markPath(paths), raw);
 }
 
+/** The mark's bytes when its path is a regular file; null for nothing, a link or a folder there. */
+export function markText(paths: CrewPaths): string | null {
+  const path = markPath(paths);
+  try {
+    return lstatSync(path).isFile() ? readFileSync(path, "utf8") : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Puts the mark back as `markText` read it: the bytes by a temporary file renamed over the path,
+ * never through a link; with null, what is at the path removed, never recursively, so a link is
+ * unlinked with its target untouched and a folder there throws.
+ */
+export function restoreMark(paths: CrewPaths, text: string | null): void {
+  if (text === null) rmSync(markPath(paths), { force: true });
+  else writeText(markPath(paths), text);
+}
+
 /** Takes a runtime out of every recognised entry: an entry left with no runtime goes, and the file left with no entry. */
 export function dropRuntime(paths: CrewPaths, name: RuntimeName): void {
   const raw = readRaw(paths);
@@ -256,6 +278,7 @@ export function uncommittedAdapters(
   opts: { clear: boolean; also?: { root: string; entry: UncommittedEntry } | undefined },
 ): Reminder | null {
   const adaptersDir = join(paths.localDir, "adapters");
+  const held = lockHeld(adaptersDir);
   let marks = readMarks(paths);
   if (opts.also) {
     const also = opts.also;
@@ -270,7 +293,7 @@ export function uncommittedAdapters(
   const roots = Object.keys(marks).sort();
   if (roots.length === 0) return null;
   const repo = existsSync(join(paths.root, ".git"));
-  const reminder: Reminder = { entries: [], command: null };
+  const reminder: Reminder = { entries: [], command: null, held };
   const named: string[] = [];
   const versions: string[] = [];
   const clean: string[] = [];
@@ -346,8 +369,10 @@ export function uncommittedAdapters(
   return reminder.entries.length === 0 && reminder.failed === undefined ? null : reminder;
 }
 
-/** What a reader says of one runtime whose install began and did not return, by whose root it is. */
-function unfinishedSentence(name: RuntimeName, version: string, own: boolean) {
+/** What a reader says of one runtime whose install has not ended checked, by whether the lock is held and whose root it is. */
+function unfinishedSentence(name: RuntimeName, version: string, held: boolean, own: boolean) {
+  if (held)
+    return `${name}'s install has not ended and the adapters lock is held: look again in ten seconds with crew status`;
   const how = own ? "again" : `again with the crew of its root, such as ${KEPT_ROOT_CREW}`;
   return `${name} left unfinished by crew ${version} (an install cut short or failed): run crew runtime install ${name} ${how}, then commit`;
 }
@@ -355,7 +380,9 @@ function unfinishedSentence(name: RuntimeName, version: string, own: boolean) {
 /** The sentences of a reminder's unfinished runtimes alone; `own` is the reading engine's root. */
 export function unfinishedParts(reminder: Reminder | null, own: string): string[] {
   return (reminder?.entries ?? []).flatMap((entry) =>
-    entry.unfinished.map((name) => unfinishedSentence(name, entry.version, entry.root === own)),
+    entry.unfinished.map((name) =>
+      unfinishedSentence(name, entry.version, reminder?.held === true, entry.root === own),
+    ),
   );
 }
 
@@ -381,7 +408,7 @@ export function reminderParts(
           : `${names.join(", ")} updated by crew ${entry.version} and not committed`,
       );
     for (const name of entry.unfinished)
-      parts.push(unfinishedSentence(name, entry.version, entry.root === opts.own));
+      parts.push(unfinishedSentence(name, entry.version, reminder.held, entry.root === opts.own));
   }
   return parts;
 }

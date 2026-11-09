@@ -10,7 +10,12 @@ import {
   resultText,
   unwrittenMark,
 } from "./adapters.ts";
-import { notCommittedLine, reminderParts, uncommittedAdapters } from "./adapters-uncommitted.ts";
+import {
+  notCommittedLine,
+  reminderParts,
+  uncommittedAdapters,
+  unfinishedParts,
+} from "./adapters-uncommitted.ts";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
 import { assembleAuditReport, renderAuditHtml, renderAuditMarkdown } from "./audit-report.ts";
@@ -2230,8 +2235,10 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
       emit({ name, root, status: "left out", units: [`left out (${reason})`], reason });
       continue;
     }
+    let refresh: ReturnType<typeof refreshAdapters> | null = null;
+    let thrown = "";
     try {
-      const refresh = refreshAdapters(paths, {
+      refresh = refreshAdapters(paths, {
         root: engineRoot,
         version: VERSION,
         home,
@@ -2242,38 +2249,54 @@ function projectsUpdate(env: Env, parsed: Parsed, args: string[], io: CliIo): Ou
         worktree: worktreeMainRoot(root) !== null,
         live: Object.keys(liveSessions(paths)).length > 0,
       });
-      // What the not-committed mark says is still to commit (item 2026-11-09-001): read before
-      // the project's line is printed, never thrown from, cleared on a real run alone. It gives
-      // the commit line of a project updated now, of one held back over its uncommitted files,
-      // and of one whose adapters name another root.
-      const reminder = uncommittedAdapters(paths, {
-        clear: !dryRun,
-        also: unwrittenMark(refresh),
+    } catch (error) {
+      thrown = quoted((error as Error).message);
+    }
+    // What the not-committed mark says is still to commit (items 2026-11-09-001 and
+    // 2026-11-09-003): read before the project's line is printed, for a refresh that threw too,
+    // never thrown from, cleared on a real run alone. It gives the commit line of a project
+    // updated now, of one held back over its uncommitted files, and of one whose adapters name
+    // another root. An unfinished install is said in the project's line and gets no commit line.
+    const reminder = uncommittedAdapters(paths, { clear: !dryRun, also: unwrittenMark(refresh) });
+    const unfinished = unfinishedParts(reminder, engineRoot);
+    if (refresh === null) {
+      emit({
+        name,
+        root,
+        status: "failed",
+        units: [`failed (${thrown})`, ...unfinished],
+        reason: thrown,
       });
+    } else {
+      const results = refresh.results;
       const units = [
-        ...refresh.results.map(resultText),
+        ...results.map(resultText),
         ...refresh.foreign.map(foreignText),
         ...(refresh.markFailed ? [markFailedText(refresh.markFailed)] : []),
+        ...refresh.notWritten,
+        ...unfinished,
       ];
-      const bucket =
-        UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ??
-        (refresh.foreign.length ? "other root" : "no adapter");
+      // A version record or a register entry that could not be written counts the project
+      // failed, as a refresh that threw over it did before those writes were fenced.
+      const bucket = refresh.notWritten.length
+        ? "failed"
+        : (UPDATE_PRECEDENCE.find((s) => results.some((r) => r.status === s)) ??
+          (refresh.foreign.length ? "other root" : "no adapter"));
       const allOk =
-        refresh.results.length > 0 &&
-        refresh.results.every((r) => r.status === "up to date") &&
+        results.length > 0 &&
+        results.every((r) => r.status === "up to date") &&
         refresh.foreign.length === 0 &&
-        !refresh.markFailed;
+        !refresh.markFailed &&
+        refresh.notWritten.length === 0 &&
+        unfinished.length === 0;
       emit({
         name,
         root,
         status: bucket,
         units: allOk ? ["up to date"] : units.length ? units : ["no adapter on this root"],
       });
-      if (reminder?.command) commits.push({ name, command: reminder.command });
-    } catch (error) {
-      const reason = quoted((error as Error).message);
-      emit({ name, root, status: "failed", units: [`failed (${reason})`], reason });
     }
+    if (reminder?.command) commits.push({ name, command: reminder.command });
   }
   // The user scope, once per run, read and never written (D-6).
   const user: UserLine[] = [];

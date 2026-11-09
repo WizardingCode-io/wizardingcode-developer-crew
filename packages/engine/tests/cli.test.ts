@@ -13749,3 +13749,90 @@ test("2026-11-09-001 AC-29: the user scope line is written as soon as the last p
     "0 updated, 0 would update, 1 up to date, 0 stale, 0 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone\n",
   ]);
 });
+
+// Item 2026-11-09-003, Task 2: crew status and the fleet say an unfinished runtime, and the fleet says what a refresh could not write (AC-7, AC-19, AC-20, AC-46).
+
+const UNFINISHED_ELSEWHERE = `copilot left unfinished by crew ${VERSION} (an install cut short or failed): run crew runtime install copilot again with the crew of its root, such as ~/.local/share/wizardingcode-developer-crew/bin/crew, then commit`;
+/** A stale Copilot project with a part-written skill page and a mark that holds Copilot unfinished under another root. */
+async function unfinishedProject(env: NodeJS.ProcessEnv): Promise<string> {
+  const A = await adapterProject(env, ["copilot"], { stale: true });
+  noteUpdated(repoPaths(A, env), otherEngineRoot(), {
+    ...copilotMark(A),
+    runtimes: [{ name: "copilot", config: false, unfinished: true }],
+  });
+  write(A, SKILL_PAGE_OF_AN_ADAPTER, "# half written\n");
+  return A;
+}
+const notCommittedLines = (out: string) =>
+  out.split("\n").filter((l) => l.startsWith("adapters not committed: "));
+const projectLineOf = (out: string, root: string) =>
+  out.split("\n").find((l) => l.startsWith(`${basename(root)} ${root}: `)) ?? "";
+/** Runs `run` with a folder read-only, and puts its mode back. */
+async function readOnlyFolder<T>(folder: string, run: () => Promise<T>): Promise<T> {
+  chmodSync(folder, 0o555);
+  try {
+    return await run();
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+}
+
+test("2026-11-09-003 AC-7: an unfinished runtime is said by crew status and in the fleet's line, with no command", async () => {
+  const env = fleetEnv();
+  const A = await unfinishedProject(env);
+  const c = io(A, env);
+  expect(notCommittedLines((await c.run("status")).out)).toEqual([
+    `adapters not committed: ${UNFINISHED_ELSEWHERE}`,
+  ]);
+  const json = JSON.parse((await c.run("status", "--json")).out) as {
+    adaptersUncommitted: { parts: string[]; command: string | null };
+  };
+  expect(json.adaptersUncommitted).toEqual({ parts: [UNFINISHED_ELSEWHERE], command: null });
+  const fleet = await c.run("projects", "update");
+  expect(projectLineOf(fleet.out, A)).toContain("copilot stale (uncommitted changes in ");
+  expect(projectLineOf(fleet.out, A)).toContain(UNFINISHED_ELSEWHERE);
+  expect(commitLineOf(fleet.out, A)).toBeNull();
+});
+
+test("2026-11-09-003 AC-46 (crew status): while the adapters lock is held the status gives no instruction", async () => {
+  const env = fleetEnv();
+  const A = await unfinishedProject(env);
+  const lock = join(repoPaths(A, env).localDir, "adapters", ".lock");
+  mkdirSync(lock);
+  const ahead = new Date(Date.now() + 60_000);
+  utimesSync(lock, ahead, ahead);
+  expect(notCommittedLines((await io(A, env).run("status")).out)).toEqual([
+    "adapters not committed: copilot's install has not ended and the adapters lock is held: look again in ten seconds with crew status",
+  ]);
+});
+
+test("2026-11-09-003 AC-19: a project whose version record cannot be written is counted failed, its line naming what was done", async () => {
+  const env = fleetEnv();
+  const A = await adapterProject(env, ["copilot"], { stale: true });
+  const local = repoPaths(A, env).localDir;
+  mkdirSync(join(local, "adapters"), { recursive: true });
+  const run = await readOnlyFolder(local, () => io(A, env).run("projects", "update"));
+  expect(projectLineOf(run.out, A)).toContain("copilot updated (");
+  expect(projectLineOf(run.out, A)).toContain("the adapter version was not recorded (EACCES");
+  expect(run.out).toContain("\n0 updated, ");
+  expect(run.out).toContain(" 1 failed, ");
+  expect(run.code).toBe(1);
+});
+
+test("2026-11-09-003 AC-20 (the fleet): a project whose refresh threw still gets its commit line", async () => {
+  const env = fleetEnv();
+  const A = await adapterProject(env, ["copilot"], { stale: true });
+  const paths = repoPaths(A, env);
+  noteUpdated(paths, "/r/other", {
+    ...copilotMark(A),
+    runtimes: [{ name: "codex", config: false }],
+  });
+  write(A, ".codex/agents/crew-x.md", "new\n");
+  const run = await readOnlyFolder(join(paths.localDir, "adapters"), () =>
+    io(A, env).run("projects", "update"),
+  );
+  expect(projectLineOf(run.out, A)).toContain("failed (EACCES");
+  expect(commitLineOf(run.out, A)).toBe(
+    `commit in ${basename(A)}: git add -A -- '.codex/agents/crew-*' && git commit -m 'adapters refreshed by crew ${VERSION}'`,
+  );
+});

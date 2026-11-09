@@ -86,11 +86,15 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   // is taken while another session's or the fleet's refresh writes (AC-27). Fenced: a throw costs
   // the line, never the context.
   let adaptersText: string | null = null;
+  let refresh: ReturnType<typeof refreshAdapters> | null = null;
+  let engineRoot = "";
+  // What the step could not do, said beside whatever the mark's reader finds.
+  const said: string[] = [];
   try {
     const deadline = start + adapterDeadline.ms;
-    const engineRoot = canonical(pluginRoot());
+    engineRoot = canonical(pluginRoot());
     const recorded = loadState(ctx.paths).adapters?.[engineRoot];
-    const refresh =
+    refresh =
       recorded === VERSION
         ? null
         : refreshAdapters(ctx.paths, {
@@ -104,7 +108,6 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
             worktree: worktreeMainRoot(ctx.paths.root) !== null,
             live: Object.keys(liveSessions(ctx.paths)).some((id) => id !== ctx.sessionId),
           });
-    let busy = false;
     try {
       withLock(join(ctx.paths.localDir, "adapters"), () => {}, {
         what: "adapter refresh",
@@ -112,16 +115,21 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       });
     } catch (error) {
       if (!(error instanceof LockBusy)) throw error;
-      busy = true;
+      said.push("another session is updating");
     }
-    // The mark of a refresh nobody committed yet (item 2026-11-09-001), read at every start and
-    // on any root: the reminder with its commit command, and the clean entries cleared. A refresh
-    // whose own mark could not be written reminds from the entry it holds.
+  } catch (error) {
+    said.push(`not checked (${quoted((error as Error).message)})`);
+  }
+  // The mark of adapters nobody committed yet (items 2026-11-09-001 and 2026-11-09-003), read at
+  // every start and on any root, in a fence of its own, so a refresh that throws does not hide it:
+  // the reminder with its commit command, and the clean entries cleared. A refresh whose own mark
+  // could not be written reminds from the entry it holds.
+  try {
     const reminder = uncommittedAdapters(ctx.paths, {
       clear: true,
       also: unwrittenMark(refresh),
     });
-    adaptersText = adaptersLine(refresh, busy ? ["another session is updating"] : [], reminder);
+    adaptersText = adaptersLine(refresh, said, reminder, engineRoot);
   } catch (error) {
     adaptersText = `adapters: not checked (${quoted((error as Error).message)}).`;
   }

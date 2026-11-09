@@ -1,5 +1,5 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync31, lstatSync as lstatSync10, readFileSync as readFileSync13, realpathSync as realpathSync11, rmSync as rmSync10, statSync as statSync13 } from "node:fs";
+import { existsSync as existsSync31, lstatSync as lstatSync11, readFileSync as readFileSync14, realpathSync as realpathSync11, rmSync as rmSync10, statSync as statSync13 } from "node:fs";
 import { tmpdir as tmpdir2 } from "node:os";
 import { basename as basename12, isAbsolute as isAbsolute14, join as join65, relative as relative14, resolve as resolve9, sep as sep7 } from "node:path";
 
@@ -8,7 +8,7 @@ import { existsSync as existsSync5 } from "node:fs";
 import { isAbsolute as isAbsolute2, join as join10 } from "node:path";
 
 // packages/engine/src/adapters-uncommitted.ts
-import { existsSync as existsSync3, rmSync as rmSync3 } from "node:fs";
+import { existsSync as existsSync3, lstatSync as lstatSync3, readFileSync as readFileSync5, rmSync as rmSync3 } from "node:fs";
 import { join as join7 } from "node:path";
 
 // packages/engine/src/fingerprint.ts
@@ -908,6 +908,10 @@ function ageOf(path) {
   } catch {
     return null;
   }
+}
+function lockHeld(dir) {
+  const age = ageOf(join5(dir, ".lock"));
+  return age !== null && age <= LOCK_STALE_MS;
 }
 function breakStale(lock) {
   const breaker = `${lock}.break`;
@@ -3879,6 +3883,20 @@ function noteUpdated(paths, root, entry) {
   };
   writeJson(markPath(paths), raw);
 }
+function markText(paths) {
+  const path = markPath(paths);
+  try {
+    return lstatSync3(path).isFile() ? readFileSync5(path, "utf8") : null;
+  } catch {
+    return null;
+  }
+}
+function restoreMark(paths, text) {
+  if (text === null)
+    rmSync3(markPath(paths), { force: true });
+  else
+    writeText(markPath(paths), text);
+}
 function belongs(path, spec) {
   if (spec.endsWith("crew-*"))
     return path.startsWith(spec.slice(0, -1));
@@ -3894,6 +3912,7 @@ function committedSince(root, head, pathspec) {
 }
 function uncommittedAdapters(paths, opts) {
   const adaptersDir = join7(paths.localDir, "adapters");
+  const held = lockHeld(adaptersDir);
   let marks = readMarks(paths);
   if (opts.also) {
     const also = opts.also;
@@ -3905,7 +3924,7 @@ function uncommittedAdapters(paths, opts) {
   if (roots.length === 0)
     return null;
   const repo = existsSync3(join7(paths.root, ".git"));
-  const reminder = { entries: [], command: null };
+  const reminder = { entries: [], command: null, held };
   const named = [];
   const versions = [];
   const clean = [];
@@ -3979,9 +3998,14 @@ function uncommittedAdapters(paths, opts) {
   }
   return reminder.entries.length === 0 && reminder.failed === undefined ? null : reminder;
 }
-function unfinishedSentence(name, version, own) {
+function unfinishedSentence(name, version, held, own) {
+  if (held)
+    return `${name}'s install has not ended and the adapters lock is held: look again in ten seconds with crew status`;
   const how = own ? "again" : `again with the crew of its root, such as ${KEPT_ROOT_CREW}`;
   return `${name} left unfinished by crew ${version} (an install cut short or failed): run crew runtime install ${name} ${how}, then commit`;
+}
+function unfinishedParts(reminder, own) {
+  return (reminder?.entries ?? []).flatMap((entry) => entry.unfinished.map((name) => unfinishedSentence(name, entry.version, reminder?.held === true, entry.root === own)));
 }
 function reminderParts(reminder, opts) {
   const parts = [];
@@ -3991,7 +4015,7 @@ function reminderParts(reminder, opts) {
     if (names.length)
       parts.push(names.length < entry.updated.length ? `${names.join(", ")} updated earlier and not committed` : `${names.join(", ")} updated by crew ${entry.version} and not committed`);
     for (const name of entry.unfinished)
-      parts.push(unfinishedSentence(name, entry.version, entry.root === opts.own));
+      parts.push(unfinishedSentence(name, entry.version, reminder.held, entry.root === opts.own));
   }
   return parts;
 }
@@ -4465,6 +4489,7 @@ function adaptersLine(refresh, extra = [], reminder = null, own = refresh?.root 
     parts.push(...reminderParts(reminder, { own, updatedNow }));
   if (refresh?.markFailed)
     parts.push(markFailedText(refresh.markFailed));
+  parts.push(...refresh?.notWritten ?? []);
   if (reminder?.failed)
     parts.push(`not-committed check failed (${reminder.failed})`);
   parts.push(...extra);
@@ -4478,12 +4503,54 @@ function adaptersLine(refresh, extra = [], reminder = null, own = refresh?.root 
   const whys = results.map((r) => r.why ?? "");
   if (whys.includes("an item is active"))
     line += "; it is updated at a session start with no active item, or by crew projects update";
-  if (whys.some((w) => w.startsWith("uncommitted changes")))
+  const unfinished = reminder?.entries.some((e) => e.unfinished.length > 0) ?? false;
+  if (!unfinished && whys.some((w) => w.startsWith("uncommitted changes")))
     line += "; commit or restore them first";
-  const never = results.find((r) => r.why?.startsWith("not committed"));
+  const never = unfinished ? undefined : results.find((r) => r.why?.startsWith("not committed"));
   if (never)
     line += `; commit them to adopt the adapter, or run crew runtime install ${never.runtime} again`;
   return `${line}.`;
+}
+function installUnderMark(o) {
+  const fenced = (write) => {
+    if (o.head === null)
+      return;
+    try {
+      write();
+    } catch (error) {
+      o.markFailed(quoted(error.message));
+    }
+  };
+  const note = (config, unfinished) => fenced(() => noteUpdated(o.paths, o.root, {
+    version: o.version,
+    at: o.at,
+    head: o.head,
+    runtimes: [{ name: o.name, config, ...unfinished ? { unfinished: true } : {} }],
+    register: false
+  }));
+  const before = o.head === null ? null : markText(o.paths);
+  const restore = () => fenced(() => restoreMark(o.paths, before));
+  note(false, true);
+  let done;
+  try {
+    done = o.install();
+  } catch (error) {
+    const began = error instanceof InstallFailed;
+    if (!began)
+      restore();
+    return {
+      kind: "threw",
+      message: quoted(error.message),
+      began,
+      partly: began && error.written > 0
+    };
+  }
+  if ("refused" in done) {
+    restore();
+    return { kind: "refused", refused: done.refused };
+  }
+  note(done.configWritten, false);
+  return { kind: "installed", done };
 }
 function refreshAdapters(paths, o) {
   const dirs = { project: paths.root, home: o.home };
@@ -4494,9 +4561,18 @@ function refreshAdapters(paths, o) {
     appended: false,
     from: loadState(paths).adapters?.[o.root] ?? null,
     version: o.version,
-    root: o.root
+    root: o.root,
+    notWritten: []
   };
   const check = (runtime, root) => checkRuntime(runtime, "project", dirs, root);
+  const record = () => {
+    try {
+      recordAdapterVersion(paths, o.root, o.version);
+      refresh.recorded = true;
+    } catch (error) {
+      refresh.notWritten.push(`the adapter version was not recorded (${quoted(error.message)})`);
+    }
+  };
   const own = [];
   for (const name of RUNTIME_NAMES) {
     if (name === "claude")
@@ -4553,14 +4629,18 @@ function refreshAdapters(paths, o) {
     const text = adaptersEntryText(refresh, o.root);
     if (text === lastEntryText(paths, "adapters"))
       return;
-    appendDecision(paths, {
-      at: nowIso(),
-      item: "adapters",
-      kind: "adapters",
-      by: "the engine",
-      text
-    });
-    refresh.appended = true;
+    try {
+      appendDecision(paths, {
+        at: nowIso(),
+        item: "adapters",
+        kind: "adapters",
+        by: "the engine",
+        text
+      });
+      refresh.appended = true;
+    } catch (error) {
+      refresh.notWritten.push(`the register entry was not written (${quoted(error.message)})`);
+    }
   };
   const lock = join10(paths.localDir, "adapters");
   const lockOptions = { what: "adapter refresh", waitMs: LOCK_WAIT_MS2 };
@@ -4584,10 +4664,8 @@ function refreshAdapters(paths, o) {
   const toInstall = own.filter((a) => !results.has(a.runtime.name));
   const notUpToDate = () => own.filter((a) => results.get(a.runtime.name)?.status !== "up to date");
   if (notUpToDate().length === 0) {
-    if (!o.dryRun) {
-      recordAdapterVersion(paths, o.root, o.version);
-      refresh.recorded = true;
-    }
+    if (!o.dryRun)
+      record();
     return finish();
   }
   const watched = changesWatched(toInstall);
@@ -4627,6 +4705,7 @@ function refreshAdapters(paths, o) {
     return finish();
   }
   const at = nowIso();
+  const noted = [];
   let head = null;
   const mark = (runtimes, register) => {
     if (head === null)
@@ -4664,42 +4743,60 @@ function refreshAdapters(paths, o) {
                 set(a, "stale", "time budget");
                 continue;
               }
-              try {
-                const done = (o.install ?? installRuntime)(a.runtime, "project", dirs, a.root);
-                if ("refused" in done) {
-                  set(a, "refused", quoted(done.refused));
-                  continue;
+              const outcome = installUnderMark({
+                paths,
+                root: o.root,
+                version: o.version,
+                at,
+                head,
+                name: a.runtime.name,
+                install: () => (o.install ?? installRuntime)(a.runtime, "project", dirs, a.root),
+                markFailed: (why) => {
+                  refresh.markFailed ??= why;
                 }
-                const after = check(a.runtime, a.root);
-                if (after.ok) {
+              });
+              if (outcome.kind === "installed") {
+                noted.push({ name: a.runtime.name, config: outcome.done.configWritten });
+                let problem;
+                try {
+                  const after = check(a.runtime, a.root);
+                  problem = after.ok ? null : quoted(after.problems[0] ?? "the check is not ok");
+                } catch (error) {
+                  problem = quoted(error.message);
+                }
+                if (problem !== null)
+                  set(a, "failed", problem);
+                else
                   set(a, "updated", undefined, {
-                    removed: done.removed.length,
-                    configWritten: done.configWritten,
-                    ...done.configWritten && a.runtime.trust ? { trust: a.runtime.trust } : {}
+                    removed: outcome.done.removed.length,
+                    configWritten: outcome.done.configWritten,
+                    ...outcome.done.configWritten && a.runtime.trust ? { trust: a.runtime.trust } : {}
                   });
-                  mark([{ name: a.runtime.name, config: done.configWritten }], false);
-                } else
-                  set(a, "failed", quoted(after.problems[0] ?? "the check is not ok"));
-              } catch (error) {
-                const message = quoted(error.message);
-                set(a, "failed", error instanceof InstallFailed && error.written > 0 ? `${message}; partly written; crew runtime check ${a.runtime.name} shows the state` : message);
+              } else if (outcome.kind === "refused")
+                set(a, "refused", quoted(outcome.refused));
+              else {
+                if (outcome.began)
+                  noted.push({ name: a.runtime.name, config: false, unfinished: true });
+                set(a, "failed", outcome.partly ? `${outcome.message}; partly written; crew runtime check ${a.runtime.name} shows the state` : outcome.message);
               }
             }
           }
         }
       }
       const all = [...results.values()];
-      if (all.every((r) => r.status === "up to date" || r.status === "updated")) {
-        recordAdapterVersion(paths, o.root, o.version);
-        refresh.recorded = true;
-      }
+      if (all.every((r) => r.status === "up to date" || r.status === "updated"))
+        record();
       writeEntry();
-      const updated = all.filter((r) => r.status === "updated");
-      if (updated.length && head !== null) {
-        const runtimes = updated.map((r) => ({ name: r.runtime, config: r.configWritten }));
-        refresh.entry = { version: o.version, at, head, runtimes, register: refresh.appended };
+      if (noted.length && head !== null) {
+        refresh.entry = {
+          version: o.version,
+          at,
+          head,
+          runtimes: noted,
+          register: refresh.appended
+        };
         if (refresh.appended)
-          mark(runtimes, true);
+          mark(noted, true);
       }
     }, lockOptions);
   } catch (error) {
@@ -4712,7 +4809,7 @@ function refreshAdapters(paths, o) {
 }
 
 // packages/engine/src/analysis.ts
-import { existsSync as existsSync22, lstatSync as lstatSync6, mkdirSync as mkdirSync9 } from "node:fs";
+import { existsSync as existsSync22, lstatSync as lstatSync7, mkdirSync as mkdirSync9 } from "node:fs";
 import { dirname as dirname11, isAbsolute as isAbsolute8, join as join43 } from "node:path";
 
 // packages/engine/src/evidence.ts
@@ -4721,7 +4818,7 @@ import { join as join42 } from "node:path";
 // packages/engine/src/design.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { createHash as createHash2, randomInt } from "node:crypto";
-import { readFileSync as readFileSync5, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname5, join as join11 } from "node:path";
 var SURFACES = ["persuade", "operate", "read", "experience"];
 var INVENTIONS = ["extend", "surface", "world"];
@@ -4902,10 +4999,10 @@ function libraryDir() {
   return join11(pluginRoot(), "design", "library");
 }
 function loadLibrary(dir = libraryDir()) {
-  const notice = JSON.parse(readFileSync5(join11(dir, "NOTICE.json"), "utf8"));
+  const notice = JSON.parse(readFileSync6(join11(dir, "NOTICE.json"), "utf8"));
   const library = {};
   for (const entry of notice.files) {
-    const body = readFileSync5(join11(dir, entry.file));
+    const body = readFileSync6(join11(dir, entry.file));
     if (sha256(body) !== entry.sha256)
       throw new Error(`design library: ${entry.file}'s hash differs from its NOTICE`);
     library[entry.file.replace(/\.json$/, "")] = JSON.parse(body.toString("utf8"));
@@ -5212,7 +5309,7 @@ import {
 import { join as join38, relative as relative6, sep as sep5 } from "node:path";
 
 // packages/engine/src/console.ts
-import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync7 } from "node:fs";
 import { join as join12 } from "node:path";
 function levelOf(type) {
   return type === "warn" ? "warning" : type;
@@ -5241,7 +5338,7 @@ function gradeConsole(dir) {
   if (existsSync6(array)) {
     file = array;
     try {
-      const data = JSON.parse(readFileSync6(array, "utf8"));
+      const data = JSON.parse(readFileSync7(array, "utf8"));
       if (!Array.isArray(data))
         return { status: "invalid", file };
       parsed = data;
@@ -5251,7 +5348,7 @@ function gradeConsole(dir) {
   } else if (existsSync6(lines)) {
     file = lines;
     try {
-      parsed = readFileSync6(lines, "utf8").split(`
+      parsed = readFileSync7(lines, "utf8").split(`
 `).filter((l) => l.trim()).map((l) => JSON.parse(l));
     } catch {
       return { status: "invalid", file };
@@ -5493,7 +5590,7 @@ function readJsonQuiet(path) {
 // packages/engine/src/devtools.ts
 import {
   existsSync as existsSync12,
-  lstatSync as lstatSync4,
+  lstatSync as lstatSync5,
   mkdirSync as mkdirSync5,
   readdirSync as readdirSync8,
   renameSync as renameSync3,
@@ -5719,10 +5816,10 @@ function shellWord(path) {
 import {
   closeSync,
   existsSync as existsSync11,
-  lstatSync as lstatSync3,
+  lstatSync as lstatSync4,
   openSync,
   readdirSync as readdirSync7,
-  readFileSync as readFileSync7,
+  readFileSync as readFileSync8,
   readSync,
   rmSync as rmSync4,
   unlinkSync as unlinkSync2
@@ -8580,7 +8677,7 @@ function contained(ui, name, shape) {
 }
 function removeFile(target) {
   try {
-    const stat = lstatSync3(target);
+    const stat = lstatSync4(target);
     if (stat.isDirectory())
       return false;
     unlinkSync2(target);
@@ -8591,10 +8688,10 @@ function removeFile(target) {
 }
 function removeFrames(target) {
   try {
-    const parent = lstatSync3(dirname7(target));
+    const parent = lstatSync4(dirname7(target));
     if (parent.isSymbolicLink() || !parent.isDirectory())
       return false;
-    const stat = lstatSync3(target);
+    const stat = lstatSync4(target);
     if (!stat.isDirectory())
       return false;
     const entries = readdirSync7(target, { withFileTypes: true });
@@ -8608,7 +8705,7 @@ function removeFrames(target) {
 }
 function isLink(target) {
   try {
-    return lstatSync3(target).isSymbolicLink();
+    return lstatSync4(target).isSymbolicLink();
   } catch {
     return false;
   }
@@ -8617,7 +8714,7 @@ function readJsonFile(path) {
   if (!isRegularFile(path))
     return null;
   try {
-    const body = JSON.parse(readFileSync7(path, "utf8"));
+    const body = JSON.parse(readFileSync8(path, "utf8"));
     return body && typeof body === "object" && !Array.isArray(body) ? body : null;
   } catch {
     return null;
@@ -9451,7 +9548,7 @@ function stripControl(text) {
 }
 function unlinkIfLink(path) {
   try {
-    if (lstatSync4(path).isSymbolicLink())
+    if (lstatSync5(path).isSymbolicLink())
       unlinkSync3(path);
   } catch {}
 }
@@ -11487,7 +11584,7 @@ function missingTestCommands(profile) {
 }
 
 // packages/engine/src/packs.ts
-import { existsSync as existsSync18, readdirSync as readdirSync11, readFileSync as readFileSync8, realpathSync as realpathSync4, rmSync as rmSync6 } from "node:fs";
+import { existsSync as existsSync18, readdirSync as readdirSync11, readFileSync as readFileSync9, realpathSync as realpathSync4, rmSync as rmSync6 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { basename as basename8, isAbsolute as isAbsolute5, join as join34, sep as sep4 } from "node:path";
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
@@ -11676,7 +11773,7 @@ function namedFiles(manifest) {
 }
 function readNamed(root, rel) {
   try {
-    return { text: readFileSync8(join34(root, rel), "utf8") };
+    return { text: readFileSync9(join34(root, rel), "utf8") };
   } catch (error) {
     return { refused: `${rel} cannot be read (${errorText(error)})` };
   }
@@ -11723,7 +11820,7 @@ function checkPack(root, manifest, engineVersion = VERSION) {
 function hashes(root, manifest) {
   const out = {};
   for (const rel of namedFiles(manifest))
-    out[rel] = `sha256:${sha256(readFileSync8(join34(root, rel)))}`;
+    out[rel] = `sha256:${sha256(readFileSync9(join34(root, rel)))}`;
   return out;
 }
 function registerPack(userDir, root, by, key = null) {
@@ -11789,7 +11886,7 @@ function stateOf(registration, quick) {
     const changed = [];
     for (const [rel, hash] of Object.entries(registration.files)) {
       const path = join34(registration.root, rel);
-      if (!existsSync18(path) || `sha256:${sha256(readFileSync8(path))}` !== hash)
+      if (!existsSync18(path) || `sha256:${sha256(readFileSync9(path))}` !== hash)
         changed.push(rel);
     }
     if (changed.length)
@@ -12931,7 +13028,7 @@ function triageSummary(triage) {
 }
 
 // packages/engine/src/questions.ts
-import { appendFileSync as appendFileSync2, existsSync as existsSync21, lstatSync as lstatSync5, realpathSync as realpathSync6 } from "node:fs";
+import { appendFileSync as appendFileSync2, existsSync as existsSync21, lstatSync as lstatSync6, realpathSync as realpathSync6 } from "node:fs";
 import { dirname as dirname10, isAbsolute as isAbsolute6, join as join40, relative as relative7 } from "node:path";
 var KINDS = ["cli", "ticket", "document", "mail"];
 function isQuestionChannelKind(value) {
@@ -12985,7 +13082,7 @@ function postDocumentQuestion(root, documentPath, question) {
   if (rel.startsWith("..") || isAbsolute6(rel))
     return { refused: `${file} resolves outside the root; nothing written` };
   try {
-    if (lstatSync5(target).isSymbolicLink())
+    if (lstatSync6(target).isSymbolicLink())
       return { refused: `${file} is a symlink; nothing written` };
   } catch {}
   const quoted = question.text.split(`
@@ -14423,7 +14520,7 @@ function whoDecides(decision) {
     return `the agent in ${decision.mode} mode`;
   return decision.relayed ? "the user, relayed by the agent" : "the user";
 }
-function markText(v) {
+function markText2(v) {
   if (v.status === "unverified")
     return `unverified: ${(v.reason ?? "no reason").replace(/\|/g, "\\|")}`;
   return `${v.status} by Jev${v.confidence !== undefined ? ` (${two(v.confidence)})` : ""}`;
@@ -14814,7 +14911,7 @@ function renderReport(work, evidence, policy, options = {}) {
     if (findings.length)
       lines.push("");
     for (const f of findings) {
-      lines.push(`- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text.replace(/\|/g, "\\|")} (${f.severity}${f.outside ? ", outside the change" : ""}${f.verification ? `, ${markText(f.verification)}` : ""})`);
+      lines.push(`- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text.replace(/\|/g, "\\|")} (${f.severity}${f.outside ? ", outside the change" : ""}${f.verification ? `, ${markText2(f.verification)}` : ""})`);
     }
   }
   if (evidence.verifications?.length) {
@@ -15003,7 +15100,7 @@ function itemSummary(paths, id) {
   };
   const dir = workDir(paths, id);
   try {
-    if (!lstatSync6(dir).isDirectory())
+    if (!lstatSync7(dir).isDirectory())
       return empty;
   } catch {
     return empty;
@@ -15128,7 +15225,7 @@ function parse(argv) {
 }
 
 // packages/engine/src/audit-report.ts
-import { existsSync as existsSync23, readFileSync as readFileSync9, realpathSync as realpathSync8, statSync as statSync9 } from "node:fs";
+import { existsSync as existsSync23, readFileSync as readFileSync10, realpathSync as realpathSync8, statSync as statSync9 } from "node:fs";
 import { isAbsolute as isAbsolute9, join as join45, relative as relative9 } from "node:path";
 
 // packages/engine/src/audit-state.ts
@@ -15301,7 +15398,7 @@ function checkProof(findings, root, logsDir, section) {
       out(f.id, `${f.path} is outside the root`);
       continue;
     }
-    const text = readFileSync9(real, "utf8");
+    const text = readFileSync10(real, "utf8");
     const lines = text.endsWith(`
 `) ? text.split(`
 `).length - 1 : text.split(`
@@ -15615,7 +15712,7 @@ function assembleAuditReport(options) {
     let tail = [];
     try {
       bytes = statSync9(file).size;
-      const lines = readFileSync9(file, "utf8").split(`
+      const lines = readFileSync10(file, "utf8").split(`
 `);
       if (lines.at(-1) === "")
         lines.pop();
@@ -15739,7 +15836,7 @@ function parseAudit(tool, text) {
 }
 
 // packages/engine/src/design-lint.ts
-import { readFileSync as readFileSync10 } from "node:fs";
+import { readFileSync as readFileSync11 } from "node:fs";
 import { join as join46 } from "node:path";
 var LINT_RULES = [
   "motion/transition-all",
@@ -15892,7 +15989,7 @@ function readSafe(root, rel) {
     return null;
   let buffer;
   try {
-    buffer = readFileSync10(join46(root, rel));
+    buffer = readFileSync11(join46(root, rel));
   } catch {
     return null;
   }
@@ -17131,7 +17228,7 @@ function auditSummary(runs) {
 }
 
 // packages/engine/src/brand.ts
-import { existsSync as existsSync24, readFileSync as readFileSync11 } from "node:fs";
+import { existsSync as existsSync24, readFileSync as readFileSync12 } from "node:fs";
 import { dirname as dirname12, join as join51 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var BRAND_FILES = {
@@ -17162,8 +17259,8 @@ function loadBrand(dir) {
     return null;
   return {
     dir,
-    lockup: readFileSync11(join51(dir, BRAND_FILES.lockup), "utf8"),
-    mark: readFileSync11(join51(dir, BRAND_FILES.mark), "utf8")
+    lockup: readFileSync12(join51(dir, BRAND_FILES.lockup), "utf8"),
+    mark: readFileSync12(join51(dir, BRAND_FILES.mark), "utf8")
   };
 }
 function brandOf(env, root) {
@@ -17223,7 +17320,7 @@ function setConfigValue(config, key, value) {
 // packages/engine/src/design-pictures.ts
 import { createHash as createHash7 } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
-import { lstatSync as lstatSync7, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
+import { lstatSync as lstatSync8, renameSync as renameSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join53 } from "node:path";
 var API_HOSTS = new Set(["api.openverse.org", "commons.wikimedia.org"]);
 var FILE_HOSTS = new Set(["upload.wikimedia.org", "api.openverse.org"]);
@@ -17421,7 +17518,7 @@ async function downloadPicture(result, dir, options = {}) {
   const name = createHash7("sha256").update(`${result.archive}:${result.id}:${result.url}`).digest("hex").slice(0, 12);
   const file = `picture-${name}.${ext}`;
   ensureDir(dir);
-  if (lstatSync7(dir).isSymbolicLink())
+  if (lstatSync8(dir).isSymbolicLink())
     throw new Error("pictures: the folder is a link");
   const tmp = join53(dir, `.${file}.${process.pid}.tmp`);
   writeFileSync5(tmp, body, { flag: "wx" });
@@ -20623,11 +20720,14 @@ function onSessionStart(ctx, payload = {}) {
   const active = activeWork(ctx.paths);
   const continues = (payload.source === "resume" || payload.source === "compact") && loadState(ctx.paths).sessions[ctx.sessionId] !== undefined;
   let adaptersText = null;
+  let refresh = null;
+  let engineRoot = "";
+  const said = [];
   try {
     const deadline = start + adapterDeadline.ms;
-    const engineRoot = canonical(pluginRoot());
+    engineRoot = canonical(pluginRoot());
     const recorded = loadState(ctx.paths).adapters?.[engineRoot];
-    const refresh = recorded === VERSION ? null : refreshAdapters(ctx.paths, {
+    refresh = recorded === VERSION ? null : refreshAdapters(ctx.paths, {
       root: engineRoot,
       version: VERSION,
       home: ctx.env.HOME ?? "",
@@ -20638,7 +20738,6 @@ function onSessionStart(ctx, payload = {}) {
       worktree: worktreeMainRoot(ctx.paths.root) !== null,
       live: Object.keys(liveSessions(ctx.paths)).some((id) => id !== ctx.sessionId)
     });
-    let busy = false;
     try {
       withLock(join57(ctx.paths.localDir, "adapters"), () => {}, {
         what: "adapter refresh",
@@ -20647,13 +20746,17 @@ function onSessionStart(ctx, payload = {}) {
     } catch (error) {
       if (!(error instanceof LockBusy))
         throw error;
-      busy = true;
+      said.push("another session is updating");
     }
+  } catch (error) {
+    said.push(`not checked (${quoted(error.message)})`);
+  }
+  try {
     const reminder = uncommittedAdapters(ctx.paths, {
       clear: true,
       also: unwrittenMark(refresh)
     });
-    adaptersText = adaptersLine(refresh, busy ? ["another session is updating"] : [], reminder);
+    adaptersText = adaptersLine(refresh, said, reminder, engineRoot);
   } catch (error) {
     adaptersText = `adapters: not checked (${quoted(error.message)}).`;
   }
@@ -21445,7 +21548,7 @@ function realJourneyDeps(processEnv) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync28, lstatSync as lstatSync8, readdirSync as readdirSync14, realpathSync as realpathSync9 } from "node:fs";
+import { existsSync as existsSync28, lstatSync as lstatSync9, readdirSync as readdirSync14, realpathSync as realpathSync9 } from "node:fs";
 import { basename as basename11, dirname as dirname14, isAbsolute as isAbsolute12, join as join60, relative as relative12, resolve as resolve8 } from "node:path";
 var PROJECT_KINDS = [
   "stack-preference",
@@ -21741,7 +21844,7 @@ var INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 function ctoInputsFile(dir, file) {
   try {
     const real = join60(realpathSync9(dirname14(file)), basename11(file));
-    const entry = lstatSync8(real);
+    const entry = lstatSync9(real);
     return dirname14(real) === realpathSync9(dir) && INPUTS_FILE.test(basename11(real)) && entry.isFile() && !entry.isSymbolicLink() ? real : null;
   } catch {
     return null;
@@ -22435,16 +22538,16 @@ function metricsText(m) {
 // packages/engine/src/spec-publish.ts
 import {
   existsSync as existsSync29,
-  lstatSync as lstatSync9,
+  lstatSync as lstatSync10,
   mkdirSync as mkdirSync14,
-  readFileSync as readFileSync12,
+  readFileSync as readFileSync13,
   realpathSync as realpathSync10,
   writeFileSync as writeFileSync8
 } from "node:fs";
 import { isAbsolute as isAbsolute13, join as join63, relative as relative13 } from "node:path";
 function isLink2(path) {
   try {
-    return lstatSync9(path).isSymbolicLink();
+    return lstatSync10(path).isSymbolicLink();
   } catch {
     return false;
   }
@@ -22482,7 +22585,7 @@ ${provenance}
       return { refused: "docs/designs resolves outside the repository: nothing written" };
     writeFileSync8(file, text);
     if (existsSync29(sitemap)) {
-      const current = readFileSync12(sitemap, "utf8");
+      const current = readFileSync13(sitemap, "utf8");
       if (!current.includes(`| ${id} |`))
         writeFileSync8(sitemap, `${current.trimEnd()}
 ${row}
@@ -23587,7 +23690,7 @@ function setStandingE2eSkip(env, parsed) {
 }
 function isLink3(path) {
   try {
-    return lstatSync10(path).isSymbolicLink();
+    return lstatSync11(path).isSymbolicLink();
   } catch {
     return false;
   }
@@ -23691,8 +23794,10 @@ function projectsUpdate(env, parsed, args, io) {
       emit({ name, root, status: "left out", units: [`left out (${reason})`], reason });
       continue;
     }
+    let refresh = null;
+    let thrown = "";
     try {
-      const refresh = refreshAdapters(paths, {
+      refresh = refreshAdapters(paths, {
         root: engineRoot,
         version: VERSION,
         home,
@@ -23703,29 +23808,39 @@ function projectsUpdate(env, parsed, args, io) {
         worktree: worktreeMainRoot(root) !== null,
         live: Object.keys(liveSessions(paths)).length > 0
       });
-      const reminder = uncommittedAdapters(paths, {
-        clear: !dryRun,
-        also: unwrittenMark(refresh)
+    } catch (error) {
+      thrown = quoted(error.message);
+    }
+    const reminder = uncommittedAdapters(paths, { clear: !dryRun, also: unwrittenMark(refresh) });
+    const unfinished = unfinishedParts(reminder, engineRoot);
+    if (refresh === null) {
+      emit({
+        name,
+        root,
+        status: "failed",
+        units: [`failed (${thrown})`, ...unfinished],
+        reason: thrown
       });
+    } else {
+      const results = refresh.results;
       const units = [
-        ...refresh.results.map(resultText),
+        ...results.map(resultText),
         ...refresh.foreign.map(foreignText),
-        ...refresh.markFailed ? [markFailedText(refresh.markFailed)] : []
+        ...refresh.markFailed ? [markFailedText(refresh.markFailed)] : [],
+        ...refresh.notWritten,
+        ...unfinished
       ];
-      const bucket = UPDATE_PRECEDENCE.find((s) => refresh.results.some((r) => r.status === s)) ?? (refresh.foreign.length ? "other root" : "no adapter");
-      const allOk = refresh.results.length > 0 && refresh.results.every((r) => r.status === "up to date") && refresh.foreign.length === 0 && !refresh.markFailed;
+      const bucket = refresh.notWritten.length ? "failed" : UPDATE_PRECEDENCE.find((s) => results.some((r) => r.status === s)) ?? (refresh.foreign.length ? "other root" : "no adapter");
+      const allOk = results.length > 0 && results.every((r) => r.status === "up to date") && refresh.foreign.length === 0 && !refresh.markFailed && refresh.notWritten.length === 0 && unfinished.length === 0;
       emit({
         name,
         root,
         status: bucket,
         units: allOk ? ["up to date"] : units.length ? units : ["no adapter on this root"]
       });
-      if (reminder?.command)
-        commits.push({ name, command: reminder.command });
-    } catch (error) {
-      const reason = quoted(error.message);
-      emit({ name, root, status: "failed", units: [`failed (${reason})`], reason });
     }
+    if (reminder?.command)
+      commits.push({ name, command: reminder.command });
   }
   const user = [];
   const userDirs = { project: home, home };
@@ -26988,7 +27103,7 @@ ${drafted.lesson}`, "lesson")[0];
         return refuse("crew is inactive here");
       try {
         const done = fileAnswerBySession(ctx, work.id, role, {
-          answer: readFileSync13(file, "utf8").replace(/\n$/, ""),
+          answer: readFileSync14(file, "utf8").replace(/\n$/, ""),
           ...as ? { as } : {}
         });
         const lines = [

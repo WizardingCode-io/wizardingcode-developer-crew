@@ -2,9 +2,11 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   KEPT_ROOT_CREW,
+  markText,
   noteUpdated,
   type Reminder,
   reminderParts,
+  restoreMark,
   runtimePathspecs,
   type UncommittedEntry,
 } from "./adapters-uncommitted.ts";
@@ -18,6 +20,7 @@ import {
   adapterLinkProblem,
   checkRuntime,
   type InstallDirs,
+  type Installed,
   InstallFailed,
   installRuntime,
   RUNTIME_NAMES,
@@ -95,6 +98,8 @@ export interface Refresh {
   entry?: UncommittedEntry;
   /** Why the mark could not be written, quoted; the caller then reminds from `entry`. */
   markFailed?: string;
+  /** What the refresh could not write beside the mark, one sentence each: the version record, the register entry (item 2026-11-09-003). */
+  notWritten: string[];
 }
 
 /** The one path every root, path and message takes before it is shown: one line, no control or bidi character, 200 characters at most. */
@@ -217,10 +222,12 @@ export function markFailedText(why: string): string {
  * refresh that is not up to date, each foreign adapter that is not simply another engine's, what
  * the not-committed mark says is still to commit (the runtimes this same refresh updated left
  * out of its own root's entry, whose results already say them), a mark that could not be written
- * or read, then once each the note that an update applies from the runtime's next session, the
- * commit command the mark's reader built, and the hold-back suffixes that tell the person what
- * ends the hold-back. With no reminder it says the parts and no command. `own` is the reading
- * engine's root: the refresh's when there is one.
+ * or read, what the refresh could not write beside it, then once each the note that an update
+ * applies from the runtime's next session, the commit command the mark's reader built, and the
+ * hold-back suffixes that tell the person what ends the hold-back. The suffixes are not said when
+ * the mark holds an unfinished runtime: its sentence says what to run, and committing a
+ * part-written adapter is not it. With no reminder it says the parts and no command. `own` is the
+ * reading engine's root: the refresh's when there is one.
  */
 export function adaptersLine(
   refresh: Refresh | null,
@@ -246,6 +253,7 @@ export function adaptersLine(
   const updatedNow = results.filter((r) => r.status === "updated").map((r) => r.runtime);
   if (reminder) parts.push(...reminderParts(reminder, { own, updatedNow }));
   if (refresh?.markFailed) parts.push(markFailedText(refresh.markFailed));
+  parts.push(...(refresh?.notWritten ?? []));
   if (reminder?.failed) parts.push(`not-committed check failed (${reminder.failed})`);
   parts.push(...extra);
   if (!parts.length) return null;
@@ -255,12 +263,87 @@ export function adaptersLine(
   const whys = results.map((r) => r.why ?? "");
   if (whys.includes("an item is active"))
     line += "; it is updated at a session start with no active item, or by crew projects update";
-  if (whys.some((w) => w.startsWith("uncommitted changes")))
+  // An unfinished runtime's sentence says what to run: committing a part-written adapter is not it.
+  const unfinished = reminder?.entries.some((e) => e.unfinished.length > 0) ?? false;
+  if (!unfinished && whys.some((w) => w.startsWith("uncommitted changes")))
     line += "; commit or restore them first";
-  const never = results.find((r) => r.why?.startsWith("not committed"));
+  const never = unfinished ? undefined : results.find((r) => r.why?.startsWith("not committed"));
   if (never)
     line += `; commit them to adopt the adapter, or run crew runtime install ${never.runtime} again`;
   return `${line}.`;
+}
+
+/** What one install under the mark came to. */
+export type MarkedInstall =
+  | { kind: "installed"; done: Installed }
+  | { kind: "refused"; refused: string }
+  /** `began`: the throw came from the block that holds the install's writes; `partly`: a write had ended. */
+  | { kind: "threw"; message: string; began: boolean; partly: boolean };
+
+/**
+ * One runtime installed under the not-committed mark, for a caller that holds the adapters lock
+ * (item 2026-11-09-003): the refresh and the hand install share it. The mark names the runtime
+ * unfinished before the install begins, so a kill inside it leaves the note. A refusal, and a
+ * throw that is not an `InstallFailed`, put the mark back as it was: `installRuntime` refuses
+ * before its first write and throws `InstallFailed` from nowhere but the block that holds its
+ * writes. An `InstallFailed`, whatever it counts, leaves the runtime unfinished: a write cut
+ * partway counts as none and leaves a truncated file, and the reader's own `git status` clears
+ * the note when the paths are clean. An install that returns wrote its files whole and is noted
+ * finished, with whether it wrote the configuration. With no commit to name (`head` null)
+ * nothing is noted. A write of the mark that fails is told to `markFailed` and never stops the
+ * install.
+ */
+export function installUnderMark(o: {
+  paths: CrewPaths;
+  /** The mark's key: the engine's canonical root. */
+  root: string;
+  version: string;
+  at: string;
+  head: string | null;
+  name: RuntimeName;
+  install: () => Installed | { refused: string };
+  markFailed: (why: string) => void;
+}): MarkedInstall {
+  const fenced = (write: () => void) => {
+    if (o.head === null) return;
+    try {
+      write();
+    } catch (error) {
+      o.markFailed(quoted((error as Error).message));
+    }
+  };
+  const note = (config: boolean, unfinished: boolean) =>
+    fenced(() =>
+      noteUpdated(o.paths, o.root, {
+        version: o.version,
+        at: o.at,
+        head: o.head as string,
+        runtimes: [{ name: o.name, config, ...(unfinished ? { unfinished: true as const } : {}) }],
+        register: false,
+      }),
+    );
+  const before = o.head === null ? null : markText(o.paths);
+  const restore = () => fenced(() => restoreMark(o.paths, before));
+  note(false, true);
+  let done: Installed | { refused: string };
+  try {
+    done = o.install();
+  } catch (error) {
+    const began = error instanceof InstallFailed;
+    if (!began) restore();
+    return {
+      kind: "threw",
+      message: quoted((error as Error).message),
+      began,
+      partly: began && error.written > 0,
+    };
+  }
+  if ("refused" in done) {
+    restore();
+    return { kind: "refused", refused: done.refused };
+  }
+  note(done.configWritten, false);
+  return { kind: "installed", done };
 }
 
 /** The refresh of one checkout, at project scope: the spec's "The refresh of one checkout", step by step. */
@@ -274,8 +357,21 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     from: loadState(paths).adapters?.[o.root] ?? null,
     version: o.version,
     root: o.root,
+    notWritten: [],
   };
   const check = (runtime: Runtime, root: string) => checkRuntime(runtime, "project", dirs, root);
+  // The version record, fenced (item 2026-11-09-003): a write that fails is said, and the refresh
+  // keeps its account of what it installed. The next start finds the adapters up to date and records.
+  const record = () => {
+    try {
+      recordAdapterVersion(paths, o.root, o.version);
+      refresh.recorded = true;
+    } catch (error) {
+      refresh.notWritten.push(
+        `the adapter version was not recorded (${quoted((error as Error).message)})`,
+      );
+    }
+  };
   const own: Own[] = [];
   // 1 and 2: each runtime's configuration, the root it names, own or foreign.
   for (const name of RUNTIME_NAMES) {
@@ -336,14 +432,20 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     if (!ended) return;
     const text = adaptersEntryText(refresh, o.root);
     if (text === lastEntryText(paths, "adapters")) return;
-    appendDecision(paths, {
-      at: nowIso(),
-      item: "adapters",
-      kind: "adapters",
-      by: "the engine",
-      text,
-    });
-    refresh.appended = true;
+    try {
+      appendDecision(paths, {
+        at: nowIso(),
+        item: "adapters",
+        kind: "adapters",
+        by: "the engine",
+        text,
+      });
+      refresh.appended = true;
+    } catch (error) {
+      refresh.notWritten.push(
+        `the register entry was not written (${quoted((error as Error).message)})`,
+      );
+    }
   };
   const lock = join(paths.localDir, "adapters");
   const lockOptions = { what: "adapter refresh", waitMs: LOCK_WAIT_MS };
@@ -372,10 +474,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   const toInstall = own.filter((a) => !results.has(a.runtime.name));
   const notUpToDate = () => own.filter((a) => results.get(a.runtime.name)?.status !== "up to date");
   if (notUpToDate().length === 0) {
-    if (!o.dryRun) {
-      recordAdapterVersion(paths, o.root, o.version);
-      refresh.recorded = true;
-    }
+    if (!o.dryRun) record();
     return finish();
   }
   // 4: held back, nothing written, not even the entry of a refused or failed adapter; every
@@ -435,6 +534,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   // install, leaves the reminder. With no commit to name there is nothing to tie a change to, and
   // no mark. A write that fails is said once and never undoes the refresh.
   const at = nowIso();
+  const noted: UncommittedEntry["runtimes"] = [];
   let head: string | null = null;
   const mark = (runtimes: UncommittedEntry["runtimes"], register: boolean) => {
     if (head === null) return;
@@ -468,29 +568,47 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
                   set(a, "stale", "time budget");
                   continue;
                 }
-                try {
-                  const done = (o.install ?? installRuntime)(a.runtime, "project", dirs, a.root);
-                  if ("refused" in done) {
-                    set(a, "refused", quoted(done.refused));
-                    continue;
+                const outcome = installUnderMark({
+                  paths,
+                  root: o.root,
+                  version: o.version,
+                  at,
+                  head,
+                  name: a.runtime.name,
+                  install: () => (o.install ?? installRuntime)(a.runtime, "project", dirs, a.root),
+                  markFailed: (why) => {
+                    refresh.markFailed ??= why;
+                  },
+                });
+                if (outcome.kind === "installed") {
+                  // The files are whole and noted; whether the adapter is ok is the check's word.
+                  noted.push({ name: a.runtime.name, config: outcome.done.configWritten });
+                  let problem: string | null;
+                  try {
+                    const after = check(a.runtime, a.root);
+                    problem = after.ok ? null : quoted(after.problems[0] ?? "the check is not ok");
+                  } catch (error) {
+                    problem = quoted((error as Error).message);
                   }
-                  const after = check(a.runtime, a.root);
-                  if (after.ok) {
+                  if (problem !== null) set(a, "failed", problem);
+                  else
                     set(a, "updated", undefined, {
-                      removed: done.removed.length,
-                      configWritten: done.configWritten,
-                      ...(done.configWritten && a.runtime.trust ? { trust: a.runtime.trust } : {}),
+                      removed: outcome.done.removed.length,
+                      configWritten: outcome.done.configWritten,
+                      ...(outcome.done.configWritten && a.runtime.trust
+                        ? { trust: a.runtime.trust }
+                        : {}),
                     });
-                    mark([{ name: a.runtime.name, config: done.configWritten }], false);
-                  } else set(a, "failed", quoted(after.problems[0] ?? "the check is not ok"));
-                } catch (error) {
-                  const message = quoted((error as Error).message);
+                } else if (outcome.kind === "refused") set(a, "refused", quoted(outcome.refused));
+                else {
+                  if (outcome.began)
+                    noted.push({ name: a.runtime.name, config: false, unfinished: true });
                   set(
                     a,
                     "failed",
-                    error instanceof InstallFailed && error.written > 0
-                      ? `${message}; partly written; crew runtime check ${a.runtime.name} shows the state`
-                      : message,
+                    outcome.partly
+                      ? `${outcome.message}; partly written; crew runtime check ${a.runtime.name} shows the state`
+                      : outcome.message,
                   );
                 }
               }
@@ -498,18 +616,21 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
           }
         }
         const all = [...results.values()];
-        if (all.every((r) => r.status === "up to date" || r.status === "updated")) {
-          recordAdapterVersion(paths, o.root, o.version);
-          refresh.recorded = true;
-        }
+        if (all.every((r) => r.status === "up to date" || r.status === "updated")) record();
         writeEntry();
-        // What the run updated, whole, for a caller whose mark could not be written; the mark
-        // learns here that the register entry was appended.
-        const updated = all.filter((r) => r.status === "updated");
-        if (updated.length && head !== null) {
-          const runtimes = updated.map((r) => ({ name: r.runtime, config: r.configWritten }));
-          refresh.entry = { version: o.version, at, head, runtimes, register: refresh.appended };
-          if (refresh.appended) mark(runtimes, true);
+        // What the run noted, whole, for a caller whose mark could not be written: each runtime
+        // whose install returned and, with `unfinished`, each one a failed install left so, so
+        // that caller neither loses the reminder nor gives a command over an unfinished runtime.
+        // The mark learns here that the register entry was appended.
+        if (noted.length && head !== null) {
+          refresh.entry = {
+            version: o.version,
+            at,
+            head,
+            runtimes: noted,
+            register: refresh.appended,
+          };
+          if (refresh.appended) mark(noted, true);
         }
       },
       lockOptions,

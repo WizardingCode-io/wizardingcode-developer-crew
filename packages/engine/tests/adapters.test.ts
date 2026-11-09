@@ -21,9 +21,12 @@ import {
   type Refresh,
   type RefreshOptions,
   refreshAdapters,
+  unwrittenMark,
 } from "../src/adapters.ts";
 import {
   markPath,
+  markText,
+  noteUpdated,
   type UncommittedEntry,
   uncommittedAdapters,
 } from "../src/adapters-uncommitted.ts";
@@ -932,8 +935,16 @@ test("2026-11-09-001 AC-28: the mark is written before the version is recorded",
   );
   expect(result(refresh, "codex")?.status).toBe("updated");
   expect(result(refresh, "copilot")?.status).toBe("updated");
+  // At Copilot's install the mark already names Copilot, unfinished (item 2026-11-09-003).
   expect(seen).toEqual([
-    { runtimes: [{ name: "codex", config: true }], register: false, recorded: undefined },
+    {
+      runtimes: [
+        { name: "codex", config: true },
+        { name: "copilot", config: false, unfinished: true },
+      ],
+      register: false,
+      recorded: undefined,
+    },
   ]);
   const entry = markOf(f.paths)[f.root];
   expect(entry?.runtimes).toEqual([
@@ -962,4 +973,211 @@ test("2026-11-09-003 AC-38: the path of the root to keep is written once, and th
   const refresh = refreshAdapters(f.paths, options(f));
   expect(refresh.foreign.map((x) => x.why)).toEqual(["root gone"]);
   expect(adaptersLine(refresh)).toContain(`such as ${text}`);
+});
+
+// Item 2026-11-09-003, Task 2: the refresh notes before it installs and says what it could not write (AC-31, AC-40, AC-44, AC-45, AC-47).
+
+const SKILL_OF_AN_ADAPTER = ".agents/skills/crew-method/SKILL.md";
+/** A folder holding one file where the mark's file goes: no note can be written there. */
+function folderAtTheMark(paths: CrewPaths): string {
+  mkdirSync(markPath(paths), { recursive: true });
+  const inside = join(markPath(paths), "in-the-way");
+  writeFileSync(inside, "x\n");
+  return inside;
+}
+
+test("2026-11-09-003 AC-44: the mark names a runtime unfinished while its install runs, and finished once it has returned", () => {
+  const f = fixture([RUNTIMES.copilot, RUNTIMES.codex], { staleConfig: true });
+  const seen: Record<string, unknown> = {};
+  const refresh = refreshAdapters(
+    f.paths,
+    options(f, {
+      install: (runtime, ...rest) => {
+        seen[runtime.name] = markOf(f.paths)[f.root];
+        return installRuntime(runtime, ...rest);
+      },
+    }),
+  );
+  expect(result(refresh, "codex")?.status).toBe("updated");
+  expect(result(refresh, "copilot")?.status).toBe("updated");
+  // The refresh installs in the table's order: Codex, then Copilot.
+  expect(seen.codex).toMatchObject({
+    version: VERSION,
+    head: git(f.project, "rev-parse", "HEAD"),
+    runtimes: [{ name: "codex", config: false, unfinished: true }],
+  });
+  expect((seen.copilot as UncommittedEntry).runtimes).toEqual([
+    { name: "codex", config: true },
+    { name: "copilot", config: false, unfinished: true },
+  ]);
+  expect(markOf(f.paths)[f.root]?.runtimes).toEqual([
+    { name: "codex", config: true },
+    { name: "copilot", config: true },
+  ]);
+});
+
+test("2026-11-09-003 AC-45: only an install that began and did not return is left unfinished", () => {
+  const unfinished: UncommittedEntry["runtimes"] = [
+    { name: "copilot", config: false, unfinished: true },
+  ];
+  // A throw from the block that holds the writes, a file written: unfinished.
+  const partly = fixture([RUNTIMES.copilot]);
+  const partlyRefresh = refreshAdapters(
+    partly.paths,
+    options(partly, {
+      install: () => {
+        write(partly.project, SKILL_OF_AN_ADAPTER, "# half\n");
+        throw new InstallFailed("boom", 1);
+      },
+    }),
+  );
+  expect(result(partlyRefresh, "copilot")?.status).toBe("failed");
+  expect(markOf(partly.paths)[partly.root]?.runtimes).toEqual(unfinished);
+  // The same throw counting no file: unfinished all the same, and a read that finds the paths clean clears it.
+  const none = fixture([RUNTIMES.copilot]);
+  const noneRefresh = refreshAdapters(
+    none.paths,
+    options(none, {
+      install: () => {
+        throw new InstallFailed("boom", 0);
+      },
+    }),
+  );
+  expect(result(noneRefresh, "copilot")?.status).toBe("failed");
+  expect(markOf(none.paths)[none.root]?.runtimes).toEqual(unfinished);
+  expect(uncommittedAdapters(none.paths, { clear: true })).toBeNull();
+  expect(existsSync(markPath(none.paths))).toBe(false);
+  // A refusal, and a throw from before the writes: the mark is as it was, and there was none.
+  const refused = fixture([RUNTIMES.copilot]);
+  const refusedRefresh = refreshAdapters(
+    refused.paths,
+    options(refused, { install: () => ({ refused: "no" }) }),
+  );
+  expect(result(refusedRefresh, "copilot")?.status).toBe("refused");
+  expect(existsSync(markPath(refused.paths))).toBe(false);
+  const thrown = fixture([RUNTIMES.copilot]);
+  const thrownRefresh = refreshAdapters(
+    thrown.paths,
+    options(thrown, {
+      install: () => {
+        throw new Error("boom");
+      },
+    }),
+  );
+  expect(result(thrownRefresh, "copilot")?.status).toBe("failed");
+  expect(existsSync(markPath(thrown.paths))).toBe(false);
+  // An install that returns and whose check is not ok: its files are whole, so it is held finished.
+  const unchecked = fixture([RUNTIMES.copilot]);
+  const uncheckedRefresh = refreshAdapters(
+    unchecked.paths,
+    options(unchecked, {
+      install: () => ({ files: [], removed: [], left: [], configWritten: false, trust: null }),
+    }),
+  );
+  expect(result(uncheckedRefresh, "copilot")?.status).toBe("failed");
+  expect(markOf(unchecked.paths)[unchecked.root]?.runtimes).toEqual([
+    { name: "copilot", config: false },
+  ]);
+  // A refusal over a mark another root wrote: its bytes are the ones before.
+  const kept = fixture([RUNTIMES.copilot]);
+  noteUpdated(kept.paths, "/r/other", {
+    version: "1.2.3",
+    at: nowIso(),
+    head: git(kept.project, "rev-parse", "HEAD"),
+    runtimes: [{ name: "codex", config: false }],
+    register: false,
+  });
+  const before = readFileSync(markPath(kept.paths), "utf8");
+  refreshAdapters(kept.paths, options(kept, { install: () => ({ refused: "no" }) }));
+  expect(readFileSync(markPath(kept.paths), "utf8")).toBe(before);
+});
+
+test("2026-11-09-003 AC-47: a refresh whose mark could not be written reminds from what it noted, the unfinished among it", () => {
+  const f = fixture([RUNTIMES.copilot, RUNTIMES.codex], { staleConfig: true });
+  folderAtTheMark(f.paths);
+  const refresh = refreshAdapters(
+    f.paths,
+    options(f, {
+      install: (runtime, ...rest) => {
+        if (runtime.name !== "copilot") return installRuntime(runtime, ...rest);
+        write(f.project, ".github/agents/crew-half.md", "half\n");
+        throw new InstallFailed("boom", 1);
+      },
+    }),
+  );
+  expect(refresh.markFailed).toBeDefined();
+  expect(refresh.entry?.runtimes).toEqual([
+    { name: "codex", config: true },
+    { name: "copilot", config: false, unfinished: true },
+  ]);
+  const reminder = uncommittedAdapters(f.paths, { clear: false, also: unwrittenMark(refresh) });
+  expect(reminder?.entries).toEqual([
+    { root: f.root, version: VERSION, updated: ["codex"], unfinished: ["copilot"] },
+  ]);
+  expect(reminder?.command).toBeNull();
+  const line = adaptersLine(refresh, [], reminder, f.root) ?? "";
+  expect(line).toContain(
+    `copilot left unfinished by crew ${VERSION} (an install cut short or failed): run crew runtime install copilot again, then commit`,
+  );
+  expect(line).not.toContain("Commit:");
+});
+
+test("2026-11-09-003 AC-31: a link or a folder at the mark's path is never written through", () => {
+  // A link to a file outside the project: read as absent, gone after a refused install, its target untouched.
+  const f = fixture([RUNTIMES.copilot]);
+  const outside = join(tempDir("crew-outside-"), "target.json");
+  writeFileSync(outside, "{}");
+  mkdirSync(join(f.paths.localDir, "adapters"), { recursive: true });
+  symlinkSync(outside, markPath(f.paths));
+  expect(markText(f.paths)).toBeNull();
+  const refresh = refreshAdapters(f.paths, options(f, { install: () => ({ refused: "no" }) }));
+  expect(result(refresh, "copilot")?.status).toBe("refused");
+  expect(() => lstatSync(markPath(f.paths))).toThrow();
+  expect(readFileSync(outside, "utf8")).toBe("{}");
+  // A folder there: the note and the restore fail as a mark that was not written, and the install goes on.
+  const g = fixture([RUNTIMES.copilot]);
+  const inside = folderAtTheMark(g.paths);
+  const installed = refreshAdapters(g.paths, options(g));
+  expect(result(installed, "copilot")?.status).toBe("updated");
+  expect(installed.markFailed).toBeDefined();
+  expect(readFileSync(inside, "utf8")).toBe("x\n");
+});
+
+test("2026-11-09-003 AC-40: a version record or a register entry that cannot be written is said, and the refresh keeps its account", () => {
+  // (a) The version record: the state's own folder cannot be written.
+  const a = fixture([RUNTIMES.copilot]);
+  mkdirSync(join(a.paths.localDir, "adapters"), { recursive: true });
+  chmodSync(a.paths.localDir, 0o555);
+  let recordFailed: Refresh;
+  try {
+    recordFailed = refreshAdapters(a.paths, options(a));
+  } finally {
+    chmodSync(a.paths.localDir, 0o755);
+  }
+  expect(result(recordFailed, "copilot")?.status).toBe("updated");
+  expect(recordFailed.recorded).toBe(false);
+  expect(recordFailed.notWritten).toHaveLength(1);
+  expect(recordFailed.notWritten[0]).toStartWith("the adapter version was not recorded (EACCES");
+  expect(recordFailed.entry).toBeDefined();
+  const line =
+    adaptersLine(recordFailed, [], uncommittedAdapters(a.paths, { clear: false }), a.root) ?? "";
+  expect(line).toContain("copilot updated (");
+  expect(line).toContain("; the adapter version was not recorded (EACCES");
+  expect(line).toContain(". Commit: git add -A -- ");
+  // (b) The register: the folder that holds it cannot be written.
+  const b = fixture([RUNTIMES.copilot]);
+  mkdirSync(join(b.paths.localDir, "adapters"), { recursive: true });
+  const crew = join(b.project, ".crew");
+  chmodSync(crew, 0o555);
+  let entryFailed: Refresh;
+  try {
+    entryFailed = refreshAdapters(b.paths, options(b));
+  } finally {
+    chmodSync(crew, 0o755);
+  }
+  expect(result(entryFailed, "copilot")?.status).toBe("updated");
+  expect(entryFailed.recorded).toBe(true);
+  expect(entryFailed.appended).toBe(false);
+  expect(entryFailed.notWritten).toHaveLength(1);
+  expect(entryFailed.notWritten[0]).toStartWith("the register entry was not written (EACCES");
 });

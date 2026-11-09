@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   lstatSync,
@@ -10,10 +12,12 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { quoted } from "../src/adapters.ts";
 import { markPath, noteUpdated } from "../src/adapters-uncommitted.ts";
 import { listDecisions } from "../src/decisions.ts";
 import { adapterDeadline, onSessionStart } from "../src/hooks/session-start.ts";
@@ -535,4 +539,211 @@ test("2026-11-09-001 timing: the adapter step with a mark and with none", () => 
     console.log(`adapter step with one runtime marked: ${one.ms} ms`);
     console.log(`adapter step with five runtimes marked: ${five.ms} ms`);
   }
+});
+
+// Item 2026-11-09-003, Task 2: a refresh killed inside an install, a lock that is held, a step that throws (AC-2, AC-3, AC-20, AC-21, AC-40, AC-46).
+
+const REPO = fileURLToPath(new URL("../../../", import.meta.url));
+/** A project whose Copilot adapter names another root and is stale, and a refresh of it killed inside the install. */
+function killedInside() {
+  const other = otherRoot();
+  const root = makeRepo({
+    "README.md": "# test\n",
+    ".crew/.gitignore": "local/\nwork/*/logs/\nwork/*/review/ui/\nworktrees/\n",
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+  });
+  git(root, "config", "user.email", "crew@test.invalid");
+  git(root, "config", "user.name", "Crew Test");
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  ensureProfile(paths);
+  const done = installRuntime(
+    RUNTIMES.copilot,
+    "project",
+    { project: root, home: env.HOME ?? "" },
+    other,
+  );
+  if ("refused" in done) throw new Error(done.refused);
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "an adapter on another root");
+  write(root, SKILL_PAGE, "# stale\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "stale");
+  const script = join(tempDir("crew-kill-"), "refresh.ts");
+  writeFileSync(
+    script,
+    `import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+const { refreshAdapters } = await import(${JSON.stringify(join(REPO, "packages/engine/src/adapters.ts"))});
+const { resolvePaths } = await import(${JSON.stringify(join(REPO, "packages/engine/src/paths.ts"))});
+const paths = resolvePaths(${JSON.stringify(root)});
+if (!paths) throw new Error("crew is inactive in the fixture");
+refreshAdapters(paths, {
+  root: ${JSON.stringify(other)},
+  version: "9.9.9",
+  home: process.env.HOME ?? "",
+  dryRun: false,
+  deadline: null,
+  resumed: false,
+  activeItem: false,
+  worktree: false,
+  live: false,
+  install: () => {
+    writeFileSync(join(${JSON.stringify(root)}, ${JSON.stringify(SKILL_PAGE)}), "# half\\n");
+    process.kill(process.pid, "SIGKILL");
+    throw new Error("not reached");
+  },
+});
+`,
+  );
+  const child = spawnSync(process.execPath, [script], { env, encoding: "utf8" });
+  return { other, root, env, paths, child, lock: join(paths.localDir, "adapters", ".lock") };
+}
+const unfinishedElsewhere = (version: string) =>
+  `copilot left unfinished by crew ${version} (an install cut short or failed): run crew runtime install copilot again with the crew of its root, such as ~/.local/share/wizardingcode-developer-crew/bin/crew, then commit`;
+
+test("2026-11-09-003 AC-2: a refresh killed inside an install leaves the runtime unfinished, and another root says what to run", () => {
+  const k = killedInside();
+  expect(k.child.signal, k.child.stderr).toBe("SIGKILL");
+  const mark = JSON.parse(readFileSync(markPath(k.paths), "utf8"));
+  expect(mark[k.other].runtimes).toEqual([{ name: "copilot", config: false, unfinished: true }]);
+  expect(mark[k.other].version).toBe("9.9.9");
+  expect(existsSync(k.lock)).toBe(true);
+  // Ten seconds on: the dead process's lock is stale, and the next taker breaks it.
+  const past = new Date(Date.now() - 20_000);
+  utimesSync(k.lock, past, past);
+  const text = context(start({ project: k.root, env: k.env }));
+  expect(afterEngine(text).startsWith(`adapters: ${unfinishedElsewhere("9.9.9")}. `)).toBe(true);
+  expect(text).not.toContain("Commit:");
+});
+
+test("2026-11-09-003 AC-42: while the lock is held the reader gives no instruction", () => {
+  const k = killedInside();
+  expect(k.child.signal, k.child.stderr).toBe("SIGKILL");
+  const ahead = new Date(Date.now() + 60_000);
+  utimesSync(k.lock, ahead, ahead);
+  const ms = adapterDeadline.ms;
+  adapterDeadline.ms = 200;
+  try {
+    const text = context(start({ project: k.root, env: k.env }));
+    expect(
+      afterEngine(text).startsWith(
+        "adapters: copilot's install has not ended and the adapters lock is held: look again in ten seconds with crew status; another session is updating. ",
+      ),
+    ).toBe(true);
+    expect(text).not.toContain("run crew runtime install");
+  } finally {
+    adapterDeadline.ms = ms;
+  }
+  const past = new Date(Date.now() - 20_000);
+  utimesSync(k.lock, past, past);
+  const later = context(start({ project: k.root, env: k.env }, "s2"));
+  expect(afterEngine(later).startsWith(`adapters: ${unfinishedElsewhere("9.9.9")}. `)).toBe(true);
+});
+
+const unfinishedHere = (version: string) =>
+  `copilot left unfinished by crew ${version} (an install cut short or failed): run crew runtime install copilot again, then commit`;
+/** Runs `run` with a folder read-only, and puts its mode back. */
+function readOnly<T>(folder: string, run: () => T): T {
+  chmodSync(folder, 0o555);
+  try {
+    return run();
+  } finally {
+    chmodSync(folder, 0o755);
+  }
+}
+
+test("2026-11-09-003 AC-3: on its own root an unfinished runtime's start says what to run, and gives no advice to commit", () => {
+  const unfinished = (f: { project: string; paths: ReturnType<typeof repoPaths> }) =>
+    noteUpdated(f.paths, engineRoot, {
+      ...copilotEntry(f.project, VERSION),
+      runtimes: [{ name: "copilot", config: false, unfinished: true }],
+    });
+  // A tracked file the cut install rewrote.
+  const f = fixture([RUNTIMES.copilot]);
+  unfinished(f);
+  write(f.project, SKILL_PAGE, "# half written\n");
+  const text = afterEngine(context(start(f)));
+  expect(text).toContain("copilot stale (uncommitted changes in ");
+  expect(text).toContain(unfinishedHere(VERSION));
+  expect(text).not.toContain("Commit:");
+  expect(text).not.toContain("commit or restore them first");
+  // A file the cut install created.
+  const g = fixture([RUNTIMES.copilot]);
+  unfinished(g);
+  write(g.project, ".github/agents/crew-x.md", "half\n");
+  const created = afterEngine(context(start(g)));
+  expect(created).toContain("copilot stale (not committed: ");
+  expect(created).toContain(unfinishedHere(VERSION));
+  expect(created).not.toContain("commit them to adopt the adapter");
+});
+
+test("2026-11-09-003 AC-40 (SessionStart): a register that cannot be written is said beside the update and the command", () => {
+  const f = fixture([RUNTIMES.copilot], { stale: false });
+  // A first start, so everything a start writes once is written.
+  start(f);
+  write(f.project, SKILL_PAGE, "# stale\n");
+  git(f.project, "add", "-A");
+  git(f.project, "commit", "-q", "-m", "stale");
+  updateState(f.paths, (state) => {
+    state.adapters = { [engineRoot]: "0.0.1" };
+  });
+  const text = readOnly(join(f.project, ".crew"), () => afterEngine(context(start(f, "s2"))));
+  expect(text).toContain("copilot updated (");
+  expect(text).toContain("; the register entry was not written (EACCES");
+  expect(text).toContain(". Commit: git add -A -- ");
+});
+
+test("2026-11-09-003 AC-20: a start whose adapter step throws still reads the mark", () => {
+  // At the recorded version the start runs no refresh; its wait for the adapters lock throws.
+  const staged = (marked: boolean) => {
+    const f = fixture([RUNTIMES.copilot], { stale: false });
+    updateState(f.paths, (state) => {
+      state.adapters = { [engineRoot]: VERSION };
+    });
+    mkdirSync(join(f.paths.localDir, "adapters"), { recursive: true });
+    if (marked) noteUpdated(f.paths, "/r/other", copilotEntry(f.project, "1.2.3"));
+    write(f.project, SKILL_PAGE, "# edited and not committed\n");
+    return f;
+  };
+  const notChecked = (f: { paths: ReturnType<typeof repoPaths> }) =>
+    `not checked (${quoted(`EACCES: permission denied, mkdir '${join(f.paths.localDir, "adapters", ".lock")}'`)})`;
+  const marked = staged(true);
+  const text = readOnly(join(marked.paths.localDir, "adapters"), () => context(start(marked)));
+  expect(
+    afterEngine(text).startsWith(
+      `adapters: copilot updated by crew 1.2.3 and not committed; ${notChecked(marked)}. Commit: git add -A -- '.agents/skills/crew-method' && git commit -m 'adapters refreshed by crew 1.2.3'. `,
+    ),
+  ).toBe(true);
+  // With no mark the text is the one of before, and nothing else of the context changes.
+  const bare = staged(false);
+  const thrown = readOnly(join(bare.paths.localDir, "adapters"), () => context(start(bare)));
+  const sentence = `adapters: ${notChecked(bare)}. `;
+  expect(thrown).toContain(sentence);
+  const plain = context(start(bare));
+  expect(plain).not.toContain("adapters:");
+  expect(thrown.replace(sentence, "")).toBe(plain);
+});
+
+test("2026-11-09-003 AC-21: a runtime of the root's entry that the same refresh did not update is named, and the command covers it", () => {
+  const f = fixture([RUNTIMES.codex, RUNTIMES.copilot], { stale: false });
+  // Codex's configuration goes, so its adapter is no longer this root's; the skill is made stale.
+  rmSync(join(f.project, RUNTIMES.codex.config.project));
+  write(f.project, SKILL_PAGE, "# stale\n");
+  git(f.project, "add", "-A");
+  git(f.project, "commit", "-q", "-m", "codex's configuration gone, the skill stale");
+  updateState(f.paths, (state) => {
+    state.adapters = { [engineRoot]: "0.0.1" };
+  });
+  noteUpdated(f.paths, engineRoot, {
+    ...copilotEntry(f.project, VERSION),
+    runtimes: [{ name: "codex", config: false }],
+  });
+  write(f.project, ".codex/agents/crew-x.md", "new\n");
+  const text = afterEngine(context(start(f)));
+  expect(text).toContain("copilot updated (");
+  expect(text).toContain("; codex updated earlier and not committed");
+  const command = text.slice(text.indexOf(". Commit: "));
+  expect(command).toContain("'.codex/agents/crew-*'");
+  expect(command).toContain("'.agents/skills/crew-method'");
 });

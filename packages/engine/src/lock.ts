@@ -25,6 +25,12 @@ function ageOf(path: string): number | null {
   }
 }
 
+/** Whether a lock on `dir` is held now: its folder exists and is not older than the stale age. */
+export function lockHeld(dir: string): boolean {
+  const age = ageOf(join(dir, ".lock"));
+  return age !== null && age <= LOCK_STALE_MS;
+}
+
 /**
  * Breaks a stale lock under a lock of its own, `<lock>.break` (finding 133): two processes that
  * both read the lock as stale would otherwise both remove it, the second removing the fresh lock
