@@ -662,12 +662,20 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     {
       n: 11,
       name: RELEASE_STEP_NAMES[10],
-      command: `tar xzf ${archive} beside ${install} and swap it in by rename (skipped when absent)`,
+      command: `tar xzf ${archive} beside ${install} and swap it in by rename, the replaced install kept as ${install}.previous (skipped when absent)`,
       run: () => {
+        const previous = `${install}.previous`;
+        // A swap cut between its two renames leaves the previous install and no install (item
+        // 2026-11-09-001, AC-30): the previous one is put back and said, and the swap goes on.
+        if (!existsSync(install) && existsSync(previous)) {
+          renameSync(previous, install);
+          log(
+            "  11. the local install was missing and its previous one was put back (a swap cut short)",
+          );
+        }
         if (!existsSync(install)) return null;
         // Staged beside the install, on the same device, and put back when the swap fails.
         const staging = mkdtempSync(join(dirname(install), `.${PLUGIN_NAME}-next-`));
-        const previous = `${install}.previous`;
         try {
           const extracted = ok(
             sh(["tar", "xzf", join(root, archive), "-C", staging]),
@@ -675,6 +683,17 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
             11,
           );
           if (extracted) return extracted;
+          // The install already is this release (a resumed step 11, AC-23): the staged bundle and
+          // the installed one are the same bytes, and a swap would put the install just made in
+          // the place of the rollback target.
+          const staged = join(staging, PLUGIN_NAME, "dist", "crew.mjs");
+          const installed = join(install, "dist", "crew.mjs");
+          if (
+            existsSync(staged) &&
+            existsSync(installed) &&
+            sha256(readFileSync(staged)) === sha256(readFileSync(installed))
+          )
+            return null;
           rmSync(previous, { recursive: true, force: true });
           renameSync(install, previous);
           try {
@@ -683,7 +702,8 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
             renameSync(previous, install);
             return `the swap failed and the earlier install is back: ${(error as Error).message}`;
           }
-          rmSync(previous, { recursive: true, force: true });
+          // The replaced install stays beside the new one, the rollback target until the next
+          // release's step 11 replaces it (AC-20).
           return null;
         } finally {
           rmSync(staging, { recursive: true, force: true });
@@ -710,16 +730,28 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           env: { HOME: home },
         });
         const count = r.stdout.split("\n").find((l) => /^\d+ updated, /.test(l));
-        // The project lines come first, before the user scope's line: what a killed run printed.
+        // The project lines come first; the fleet writes the user scope's line as soon as the
+        // last project is done, then the count line and the commit lines.
         const userLine = r.stdout.indexOf("user scope: ");
         const printed = (userLine >= 0 ? r.stdout.slice(0, userLine) : r.stdout)
           .split("\n")
-          .filter((l) => l.trim() !== "").length;
-        // What a kill leaves is read in the log, line by line (the count line and the commit lines
-        // come last, so a killed run has neither): the notification says only what is certain.
-        if (r.signal)
-          projectCounts = `cut at the bound (killed by ${r.signal} after ${printed} project lines, which the release's log keeps; a project may be written in part and the commit lines are lost; the rest not updated)`;
-        else if (count) projectCounts = r.status === 0 ? count : `${count} (exit ${r.status})`;
+          .filter((l) => l.trim() !== "");
+        // What a kill leaves (item 2026-11-09-001, AC-17): the notification says only what the
+        // output proves. With no user scope line the run may have been cut between two projects
+        // or after the last one, so it does not say the rest was not updated. The projects updated
+        // before the kill hold the not-committed mark, so their own sessions print the command.
+        if (r.signal) {
+          const killed = `killed by ${r.signal}`;
+          const reminded = "each updated project's sessions print its commit command";
+          const listed = "by crew projects update --dry-run";
+          if (count) projectCounts = `${count} (${killed} after the count line)`;
+          else if (userLine >= 0)
+            projectCounts = `cut at the bound (${killed} after every project's line, ${printed.length} of them; the count line was not printed; ${reminded})`;
+          else if (printed.length === 0)
+            projectCounts = `cut at the bound (${killed} before any project line; the first project listed ${listed} may be written in part and no other is updated)`;
+          else
+            projectCounts = `cut at the bound (${killed} after ${printed.length} project lines, the last one "${(printed.at(-1) ?? "").slice(0, 160)}"; any project listed after it ${listed} may be written in part or not updated; ${reminded})`;
+        } else if (count) projectCounts = r.status === 0 ? count : `${count} (exit ${r.status})`;
         else if (r.status === 0) projectCounts = "done";
         else {
           const first = (r.stderr.trim() || r.stdout.trim()).split("\n")[0] ?? "";

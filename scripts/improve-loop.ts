@@ -36,6 +36,7 @@ import {
   type DeadTick,
   type ImproveState,
   improveHome,
+  type PendingRelease,
   readStateAt,
 } from "./improve-home.ts";
 import {
@@ -1130,6 +1131,36 @@ function pruneDatedLogs(home: string, now: Date): void {
 }
 
 /**
+ * A pending release at a step, with the step's name beside its number (item 2026-11-09-001,
+ * AC-19): the name is what a resume looks for once the release's steps were renumbered.
+ */
+function pendingAt(version: string, failedStep: number): PendingRelease {
+  const failedName = RELEASE_STEP_NAMES[failedStep - 1];
+  return { version, failedStep, ...(failedName === undefined ? {} : { failedName }) };
+}
+
+/**
+ * Where a pending release resumes, and the log line that says it (item 2026-11-09-001, AC-19): at
+ * the stored number while its name still stands there, or when no name was stored (a state an
+ * older loop wrote); at the step that carries the name now; with no `fromStep`, which is the first
+ * step after the push, when the name is gone from the release.
+ */
+export function resumeFrom(pending: PendingRelease): { fromStep?: number; line: string } {
+  const { version, failedStep, failedName } = pending;
+  if (failedName === undefined || RELEASE_STEP_NAMES[failedStep - 1] === failedName)
+    return { fromStep: failedStep, line: `resuming release ${version} from step ${failedStep}` };
+  const index = (RELEASE_STEP_NAMES as readonly string[]).indexOf(failedName);
+  if (index >= 0)
+    return {
+      fromStep: index + 1,
+      line: `resuming release ${version}: step "${failedName}" is now step ${index + 1}`,
+    };
+  return {
+    line: `resuming release ${version}: step "${failedName}" is gone from the release; resumed from the first step after the push`,
+  };
+}
+
+/**
  * One tick of the loop (AC-5, AC-16): the lock, the logs, the back-off, the clone, the probe, the
  * pause, the clone brought to origin/main, a pending release resumed, the decision, the run (on
  * record before anything can fail), the record and the report committed and pushed, the adoption
@@ -1403,12 +1434,13 @@ export async function tick(
     }
     // A release left pending after its push is resumed first; one with nothing to resume is cleared.
     if (state.pendingRelease) {
-      const { version, failedStep } = state.pendingRelease;
-      log(`resuming release ${version} from step ${failedStep}`);
+      const { version } = state.pendingRelease;
+      const from = resumeFrom(state.pendingRelease);
+      log(from.line);
       const resumed = await deps.release({
         root: repo,
         resume: version,
-        fromStep: failedStep,
+        ...(from.fromStep === undefined ? {} : { fromStep: from.fromStep }),
         reason: `resumed release ${version}`,
         githubAccount: config.marketplace.account,
       });
@@ -1416,7 +1448,7 @@ export async function tick(
         state.pendingRelease = null;
         day.releases.push({ version, run: "resumed" });
       } else if (resumed.failedStep !== null)
-        state.pendingRelease = { version, failedStep: resumed.failedStep };
+        state.pendingRelease = pendingAt(version, resumed.failedStep);
       else {
         state.pendingRelease = null;
         log(`nothing to resume for ${version}: cleared`);
@@ -1569,7 +1601,7 @@ export async function tick(
               state.pendingRelease = null;
               day.releases.push({ version: outcome.version, run: latest.run });
             } else if (outcome.pending && failure) {
-              state.pendingRelease = { version: outcome.version, failedStep: failure.step };
+              state.pendingRelease = pendingAt(outcome.version, failure.step);
               day.failures.push(failure);
             } else {
               // Before the push: the merge goes, the adoption's files stay on the main that was.
@@ -1999,7 +2031,7 @@ export function statusText(deps: InstallDeps): string {
   );
   lines.push(
     state.pendingRelease
-      ? `pending release: ${state.pendingRelease.version} at step ${state.pendingRelease.failedStep} (${RELEASE_STEP_NAMES[state.pendingRelease.failedStep - 1]})`
+      ? `pending release: ${state.pendingRelease.version} at step ${state.pendingRelease.failedStep} (${state.pendingRelease.failedName ?? RELEASE_STEP_NAMES[state.pendingRelease.failedStep - 1]})`
       : "pending release: none",
   );
   const stderrNote = agentStderrNote(home, state);

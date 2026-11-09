@@ -11,6 +11,11 @@ export function improveHome(env: NodeJS.ProcessEnv = process.env): string {
 export interface PendingRelease {
   version: string;
   failedStep: number;
+  /**
+   * The failed step's name in `RELEASE_STEP_NAMES` when the release failed (item 2026-11-09-001):
+   * a resume finds the step by it after the list changed. Absent in a state an older loop wrote.
+   */
+  failedName?: string;
 }
 
 /** The day's releases and failed steps, for the report (D-7). */

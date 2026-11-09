@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -397,11 +406,13 @@ test("2026-10-25-005 AC-7: a patch release writes the version into every release
   expect(log.join("\n")).not.toContain("ghp_SECRET");
   expect(world.tokened.length).toBeGreaterThan(0);
   for (const c of world.tokened) expect(c[0]).toBe("gh");
-  // Step 11: the local install swapped by rename, nothing of the old left beside it.
+  // Step 11: the local install swapped by rename, the one it replaced kept beside it (item 2026-11-09-001, AC-20).
   expect(
     readFileSync(join(home, ".local/share/wizardingcode-developer-crew/bin/crew"), "utf8"),
   ).toBe("new");
-  expect(existsSync(join(home, ".local/share/wizardingcode-developer-crew.previous"))).toBe(false);
+  expect(
+    readFileSync(join(home, ".local/share/wizardingcode-developer-crew.previous/bin/crew"), "utf8"),
+  ).toBe("old");
   // Step 13: the notification names the version.
   const notify = seen.find((c) => c[0] === "osascript") as string[];
   expect(notify.join(" ")).toContain(`crew ${NEW}`);
@@ -1045,6 +1056,27 @@ test("2026-11-01-003 AC-43: step 5 commits only what the release wrote on the co
   expect(sh(tracked.root, "status", "--porcelain").trim()).toBe("");
 });
 
+/**
+ * One patch release whose install answers `crew projects update` as given (step 12): the exit, the
+ * log, the notification, and the command and options step 12 ran with.
+ */
+async function projectUpdateAnswers(
+  update: ReturnType<CommandRunner> | undefined,
+  tar: { installBundle?: boolean } = { installBundle: true },
+) {
+  const { root, home } = fixture();
+  const at = runner(root, undefined, undefined, {}, { ...tar, projectsUpdate: update });
+  const log: string[] = [];
+  const code = await release(
+    { root, bump: "patch", reason: "x", home, githubAccount: "andreagroferreira" },
+    { run: at.run, log: (l) => log.push(l) },
+  );
+  const notify = (at.seen.find((c) => c[0] === "osascript") ?? []).join(" ");
+  const update12 = at.seen.find((c) => c[0] === "node" && c.includes("projects"));
+  const opts12 = at.seenOpts[at.seen.findIndex((c) => c[0] === "node" && c.includes("projects"))];
+  return { code, log, notify, update12, opts12, home };
+}
+
 test("2026-11-08-002 AC-6: the project update runs before the notification, soft and bounded", async () => {
   // The plan: thirteen steps, the update twelfth, from the tarball install's bundle.
   const planned = fixture();
@@ -1065,22 +1097,7 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
   // notification carries its count line.
   const count =
     "1 updated, 0 would update, 2 up to date, 0 stale, 0 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone";
-  const answers = async (
-    update: ReturnType<CommandRunner> | undefined,
-    tar: { installBundle?: boolean } = { installBundle: true },
-  ) => {
-    const { root, home } = fixture();
-    const at = runner(root, undefined, undefined, {}, { ...tar, projectsUpdate: update });
-    const log: string[] = [];
-    const code = await release(
-      { root, bump: "patch", reason: "x", home, githubAccount: "andreagroferreira" },
-      { run: at.run, log: (l) => log.push(l) },
-    );
-    const notify = (at.seen.find((c) => c[0] === "osascript") ?? []).join(" ");
-    const update12 = at.seen.find((c) => c[0] === "node" && c.includes("projects"));
-    const opts12 = at.seenOpts[at.seen.findIndex((c) => c[0] === "node" && c.includes("projects"))];
-    return { code, log, notify, update12, opts12, home };
-  };
+  const answers = projectUpdateAnswers;
   const ok = await answers({ status: 0, exit: 0, stdout: `${count}\n`, stderr: "" });
   expect(ok.code, ok.log.join("\n")).toBe(0);
   expect(ok.update12).toEqual([
@@ -1127,7 +1144,7 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
   });
   expect(killed.code).toBe(0);
   expect(killed.notify).toContain(
-    "projects: cut at the bound (killed by SIGTERM after 2 project lines, which the release's log keeps; a project may be written in part and the commit lines are lost; the rest not updated)",
+    'projects: cut at the bound (killed by SIGTERM after 2 project lines, the last one \\"b /y: up to date\\"; any project listed after it by crew projects update --dry-run may be written in part or not updated; each updated project\'s sessions print its commit command)',
   );
   // Status 0 and no output at all: done.
   const silent = await answers({ status: 0, exit: 0, stdout: "", stderr: "" });
@@ -1185,4 +1202,121 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
   expect((from12.seen.find((c) => c[0] === "osascript") ?? []).join(" ")).toContain(
     `projects: ${count}`,
   );
+});
+
+// Item 2026-11-09-001, Task 5: the release keeps the install it replaced and says what a kill left (AC-17, AC-20, AC-23, AC-30).
+
+const LOCAL_INSTALL = ".local/share/wizardingcode-developer-crew";
+const fullRelease = (root: string, home: string) => ({
+  root,
+  bump: "patch" as const,
+  reason: "x",
+  home,
+  githubAccount: "andreagroferreira",
+});
+
+test("2026-11-09-001 AC-17: a killed project update says what is certain", async () => {
+  const killedBy = (stdout: string) =>
+    projectUpdateAnswers({ status: 1, exit: null, stdout, stderr: "", signal: "SIGTERM" });
+  // Killed before any project line.
+  const none = await killedBy("");
+  expect(none.code).toBe(0);
+  expect(none.log).toContain("  13. the notification: ok");
+  expect(none.notify).toContain(
+    "projects: cut at the bound (killed by SIGTERM before any project line; the first project listed by crew projects update --dry-run may be written in part and no other is updated)",
+  );
+  // Killed after every project's line: the user scope line is out, the count line is not.
+  const scoped = await killedBy("a /x: up to date\nuser scope: no adapter on this root\n");
+  expect(scoped.code).toBe(0);
+  expect(scoped.log).toContain("  13. the notification: ok");
+  expect(scoped.notify).toContain(
+    "projects: cut at the bound (killed by SIGTERM after every project's line, 1 of them; the count line was not printed; each updated project's sessions print its commit command)",
+  );
+  // Killed after the count line: the count stands.
+  const count =
+    "0 updated, 0 would update, 1 up to date, 0 stale, 0 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone";
+  const counted = await killedBy(
+    `a /x: up to date\nuser scope: no adapter on this root\n${count}\n`,
+  );
+  expect(counted.code).toBe(0);
+  expect(counted.log).toContain("  13. the notification: ok");
+  expect(counted.notify).toContain(`projects: ${count} (killed by SIGTERM after the count line)`);
+  // A long project line is cut to 160 characters.
+  const long = `p /${"x".repeat(300)}: up to date`;
+  const cut = await killedBy(`${long}\n`);
+  expect(cut.notify).toContain(
+    `killed by SIGTERM after 1 project lines, the last one \\"${long.slice(0, 160)}\\"; any project listed after it`,
+  );
+  expect(cut.notify).not.toContain(long.slice(0, 161));
+});
+
+test("2026-11-09-001 AC-20: the replaced install is kept, and a failed swap puts it back", async () => {
+  const { root, home } = fixture();
+  const install = join(home, LOCAL_INSTALL);
+  // What an earlier release left beside the install.
+  mkdirSync(join(`${install}.previous`, "bin"), { recursive: true });
+  writeFileSync(join(`${install}.previous`, "bin", "crew"), "older");
+  const at = runner(root);
+  expect(await release(fullRelease(root, home), { run: at.run, log: () => {} })).toBe(0);
+  expect(readFileSync(join(install, "bin", "crew"), "utf8")).toBe("new");
+  expect(readFileSync(join(`${install}.previous`, "bin", "crew"), "utf8")).toBe("old");
+  // A tar that extracts nothing: the second rename fails and the earlier install is back.
+  const failing = fixture();
+  const log: string[] = [];
+  const empty = runner(failing.root, (cmd) =>
+    cmd[0] === "tar" ? { status: 0, exit: 0, stdout: "", stderr: "" } : false,
+  );
+  await release(fullRelease(failing.root, failing.home), {
+    run: empty.run,
+    log: (l) => log.push(l),
+  });
+  expect(log.some((l) => l.includes("the swap failed and the earlier install is back"))).toBe(true);
+  expect(readFileSync(join(failing.home, LOCAL_INSTALL, "bin", "crew"), "utf8")).toBe("old");
+});
+
+test("2026-11-09-001 AC-23: a resumed step 11 leaves the rollback target", async () => {
+  const { root, home } = fixture();
+  const install = join(home, LOCAL_INSTALL);
+  const first = runner(root, undefined, undefined, {}, { installBundle: true });
+  expect(await release(fullRelease(root, home), { run: first.run, log: () => {} })).toBe(0);
+  expect(readFileSync(join(`${install}.previous`, "bin", "crew"), "utf8")).toBe("old");
+  // Step 11 again for the release already installed: the staged bundle equals the installed one.
+  const again = runner(root, undefined, undefined, {}, { installBundle: true });
+  again.world.released.add(`v${NEW}`);
+  expect(
+    await release(
+      { root, resume: NEW, fromStep: 11, reason: "x", home },
+      { run: again.run, log: () => {} },
+    ),
+  ).toBe(0);
+  expect(readFileSync(join(install, "bin", "crew"), "utf8")).toBe("new");
+  expect(readFileSync(join(`${install}.previous`, "bin", "crew"), "utf8")).toBe("old");
+  expect(
+    readdirSync(dirname(install)).filter((n) =>
+      n.startsWith(".wizardingcode-developer-crew-next-"),
+    ),
+  ).toEqual([]);
+});
+
+test("2026-11-09-001 AC-30: a swap cut short is put back and finished", async () => {
+  const { root, home } = fixture();
+  const install = join(home, LOCAL_INSTALL);
+  // What a kill between the two renames leaves: the previous install and no install.
+  renameSync(install, `${install}.previous`);
+  const log: string[] = [];
+  const at = runner(root);
+  expect(await release(fullRelease(root, home), { run: at.run, log: (l) => log.push(l) })).toBe(0);
+  expect(log).toContain(
+    "  11. the local install was missing and its previous one was put back (a swap cut short)",
+  );
+  expect(readFileSync(join(install, "bin", "crew"), "utf8")).toBe("new");
+  expect(readFileSync(join(`${install}.previous`, "bin", "crew"), "utf8")).toBe("old");
+  // Neither folder: no install to swap, and no tar runs.
+  const none = fixture();
+  rmSync(join(none.home, LOCAL_INSTALL), { recursive: true });
+  const bare = runner(none.root);
+  expect(await release(fullRelease(none.root, none.home), { run: bare.run, log: () => {} })).toBe(
+    0,
+  );
+  expect(bare.seen.some((c) => c[0] === "tar")).toBe(false);
 });

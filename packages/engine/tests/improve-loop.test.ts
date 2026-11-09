@@ -734,6 +734,8 @@ type Seen = {
   ceilings: (number | undefined)[];
   judge: number;
   release: string[];
+  /** The step each resumed release was asked to start from, `undefined` when none was passed (2026-11-09-001 AC-19). */
+  fromSteps: (number | undefined)[];
   accounts: (string | undefined)[];
   log: string[];
 };
@@ -768,6 +770,8 @@ function tickDeps(
     relaunchStatus?: number;
     /** The run receives the stop's SIGTERM: the improve stub invokes the tick's handler (2026-10-28-001 AC-7). */
     signalDuringRun?: boolean;
+    /** A resumed release fails again at this step (2026-11-09-001 AC-19). */
+    resumeFails?: number;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
   const seen: Seen = {
@@ -778,6 +782,7 @@ function tickDeps(
     ceilings: [],
     judge: 0,
     release: [],
+    fromSteps: [],
     accounts: [],
     log: [],
   };
@@ -896,7 +901,12 @@ function tickDeps(
       seen.release.push(opts.reason);
       seen.accounts.push(opts.githubAccount);
       const version = "0.15.1";
-      if (opts.resume) return { version, code: 0, failedStep: null, pending: false };
+      if (opts.resume) {
+        seen.fromSteps.push(opts.fromStep);
+        return options.resumeFails === undefined
+          ? { version, code: 0, failedStep: null, pending: false }
+          : { version, code: 1, failedStep: options.resumeFails, pending: true };
+      }
       if ((options.releaseCode ?? 0) === 0) {
         // The release commits and pushes like the real one: the version file and the tag.
         writeFileSync(join(opts.root, "package.json"), '{ "name": "r", "version": "0.15.1" }\n');
@@ -1028,7 +1038,11 @@ test("2026-10-25-005 AC-5 (adoption in the tick): a kept harness goes through th
   const failed = tickDeps(second, { kept: true, releaseCode: 1 });
   expect(await tick({}, failed.deps)).toBe(0);
   const state = JSON.parse(readFileSync(join(second.home, "state.json"), "utf8"));
-  expect(state.pendingRelease).toEqual({ version: "0.15.1", failedStep: 9 });
+  expect(state.pendingRelease).toEqual({
+    version: "0.15.1",
+    failedStep: 9,
+    failedName: "the marketplace entry",
+  });
   const notifyFailed = failed.seen.sh.find((c) => c[0] === "osascript") as string[];
   expect(notifyFailed.join(" ")).toContain("the release did not finish");
   expect(git(second.origin, "branch", "--list", "improve/2026-10-25-1").trim()).toBe(
@@ -1305,6 +1319,19 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   expect(text).toContain("pending release: 0.15.1 at step 9 (the marketplace entry)");
   expect(text).toContain("next: ");
   expect(text).toContain("today: ");
+  // The name stored with the pending release is the one printed, whatever the step list says of
+  // that number now (2026-11-09-001 AC-19).
+  const stored = JSON.parse(readFileSync(join(home, "state.json"), "utf8"));
+  writeFileSync(
+    join(home, "state.json"),
+    JSON.stringify({
+      ...stored,
+      pendingRelease: { version: "0.15.1", failedStep: 12, failedName: "the notification" },
+    }),
+  );
+  expect(statusText(installDeps(home, null).deps)).toContain(
+    "pending release: 0.15.1 at step 12 (the notification)",
+  );
 });
 
 test("2026-10-25-010 AC-1: a tick never removes the loop it runs from: origin/main without scripts/improve-loop.ts leaves the clone at its commit, and the sync proceeds once the loop is on main", async () => {
@@ -2618,4 +2645,61 @@ test("2026-10-30-001 AC-28: a pending release resumes whatever the shell's state
   const resumed = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", shellInstallFails: true });
   await tick({}, resumed.deps);
   expect(resumed.seen.log.join("\n")).toContain("resuming release 9.9.9 from step 3");
+});
+
+// Item 2026-11-09-001, Task 5: a pending release resumes by the step's name (AC-19).
+
+test("2026-11-09-001 AC-19: a pending release resumes by the step's name", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  const stateFile = join(world.home, "state.json");
+  // Each tick an hour after the one before, from 21:00 on the day of the first.
+  let hours = 0;
+  /** One tick over a state that holds the pending release: what the release was asked, what was logged, the state left. */
+  const resume = async (pending: Record<string, unknown>, resumeFails?: number) => {
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    writeFileSync(
+      stateFile,
+      JSON.stringify({ ...state, pendingRelease: { version: "0.15.1", ...pending } }),
+    );
+    const at = tickDeps(world, {
+      now: new Date(Date.UTC(2026, 9, 25, 21 + hours++)).toISOString(),
+      ...(resumeFails === undefined ? {} : { resumeFails }),
+    });
+    await tick({}, at.deps);
+    return {
+      fromSteps: at.seen.fromSteps,
+      log: at.seen.log.join("\n"),
+      pending: JSON.parse(readFileSync(stateFile, "utf8")).pendingRelease ?? null,
+    };
+  };
+  // The step moved: the notification was step 12 when the release failed and is step 13 now.
+  const moved = await resume({ failedStep: 12, failedName: "the notification" });
+  expect(moved.fromSteps).toEqual([13]);
+  expect(moved.log).toContain('resuming release 0.15.1: step "the notification" is now step 13');
+  expect(moved.log).not.toContain("from step 12");
+  expect(moved.pending).toBeNull();
+  // The name stands where the number says: resumed as before.
+  const same = await resume({ failedStep: 9, failedName: "the marketplace entry" });
+  expect(same.fromSteps).toEqual([9]);
+  expect(same.log).toContain("resuming release 0.15.1 from step 9");
+  // A state an older loop wrote, with no name: the number.
+  const legacy = await resume({ failedStep: 9 });
+  expect(legacy.fromSteps).toEqual([9]);
+  expect(legacy.log).toContain("resuming release 0.15.1 from step 9");
+  // The step is gone from the release: from the first step after the push.
+  const gone = await resume({ failedStep: 9, failedName: "a step that is gone" });
+  expect(gone.fromSteps).toEqual([undefined]);
+  expect(gone.log).toContain(
+    'resuming release 0.15.1: step "a step that is gone" is gone from the release; resumed from the first step after the push',
+  );
+  expect(gone.log).not.toContain("from step 9");
+  // A resume that fails again keeps the new step with its name.
+  const again = await resume({ failedStep: 9, failedName: "the marketplace entry" }, 11);
+  expect(again.pending).toEqual({
+    version: "0.15.1",
+    failedStep: 11,
+    failedName: "the local install",
+  });
 });
