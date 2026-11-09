@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { noteUpdated, runtimePathspecs, type UncommittedEntry } from "./adapters-uncommitted.ts";
 import { appendDecision, lastEntryText, registerTampered } from "./decisions.ts";
-import { gitStatusEntries } from "./fingerprint.ts";
+import { baseCommitOf, gitStatusEntries } from "./fingerprint.ts";
 import { nowIso, readText } from "./fs.ts";
 import { LockBusy, withLock } from "./lock.ts";
 import { type CrewPaths, canonical } from "./paths.ts";
@@ -81,6 +82,12 @@ export interface Refresh {
   from: string | null;
   /** The running version. */
   version: string;
+  /** The running engine's root. */
+  root: string;
+  /** What this refresh updated, as the not-committed mark holds it (item 2026-11-09-001). */
+  entry?: UncommittedEntry;
+  /** Why the mark could not be written, quoted; the caller then reminds from `entry`. */
+  markFailed?: string;
 }
 
 /** The one path every root, path and message takes before it is shown: one line, no control or bidi character, 200 characters at most. */
@@ -138,15 +145,12 @@ function linkProblem(own: Own[], dirs: InstallDirs): string | null {
  * that is no repository, a changed or renamed path, an untracked one (an adapter installed and
  * never committed), an ignored one, or a status git could not read.
  */
-function gitHoldBack(own: Own[], paths: CrewPaths, dirs: InstallDirs): string | null {
+function gitHoldBack(own: Own[], paths: CrewPaths): string | null {
   if (!existsSync(join(paths.root, ".git"))) return "not a git repository";
+  // The same paths the not-committed mark watches, the configuration always among them.
   const pathspec = new Set<string>();
-  for (const a of own) {
-    pathspec.add(a.configPath);
-    pathspec.add(join(resolveScoped(a.runtime.skillsDir.project, dirs), "crew-method"));
-    if (a.runtime.agentsDir)
-      pathspec.add(join(resolveScoped(a.runtime.agentsDir.project, dirs), "crew-*"));
-  }
+  for (const a of own)
+    for (const spec of runtimePathspecs(a.runtime.name, true)) pathspec.add(join(paths.root, spec));
   let entries: ReturnType<typeof gitStatusEntries>;
   try {
     entries = gitStatusEntries(paths.root, { pathspec: [...pathspec], ignored: true });
@@ -256,6 +260,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     appended: false,
     from: loadState(paths).adapters?.[o.root] ?? null,
     version: o.version,
+    root: o.root,
   };
   const check = (runtime: Runtime, root: string) => checkRuntime(runtime, "project", dirs, root);
   const own: Own[] = [];
@@ -329,6 +334,16 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   };
   const lock = join(paths.localDir, "adapters");
   const lockOptions = { what: "adapter refresh", waitMs: LOCK_WAIT_MS };
+  // The register entry of a run that installed nothing, under the adapters lock. When another
+  // process holds the lock this run does not write the entry, and the next refresh writes it.
+  const entryUnderLock = () => {
+    if (o.dryRun) return;
+    try {
+      withLock(lock, writeEntry, lockOptions);
+    } catch (error) {
+      if (!(error instanceof LockBusy)) throw error;
+    }
+  };
   // A configuration the install would refuse (not JSON) is refused here, on the real run and the
   // dry run alike, so the dry run predicts it and nothing is installed over it; an adapter whose
   // event fails is failed with the event's line, and nothing is installed for it.
@@ -373,13 +388,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   // what it prevented, and here it prevents no install: the refusal and the failure, which the
   // first check made, stand as they do at step 8, and the entry is appended by the next refresh.
   if (toInstall.length === 0) {
-    if (!o.dryRun) {
-      try {
-        withLock(lock, writeEntry, lockOptions);
-      } catch (error) {
-        if (!(error instanceof LockBusy)) throw error;
-      }
-    }
+    entryUnderLock();
     return finish();
   }
   // 5: a link or a path outside the project refuses every own-root adapter.
@@ -387,17 +396,11 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   if (problem) {
     for (const a of own) set(a, "refused", problem);
     // The refusal stands under a busy lock too: the lock guards the entry, which the next refresh appends.
-    if (!o.dryRun) {
-      try {
-        withLock(lock, writeEntry, lockOptions);
-      } catch (error) {
-        if (!(error instanceof LockBusy)) throw error;
-      }
-    }
+    entryUnderLock();
     return finish();
   }
   // 6: the adapters' git status holds a write back.
-  const held = gitHoldBack(own, paths, dirs);
+  const held = gitHoldBack(own, paths);
   if (held) {
     for (const a of toInstall) set(a, "stale", held);
     return finish();
@@ -414,10 +417,25 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     for (const a of toInstall) set(a, "stale", "time budget");
     return finish();
   }
+  // The not-committed mark (item 2026-11-09-001): written right after each install, before the
+  // version is recorded and the register entry appended, so a throw of either, or a kill after an
+  // install, leaves the reminder. With no commit to name there is nothing to tie a change to, and
+  // no mark. A write that fails is said once and never undoes the refresh.
+  const at = nowIso();
+  let head: string | null = null;
+  const mark = (runtimes: UncommittedEntry["runtimes"], register: boolean) => {
+    if (head === null) return;
+    try {
+      noteUpdated(paths, o.root, { version: o.version, at, head, runtimes, register });
+    } catch (error) {
+      refresh.markFailed ??= quoted((error as Error).message);
+    }
+  };
   try {
     withLock(
       lock,
       () => {
+        head = baseCommitOf(paths.root);
         const still = toInstall.filter((a) => {
           if (isStale(check(a.runtime, a.root))) return true;
           set(a, "up to date");
@@ -427,7 +445,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
           const again = linkProblem(own, dirs);
           if (again) for (const a of own) set(a, "refused", again);
           else {
-            const heldNow = gitHoldBack(own, paths, dirs);
+            const heldNow = gitHoldBack(own, paths);
             if (heldNow) for (const a of still) set(a, "stale", heldNow);
             else {
               let budgetOut = false;
@@ -444,13 +462,14 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
                     continue;
                   }
                   const after = check(a.runtime, a.root);
-                  if (after.ok)
+                  if (after.ok) {
                     set(a, "updated", undefined, {
                       removed: done.removed.length,
                       configWritten: done.configWritten,
                       ...(done.configWritten && a.runtime.trust ? { trust: a.runtime.trust } : {}),
                     });
-                  else set(a, "failed", quoted(after.problems[0] ?? "the check is not ok"));
+                    mark([{ name: a.runtime.name, config: done.configWritten }], false);
+                  } else set(a, "failed", quoted(after.problems[0] ?? "the check is not ok"));
                 } catch (error) {
                   const message = quoted((error as Error).message);
                   set(
@@ -471,6 +490,14 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
           refresh.recorded = true;
         }
         writeEntry();
+        // What the run updated, whole, for a caller whose mark could not be written; the mark
+        // learns here that the register entry was appended.
+        const updated = all.filter((r) => r.status === "updated");
+        if (updated.length && head !== null) {
+          const runtimes = updated.map((r) => ({ name: r.runtime, config: r.configWritten }));
+          refresh.entry = { version: o.version, at, head, runtimes, register: refresh.appended };
+          if (refresh.appended) mark(runtimes, true);
+        }
       },
       lockOptions,
     );

@@ -23,6 +23,7 @@ import {
   type RefreshOptions,
   refreshAdapters,
 } from "../src/adapters.ts";
+import { markPath, type UncommittedEntry } from "../src/adapters-uncommitted.ts";
 import { appendDecision, listDecisions } from "../src/decisions.ts";
 import { nowIso } from "../src/fs.ts";
 import { withLock } from "../src/lock.ts";
@@ -826,4 +827,116 @@ test("2026-11-08-002 AC-13 (the judgement's round 4): a link refusal stands unde
   const after = refreshAdapters(f.paths, options(f));
   expect(result(after, "copilot")?.status).toBe("refused");
   expect(after.appended).toBe(true);
+});
+
+// Item 2026-11-09-001, Task 1: the refresh writes the not-committed mark (AC-1, AC-21, AC-28).
+
+const markOf = (paths: CrewPaths) =>
+  JSON.parse(readFileSync(markPath(paths), "utf8")) as Record<string, UncommittedEntry>;
+
+test("2026-11-09-001 AC-1: an update writes the mark and nothing else does", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  const before = git(f.project, "rev-parse", "HEAD");
+  const refresh = refreshAdapters(f.paths, options(f));
+  expect(result(refresh, "copilot")?.status).toBe("updated");
+  const entry = markOf(f.paths)[f.root];
+  expect(entry).toEqual({
+    version: VERSION,
+    at: expect.any(String),
+    head: before,
+    runtimes: [{ name: "copilot", config: false }],
+    register: true,
+  });
+  expect(refresh.entry).toEqual(entry as UncommittedEntry);
+  expect(refresh.root).toBe(f.root);
+  const state = JSON.parse(readFileSync(join(f.paths.localDir, "state.json"), "utf8"));
+  for (const key of Object.keys(state))
+    expect(["active", "sessions", "working", "adapters"]).toContain(key);
+  // The configuration written: the entry says so.
+  const config = fixture([RUNTIMES.copilot], { staleConfig: true });
+  refreshAdapters(config.paths, options(config));
+  expect(markOf(config.paths)[config.root]?.runtimes).toEqual([{ name: "copilot", config: true }]);
+  // No mark: a dry run, a held-back refresh, a refresh with nothing to update.
+  const dry = fixture([RUNTIMES.copilot]);
+  expect(
+    result(refreshAdapters(dry.paths, options(dry, { dryRun: true })), "copilot")?.status,
+  ).toBe("would update");
+  expect(existsSync(markPath(dry.paths))).toBe(false);
+  const held = fixture([RUNTIMES.copilot]);
+  expect(
+    result(refreshAdapters(held.paths, options(held, { activeItem: true })), "copilot")?.status,
+  ).toBe("stale");
+  expect(existsSync(markPath(held.paths))).toBe(false);
+  const current = fixture([RUNTIMES.copilot], { stale: false });
+  expect(result(refreshAdapters(current.paths, options(current)), "copilot")?.status).toBe(
+    "up to date",
+  );
+  expect(existsSync(markPath(current.paths))).toBe(false);
+});
+
+test("2026-11-09-001 AC-21: one adapter updated and another refused or failed still writes the mark", () => {
+  // Codex's configuration cut to invalid JSON: refused before any install; Copilot is updated.
+  const refused = fixture([RUNTIMES.copilot, RUNTIMES.codex], { staleConfig: true });
+  const codexConfig = join(refused.project, RUNTIMES.codex.config.project);
+  writeFileSync(codexConfig, readFileSync(codexConfig, "utf8").trimEnd().replace(/\}$/, ""));
+  git(refused.project, "add", "-A");
+  git(refused.project, "commit", "-q", "-m", "a configuration no install accepts");
+  const refusedRefresh = refreshAdapters(refused.paths, options(refused));
+  expect(result(refusedRefresh, "copilot")?.status).toBe("updated");
+  expect(result(refusedRefresh, "codex")?.status).toBe("refused");
+  expect(markOf(refused.paths)[refused.root]?.runtimes).toEqual([
+    { name: "copilot", config: true },
+  ]);
+  expect(refusedRefresh.recorded).toBe(false);
+  expect(loadState(refused.paths).adapters).toBeUndefined();
+  // Codex's install throws: failed; Copilot is updated.
+  const failed = fixture([RUNTIMES.copilot, RUNTIMES.codex], { staleConfig: true });
+  const failedRefresh = refreshAdapters(
+    failed.paths,
+    options(failed, {
+      install: (runtime, ...rest) => {
+        if (runtime.name === "codex") throw new Error("disk full");
+        return installRuntime(runtime, ...rest);
+      },
+    }),
+  );
+  expect(result(failedRefresh, "copilot")?.status).toBe("updated");
+  expect(result(failedRefresh, "codex")?.status).toBe("failed");
+  expect(markOf(failed.paths)[failed.root]?.runtimes).toEqual([{ name: "copilot", config: true }]);
+  expect(failedRefresh.recorded).toBe(false);
+  expect(loadState(failed.paths).adapters).toBeUndefined();
+});
+
+test("2026-11-09-001 AC-28: the mark is written before the version is recorded", () => {
+  const f = fixture([RUNTIMES.copilot, RUNTIMES.codex], { staleConfig: true });
+  // The refresh installs in the table's order: Codex, then Copilot.
+  const seen: { runtimes?: unknown; register?: unknown; recorded?: unknown }[] = [];
+  const refresh = refreshAdapters(
+    f.paths,
+    options(f, {
+      install: (runtime, ...rest) => {
+        if (runtime.name === "copilot") {
+          const entry = existsSync(markPath(f.paths)) ? markOf(f.paths)[f.root] : undefined;
+          seen.push({
+            runtimes: entry?.runtimes,
+            register: entry?.register,
+            recorded: loadState(f.paths).adapters,
+          });
+        }
+        return installRuntime(runtime, ...rest);
+      },
+    }),
+  );
+  expect(result(refresh, "codex")?.status).toBe("updated");
+  expect(result(refresh, "copilot")?.status).toBe("updated");
+  expect(seen).toEqual([
+    { runtimes: [{ name: "codex", config: true }], register: false, recorded: undefined },
+  ]);
+  const entry = markOf(f.paths)[f.root];
+  expect(entry?.runtimes).toEqual([
+    { name: "codex", config: true },
+    { name: "copilot", config: true },
+  ]);
+  expect(entry?.register).toBe(true);
+  expect(loadState(f.paths).adapters?.[f.root]).toBe(VERSION);
 });
