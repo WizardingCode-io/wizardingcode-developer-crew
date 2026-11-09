@@ -1,6 +1,11 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
-import { noteUpdated, runtimePathspecs, type UncommittedEntry } from "./adapters-uncommitted.ts";
+import {
+  noteUpdated,
+  type Reminder,
+  runtimePathspecs,
+  type UncommittedEntry,
+} from "./adapters-uncommitted.ts";
 import { appendDecision, lastEntryText, registerTampered } from "./decisions.ts";
 import { baseCommitOf, gitStatusEntries } from "./fingerprint.ts";
 import { nowIso, readText } from "./fs.ts";
@@ -212,18 +217,27 @@ export function commitCommand(refresh: Refresh): string | null {
 }
 
 /**
- * The SessionStart line of a refresh, or null when every adapter is up to date and every foreign
- * one is on another root: each result, each foreign adapter that is not simply another engine's,
- * then once each the note that an update applies from the runtime's next session, the commit
- * command, and the hold-back suffixes that tell the person what ends the hold-back.
+ * The SessionStart line of the adapters, or null when there is nothing to say: each result of the
+ * refresh that is not up to date, each foreign adapter that is not simply another engine's, what
+ * the not-committed mark says is still to commit (left out for the root this same refresh
+ * updated, whose result already says it), a mark that could not be written or read, then once
+ * each the note that an update applies from the runtime's next session, the commit command the
+ * mark's reader built, and the hold-back suffixes that tell the person what ends the hold-back.
+ * With no reminder it says the parts and no command.
  */
-export function adaptersLine(refresh: Refresh, extra: string[] = []): string | null {
+export function adaptersLine(
+  refresh: Refresh | null,
+  extra: string[] = [],
+  reminder: Reminder | null = null,
+): string | null {
+  const results = refresh?.results ?? [];
+  const updated = results.some((r) => r.status === "updated");
   const parts: string[] = [];
-  for (const r of refresh.results) {
+  for (const r of results) {
     if (r.status === "up to date") continue;
     parts.push(`${resultText(r)}${r.status === "updated" && r.trust ? ` (${r.trust})` : ""}`);
   }
-  for (const f of refresh.foreign) {
+  for (const f of refresh?.foreign ?? []) {
     if (f.why === "another root") continue;
     if (f.why === "root unreadable") parts.push(foreignText(f));
     else
@@ -231,19 +245,23 @@ export function adaptersLine(refresh: Refresh, extra: string[] = []): string | n
         `${foreignText(f)}: run crew runtime install ${f.runtime} with the crew of the root to keep, such as ~/.local/share/wizardingcode-developer-crew/bin/crew`,
       );
   }
+  reminder?.parts.forEach((part, i) => {
+    if (!(updated && reminder.roots[i] === refresh?.root)) parts.push(part);
+  });
+  if (refresh?.markFailed)
+    parts.push(`the not-committed mark was not written (${refresh.markFailed})`);
+  if (reminder?.failed) parts.push(`not-committed check failed (${reminder.failed})`);
   parts.push(...extra);
   if (!parts.length) return null;
   let line = `adapters: ${parts.join("; ")}`;
-  if (refresh.results.some((r) => r.status === "updated"))
-    line += "; applies from each updated runtime's next session";
-  const commit = commitCommand(refresh);
-  if (commit) line += `. Commit: ${commit}`;
-  const whys = refresh.results.map((r) => r.why ?? "");
+  if (updated) line += "; applies from each updated runtime's next session";
+  if (reminder?.command) line += `. Commit: ${reminder.command}`;
+  const whys = results.map((r) => r.why ?? "");
   if (whys.includes("an item is active"))
     line += "; it is updated at a session start with no active item, or by crew projects update";
   if (whys.some((w) => w.startsWith("uncommitted changes")))
     line += "; commit or restore them first";
-  const never = refresh.results.find((r) => r.why?.startsWith("not committed"));
+  const never = results.find((r) => r.why?.startsWith("not committed"));
   if (never)
     line += `; commit them to adopt the adapter, or run crew runtime install ${never.runtime} again`;
   return `${line}.`;

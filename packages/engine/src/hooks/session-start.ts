@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { adaptersLine, quoted, refreshAdapters } from "../adapters.ts";
+import { uncommittedAdapters } from "../adapters-uncommitted.ts";
 import { appendDecision, lastEntryText } from "../decisions.ts";
 import {
   DEFAULT_WATCH_EXCLUDE,
@@ -113,11 +114,16 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       if (!(error instanceof LockBusy)) throw error;
       busy = true;
     }
-    adaptersText = refresh
-      ? adaptersLine(refresh, busy ? ["another session is updating"] : [])
-      : busy
-        ? "adapters: another session is updating."
-        : null;
+    // The mark of a refresh nobody committed yet (item 2026-11-09-001), read at every start and
+    // on any root: the reminder with its commit command, and the clean entries cleared. A refresh
+    // whose own mark could not be written reminds from the entry it holds.
+    const reminder = uncommittedAdapters(ctx.paths, {
+      clear: true,
+      ...(refresh?.markFailed && refresh.entry
+        ? { also: { root: refresh.root, entry: refresh.entry } }
+        : {}),
+    });
+    adaptersText = adaptersLine(refresh, busy ? ["another session is updating"] : [], reminder);
   } catch (error) {
     adaptersText = `adapters: not checked (${quoted((error as Error).message)}).`;
   }

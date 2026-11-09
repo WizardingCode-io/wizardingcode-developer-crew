@@ -5,7 +5,6 @@ import {
   lstatSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmdirSync,
   rmSync,
   symlinkSync,
@@ -155,21 +154,23 @@ test("2026-11-09-001 AC-9: a mark that cannot be trusted says nothing, a status 
   expect(uncommittedAdapters(p.paths, { clear: true })).toBeNull();
   rmdirSync(file);
 
-  // A status that fails: said through quotedText, the entry kept.
-  noteUpdated(p.paths, "/r/a", good);
-  renameSync(join(p.root, ".git"), join(p.root, ".git.away"));
-  mkdirSync(join(p.root, ".git"));
-  const failing = uncommittedAdapters(p.paths, { clear: true });
+  // A status that fails: said through quotedText, the entry kept. The folder never was a
+  // repository (an empty `.git` in it), so no git process of an earlier commit is still at work.
+  const broken = tempDir("crew-broken-git-");
+  write(broken, ".crew/.gitignore", "local/\n");
+  mkdirSync(join(broken, ".git"));
+  const brokenPaths = repoPaths(broken, testEnv());
+  noteUpdated(brokenPaths, "/r/a", good);
+  const failing = uncommittedAdapters(brokenPaths, { clear: true });
   expect(failing?.parts).toEqual([]);
   expect(failing?.command).toBeNull();
   expect(failing?.failed).toContain("not a git repository");
   expect(failing?.failed).not.toContain("\n");
   expect((failing?.failed ?? "").length).toBeLessThanOrEqual(200);
-  expect(readMarks(p.paths)["/r/a"]).toEqual(good);
-  rmdirSync(join(p.root, ".git"));
-  renameSync(join(p.root, ".git.away"), join(p.root, ".git"));
+  expect(readMarks(brokenPaths)["/r/a"]).toEqual(good);
 
   // A clean entry under a busy adapters lock stays; with the lock free it goes, and the file with it.
+  noteUpdated(p.paths, "/r/a", good);
   git(p.root, "checkout", "-q", "--", SKILL);
   const lock = join(p.paths.localDir, "adapters", ".lock");
   mkdirSync(lock);

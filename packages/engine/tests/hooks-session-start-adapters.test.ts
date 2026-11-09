@@ -1,16 +1,20 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { markPath, noteUpdated } from "../src/adapters-uncommitted.ts";
 import { listDecisions } from "../src/decisions.ts";
 import { adapterDeadline, onSessionStart } from "../src/hooks/session-start.ts";
 import { onStop } from "../src/hooks/stop.ts";
@@ -26,6 +30,7 @@ import {
 } from "../src/runtimes.ts";
 import { loadState, updateState } from "../src/state.ts";
 import { VERSION } from "../src/version.ts";
+import { createWork } from "../src/work.ts";
 import { git, hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 // Item 2026-11-08-002, Task 4: SessionStart refreshes the adapters before its baseline (AC-17, AC-4, AC-5, AC-21, AC-27, AC-11's SessionStart cases).
@@ -281,4 +286,227 @@ test("2026-11-08-002 timing: the adapter step with the five runtimes installed",
   const ms = Date.now() - began;
   expect(text).toContain("adapters: ");
   if (process.env.CREW_TIMING === "1") console.log(`adapter step with five runtimes: ${ms} ms`);
+});
+
+// Item 2026-11-09-001, Task 2: SessionStart reminds from the not-committed mark (AC-2, AC-3, AC-5, AC-6, AC-10, AC-13, AC-14).
+
+const SKILL_PAGE = ".agents/skills/crew-method/SKILL.md";
+/** The context after the engine's line: where the adapters text stands when there is one. */
+const afterEngine = (text: string) => {
+  const engineLine = `Engine: crew ${VERSION}.`;
+  return text.slice(text.indexOf(engineLine) + engineLine.length).trimStart();
+};
+const reminderOf = (version: string, pathspecs: string) =>
+  `adapters: copilot updated by crew ${version} and not committed. Commit: git add -A -- ${pathspecs} && git commit -m 'adapters refreshed by crew ${version}'.`;
+/** A mark entry for Copilot alone, at the checkout's `HEAD` of this moment. */
+const copilotEntry = (project: string, version: string) => ({
+  version,
+  at: new Date().toISOString(),
+  head: git(project, "rev-parse", "HEAD"),
+  runtimes: [{ name: "copilot" as const, config: false }],
+  register: false,
+});
+
+/** A second engine root that holds a bundle: copies of the plugin's bundle, skill and agents. */
+function otherRoot(): string {
+  const at = tempDir("crew-other-root-");
+  mkdirSync(join(at, "dist"), { recursive: true });
+  cpSync(join(engineRoot, "dist", "crew.mjs"), join(at, "dist", "crew.mjs"));
+  cpSync(join(engineRoot, "skills", "crew"), join(at, "skills", "crew"), { recursive: true });
+  cpSync(join(engineRoot, "agents"), join(at, "agents"), { recursive: true });
+  return realpathSync(at);
+}
+
+test("2026-11-09-001 AC-2: at the recorded version a start reminds from the mark and reads no adapter", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  // A configuration that keeps its root and no refresh accepts: read, it would say copilot refused.
+  const config = join(f.project, ".github", "hooks", "crew.json");
+  writeFileSync(config, readFileSync(config, "utf8").trimEnd().replace(/\}$/, ""));
+  git(f.project, "add", "-A");
+  git(f.project, "commit", "-q", "-m", "a configuration no refresh accepts");
+  updateState(f.paths, (state) => {
+    state.adapters = { [engineRoot]: VERSION };
+  });
+  noteUpdated(f.paths, engineRoot, copilotEntry(f.project, VERSION));
+  write(f.project, SKILL_PAGE, "# edited and not committed\n");
+  const before = adapterFiles(f.project);
+  const text = context(start(f));
+  expect(afterEngine(text).startsWith(reminderOf(VERSION, "'.agents/skills/crew-method'"))).toBe(
+    true,
+  );
+  expect(text).not.toContain("refused");
+  expect(adapterFiles(f.project)).toEqual(before);
+});
+
+test("2026-11-09-001 AC-3: a start on another root reminds from the same mark", () => {
+  const other = otherRoot();
+  const root = makeRepo({
+    "README.md": "# test\n",
+    ".crew/.gitignore": "local/\nwork/*/logs/\nwork/*/review/ui/\nworktrees/\n",
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+  });
+  git(root, "config", "user.email", "crew@test.invalid");
+  git(root, "config", "user.name", "Crew Test");
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  ensureProfile(paths);
+  const done = installRuntime(
+    RUNTIMES.copilot,
+    "project",
+    { project: root, home: env.HOME ?? "" },
+    other,
+  );
+  if ("refused" in done) throw new Error(done.refused);
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "an adapter on another root");
+  noteUpdated(paths, other, copilotEntry(root, "9.9.9"));
+  write(root, SKILL_PAGE, "# edited and not committed\n");
+  const text = context(start({ project: root, env }));
+  expect(afterEngine(text).startsWith(reminderOf("9.9.9", "'.agents/skills/crew-method'"))).toBe(
+    true,
+  );
+});
+
+test("2026-11-09-001 AC-5: once committed the reminder stops and the mark goes", () => {
+  const f = fixture([RUNTIMES.copilot], { stale: false });
+  updateState(f.paths, (state) => {
+    state.adapters = { [engineRoot]: VERSION };
+  });
+  // With no mark a start says nothing of the adapters.
+  expect(context(start(f))).not.toContain("adapters:");
+  noteUpdated(f.paths, engineRoot, copilotEntry(f.project, VERSION));
+  write(f.project, SKILL_PAGE, "# edited\n");
+  expect(context(start(f))).toContain("and not committed");
+  git(f.project, "add", "-A");
+  git(f.project, "commit", "-q", "-m", "adapters refreshed");
+  expect(context(start(f))).not.toContain("adapters:");
+  expect(existsSync(markPath(f.paths))).toBe(false);
+  // Two roots that differ in a path: Copilot's agents are dirty, Cursor's paths are clean.
+  noteUpdated(f.paths, engineRoot, copilotEntry(f.project, VERSION));
+  noteUpdated(f.paths, "/r/other", {
+    version: "1.0.0",
+    at: new Date().toISOString(),
+    head: git(f.project, "rev-parse", "HEAD"),
+    runtimes: [{ name: "cursor", config: false }],
+    register: false,
+  });
+  const agent = git(f.project, "ls-files", ".github/agents").split("\n")[0] as string;
+  write(f.project, agent, "edited and not committed\n");
+  expect(
+    afterEngine(context(start(f))).startsWith(reminderOf(VERSION, "'.github/agents/crew-*'")),
+  ).toBe(true);
+  expect(Object.keys(JSON.parse(readFileSync(markPath(f.paths), "utf8")))).toEqual([engineRoot]);
+});
+
+test("2026-11-09-001 AC-6: the start that updates says it once", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  const text = context(start(f));
+  expect(
+    afterEngine(text).startsWith(
+      `adapters: copilot updated (1 differed, 0 removed); applies from each updated runtime's next session. Commit: git add -A -- '.agents/skills/crew-method' '.crew/decisions.json' && git commit -m 'adapters refreshed by crew ${VERSION}'.`,
+    ),
+  ).toBe(true);
+  expect(text.split("Commit:")).toHaveLength(2);
+  expect(text).not.toContain("and not committed");
+});
+
+test("2026-11-09-001 AC-10: a mark that cannot be written is said, and the command is still printed", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  // A folder where the mark goes: the rename of the temporary file over it throws.
+  mkdirSync(markPath(f.paths), { recursive: true });
+  writeFileSync(join(markPath(f.paths), "in-the-way"), "");
+  const text = context(start(f));
+  expect(text).toContain("copilot updated (1 differed, 0 removed)");
+  expect(text).toContain("the not-committed mark was not written (");
+  expect(text).toContain("Commit: git add -A -- '.agents/skills/crew-method'");
+  expect(loadState(f.paths).adapters?.[engineRoot]).toBe(VERSION);
+});
+
+test("2026-11-09-001 AC-13: a throw in the adapter step changes the adapters text alone", () => {
+  const f = fixture([RUNTIMES.copilot], { stale: false });
+  mkdirSync(f.paths.localDir, { recursive: true });
+  const inTheWay = join(f.paths.localDir, "adapters");
+  writeFileSync(inTheWay, "a file where the lock folder goes\n");
+  const thrown = context(start(f));
+  const thrownBaseline = loadState(f.paths).sessions.s?.baseline;
+  rmSync(inTheWay);
+  const plain = context(start(f));
+  const plainBaseline = loadState(f.paths).sessions.s?.baseline;
+  const sentence = /adapters: not checked \(.*?\)\. /g;
+  expect(thrown.match(sentence)).toHaveLength(1);
+  expect(thrown.replace(sentence, "")).toBe(plain);
+  expect(plain).not.toContain("adapters:");
+  expect(thrownBaseline).not.toBeNull();
+  expect(thrownBaseline).toBe(plainBaseline);
+});
+
+test("2026-11-09-001 AC-14: an active item, a task worktree and no repository each hold the write, through SessionStart", () => {
+  // An active item.
+  const active = fixture([RUNTIMES.copilot]);
+  createWork(active.paths, "an item");
+  const activeBefore = adapterFiles(active.project);
+  expect(context(start(active))).toContain("copilot stale (an item is active)");
+  expect(adapterFiles(active.project)).toEqual(activeBefore);
+  expect(loadState(active.paths).adapters).toBeUndefined();
+  // A task worktree of the checkout.
+  const main = fixture([RUNTIMES.copilot]);
+  const lane = join(realpathSync(tempDir("crew-lane-")), "lane");
+  git(main.project, "worktree", "add", "-q", lane, "-b", "lane");
+  const laneBefore = adapterFiles(lane);
+  expect(context(start({ project: lane, env: main.env }))).toContain(
+    "copilot stale (a task worktree)",
+  );
+  expect(adapterFiles(lane)).toEqual(laneBefore);
+  expect(loadState(repoPaths(lane, main.env)).adapters).toBeUndefined();
+  // A folder that is no git repository, and never was one: removing a repository's `.git` right
+  // after its commits races with the maintenance git detaches (seen on 2026-11-09).
+  const bareRoot = tempDir("crew-nogit-");
+  const bareEnv = testEnv();
+  write(bareRoot, ".crew/.gitignore", "local/\n");
+  write(bareRoot, "package.json", JSON.stringify({ scripts: { test: "exit 0" } }));
+  const barePaths = repoPaths(bareRoot, bareEnv);
+  ensureProfile(barePaths);
+  const installed = installRuntime(
+    RUNTIMES.copilot,
+    "project",
+    { project: bareRoot, home: bareEnv.HOME ?? "" },
+    engineRoot,
+  );
+  if ("refused" in installed) throw new Error(installed.refused);
+  write(bareRoot, SKILL_PAGE, "# stale\n");
+  const bare = { project: bareRoot, env: bareEnv, paths: barePaths };
+  const bareBefore = adapterFiles(bare.project);
+  expect(context(start(bare))).toContain("copilot stale (not a git repository)");
+  expect(adapterFiles(bare.project)).toEqual(bareBefore);
+  expect(loadState(bare.paths).adapters).toBeUndefined();
+});
+
+test("2026-11-09-001 timing: the adapter step with a mark and with none", () => {
+  const runtimes = RUNTIME_NAMES.filter((n) => n !== "claude").map((n) => RUNTIMES[n]);
+  const f = fixture(runtimes, { stale: false });
+  updateState(f.paths, (state) => {
+    state.adapters = { [engineRoot]: VERSION };
+  });
+  const timed = () => {
+    const began = Date.now();
+    const text = context(start(f));
+    return { text, ms: Date.now() - began };
+  };
+  const none = timed();
+  expect(none.text).not.toContain("adapters:");
+  noteUpdated(f.paths, engineRoot, copilotEntry(f.project, VERSION));
+  write(f.project, SKILL_PAGE, "# edited\n");
+  const one = timed();
+  expect(one.text).toContain("and not committed");
+  noteUpdated(f.paths, engineRoot, {
+    ...copilotEntry(f.project, VERSION),
+    runtimes: runtimes.map((r) => ({ name: r.name, config: true })),
+  });
+  const five = timed();
+  expect(five.text).toContain("and not committed");
+  if (process.env.CREW_TIMING === "1") {
+    console.log(`adapter step with no mark: ${none.ms} ms`);
+    console.log(`adapter step with one runtime marked: ${one.ms} ms`);
+    console.log(`adapter step with five runtimes marked: ${five.ms} ms`);
+  }
 });
