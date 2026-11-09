@@ -1,11 +1,14 @@
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -303,6 +306,8 @@ export const RELEASE_STEP_NAMES = [
 ] as const;
 /** The bound of the project update (step 12): the registry's 45 entries at under 6 s each (the spec's Risks). */
 const PROJECT_UPDATE_TIMEOUT_MS = 300_000;
+/** The bound of the fleet's dry run, inside the step's bound: a record of what the update will write, never a gate. */
+const PROJECT_DRY_RUN_TIMEOUT_MS = 60_000;
 
 /** The marketplace's own version for a plugin version: `2.Y.Z` of our `X.Y.Z`. */
 export function marketplaceVersion(version: string): string {
@@ -674,8 +679,22 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           );
         }
         if (!existsSync(install)) return null;
+        // The staging folders a kill left between an extraction and its removal (item
+        // 2026-11-09-003): each entry beside the install whose own name starts with the staging
+        // prefix goes, a link unlinked and never followed, and each is said. The install, its
+        // previous one and every other name stay.
+        const beside = dirname(install);
+        const prefix = `.${PLUGIN_NAME}-next-`;
+        for (const name of readdirSync(beside).sort()) {
+          if (!name.startsWith(prefix)) continue;
+          const path = join(beside, name);
+          const kind = lstatSync(path);
+          if (kind.isSymbolicLink()) unlinkSync(path);
+          else rmSync(path, { recursive: kind.isDirectory(), force: true });
+          log(`  11. removed a staging folder an earlier swap left: ${name}`);
+        }
         // Staged beside the install, on the same device, and put back when the swap fails.
-        const staging = mkdtempSync(join(dirname(install), `.${PLUGIN_NAME}-next-`));
+        const staging = mkdtempSync(join(beside, prefix));
         try {
           const extracted = ok(
             sh(["tar", "xzf", join(root, archive), "-C", staging]),
@@ -715,7 +734,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     {
       n: 12,
       name: RELEASE_STEP_NAMES[11],
-      command: `node ${install}/dist/crew.mjs projects update (skipped when absent; 300 s bound)`,
+      command: `node ${install}/dist/crew.mjs projects update --dry-run, then node ${install}/dist/crew.mjs projects update (skipped when absent; 300 s bound)`,
       soft: true,
       run: () => {
         // The adapters of every registered project, refreshed by the bundle step 11 swapped in,
@@ -726,12 +745,30 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           projectCounts = "skipped (no local install)";
           return null;
         }
-        const r = deps.run(["node", bundle, "projects", "update"], {
+        // The fleet's dry run first (item 2026-11-09-003): what the update will write, in the
+        // log before it writes. A record, never a gate: the real run starts whatever it did, with
+        // what is left of the step's bound.
+        const began = Date.now();
+        const isCount = (l: string) => /^\d+ updated, /.test(l);
+        const dry = deps.run(["node", bundle, "projects", "update", "--dry-run"], {
           cwd: root,
-          timeoutMs: PROJECT_UPDATE_TIMEOUT_MS,
+          timeoutMs: PROJECT_DRY_RUN_TIMEOUT_MS,
           env: { HOME: home },
         });
-        const count = r.stdout.split("\n").find((l) => /^\d+ updated, /.test(l));
+        const dryLines = dry.stdout.split("\n");
+        const dryUser = dryLines.findIndex((l) => l.startsWith("user scope: "));
+        for (const l of dryLines.slice(0, dryUser < 0 ? dryLines.length : dryUser))
+          if (l.includes(" would update") && !isCount(l)) log(`  12. dry run: ${l}`);
+        const dryCount = dryLines.find(isCount);
+        if (dryCount) log(`  12. dry run: ${dryCount}`);
+        if (dry.signal) log(`  12. dry run: killed by ${dry.signal}`);
+        else if (!dryCount) log(`  12. dry run: no count line (exit ${dry.status})`);
+        const r = deps.run(["node", bundle, "projects", "update"], {
+          cwd: root,
+          timeoutMs: Math.max(1, PROJECT_UPDATE_TIMEOUT_MS - (Date.now() - began)),
+          env: { HOME: home },
+        });
+        const count = r.stdout.split("\n").find(isCount);
         // The project lines come first; the fleet writes the user scope's line as soon as the
         // last project is done, then the count line and the commit lines.
         const userLine = r.stdout.indexOf("user scope: ");
@@ -746,13 +783,16 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           const killed = `killed by ${r.signal}`;
           const reminded = "each updated project's sessions print its commit command";
           const listed = "by crew projects update --dry-run";
+          // A project the kill may have left written in part holds an unfinished runtime in its
+          // mark, when it has a commit to name (item 2026-11-09-003).
+          const unfinishedSaid = "a project left unfinished says what to run at its session start";
           if (count) projectCounts = `${count} (${killed} after the count line)`;
           else if (userLine >= 0)
             projectCounts = `cut at the bound (${killed} after every project's line, ${printed.length} of them; the count line was not printed; ${reminded})`;
           else if (printed.length === 0)
-            projectCounts = `cut at the bound (${killed} before any project line; the first project listed ${listed} may be written in part and no other is updated)`;
+            projectCounts = `cut at the bound (${killed} before any project line; the first project listed ${listed} may be written in part and no other is updated; ${unfinishedSaid})`;
           else
-            projectCounts = `cut at the bound (${killed} after ${printed.length} project lines, the last one "${(printed.at(-1) ?? "").slice(0, 160)}"; any project listed after it ${listed} may be written in part or not updated; ${reminded})`;
+            projectCounts = `cut at the bound (${killed} after ${printed.length} project lines, the last one "${(printed.at(-1) ?? "").slice(0, 160)}"; any project listed after it ${listed} may be written in part or not updated; ${reminded}; ${unfinishedSaid})`;
         } else if (count) projectCounts = r.status === 0 ? count : `${count} (exit ${r.status})`;
         else if (r.status === 0) projectCounts = "done";
         else {

@@ -2,12 +2,14 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -119,6 +121,8 @@ function runner(
     installBundle?: boolean;
     /** What the install's `crew projects update` answers; status 0 with no output otherwise. */
     projectsUpdate?: ReturnType<CommandRunner>;
+    /** What its `crew projects update --dry-run` answers (item 2026-11-09-003); status 0 with no output otherwise. */
+    projectsDryRun?: ReturnType<CommandRunner>;
   } = {},
 ): {
   run: CommandRunner;
@@ -258,7 +262,8 @@ function runner(
       }
       return ok();
     }
-    if (cmd[0] === "node" && cmd.includes("projects")) return extra.projectsUpdate ?? ok();
+    if (cmd[0] === "node" && cmd.includes("projects"))
+      return (cmd.includes("--dry-run") ? extra.projectsDryRun : extra.projectsUpdate) ?? ok();
     return ok();
   };
   return { run, seen, seenOpts, world, events, recorded, record };
@@ -1063,18 +1068,30 @@ test("2026-11-01-003 AC-43: step 5 commits only what the release wrote on the co
 async function projectUpdateAnswers(
   update: ReturnType<CommandRunner> | undefined,
   tar: { installBundle?: boolean } = { installBundle: true },
+  dry?: ReturnType<CommandRunner>,
 ) {
   const { root, home } = fixture();
-  const at = runner(root, undefined, undefined, {}, { ...tar, projectsUpdate: update });
+  const at = runner(
+    root,
+    undefined,
+    undefined,
+    {},
+    { ...tar, projectsUpdate: update, projectsDryRun: dry },
+  );
   const log: string[] = [];
   const code = await release(
     { root, bump: "patch", reason: "x", home, githubAccount: "andreagroferreira" },
     { run: at.run, log: (l) => log.push(l) },
   );
   const notify = (at.seen.find((c) => c[0] === "osascript") ?? []).join(" ");
-  const update12 = at.seen.find((c) => c[0] === "node" && c.includes("projects"));
-  const opts12 = at.seenOpts[at.seen.findIndex((c) => c[0] === "node" && c.includes("projects"))];
-  return { code, log, notify, update12, opts12, home };
+  // Step 12 runs the fleet twice: its dry run, then the update (item 2026-11-09-003).
+  const fleet = (dryRun: boolean) => (c: string[]) =>
+    c[0] === "node" && c.includes("projects") && c.includes("--dry-run") === dryRun;
+  const update12 = at.seen.find(fleet(false));
+  const opts12 = at.seenOpts[at.seen.findIndex(fleet(false))];
+  const dry12 = at.seen.find(fleet(true));
+  const dryOpts12 = at.seenOpts[at.seen.findIndex(fleet(true))];
+  return { code, log, notify, update12, opts12, dry12, dryOpts12, home, seen: at.seen };
 }
 
 test("2026-11-08-002 AC-6: the project update runs before the notification, soft and bounded", async () => {
@@ -1091,6 +1108,7 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
   const steps = planLog.filter((l) => /^\s*\d+\. /.test(l));
   expect(steps).toHaveLength(13);
   expect(steps[11]).toContain("12. the project update: node ");
+  expect(steps[11]).toContain("/dist/crew.mjs projects update --dry-run, then node ");
   expect(steps[11]).toContain("/dist/crew.mjs projects update (skipped when absent; 300 s bound)");
   expect(steps[12]).toContain("13. the notification: ");
   // The install holds a bundle: the step runs it with the bound and the release's home, and the
@@ -1106,7 +1124,9 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
     "projects",
     "update",
   ]);
-  expect(ok.opts12?.timeoutMs).toBe(300_000);
+  // What is left of the 300 s after the dry run.
+  expect(ok.opts12?.timeoutMs).toBeLessThanOrEqual(300_000);
+  expect(ok.opts12?.timeoutMs).toBeGreaterThan(299_000);
   expect(ok.opts12?.env?.HOME).toBe(ok.home);
   expect(ok.notify).toContain(`projects: ${count}`);
   expect(ok.log).toContain("  12. the project update: ok");
@@ -1144,7 +1164,7 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
   });
   expect(killed.code).toBe(0);
   expect(killed.notify).toContain(
-    'projects: cut at the bound (killed by SIGTERM after 2 project lines, the last one \\"b /y: up to date\\"; any project listed after it by crew projects update --dry-run may be written in part or not updated; each updated project\'s sessions print its commit command)',
+    'projects: cut at the bound (killed by SIGTERM after 2 project lines, the last one \\"b /y: up to date\\"; any project listed after it by crew projects update --dry-run may be written in part or not updated; each updated project\'s sessions print its commit command; a project left unfinished says what to run at its session start)',
   );
   // Status 0 and no output at all: done.
   const silent = await answers({ status: 0, exit: 0, stdout: "", stderr: "" });
@@ -1195,7 +1215,9 @@ test("2026-11-08-002 AC-6: the project update runs before the notification, soft
       { run: from12.run, log: () => {} },
     ),
   ).toBe(0);
+  // The fleet's dry run, then its update (item 2026-11-09-003).
   expect(programs(from12.seen)).toEqual([
+    `node ${join(home, ".local/share/wizardingcode-developer-crew/dist/crew.mjs")} projects`,
     `node ${join(home, ".local/share/wizardingcode-developer-crew/dist/crew.mjs")} projects`,
     "osascript -e",
   ]);
@@ -1223,7 +1245,7 @@ test("2026-11-09-001 AC-17: a killed project update says what is certain", async
   expect(none.code).toBe(0);
   expect(none.log).toContain("  13. the notification: ok");
   expect(none.notify).toContain(
-    "projects: cut at the bound (killed by SIGTERM before any project line; the first project listed by crew projects update --dry-run may be written in part and no other is updated)",
+    "projects: cut at the bound (killed by SIGTERM before any project line; the first project listed by crew projects update --dry-run may be written in part and no other is updated; a project left unfinished says what to run at its session start)",
   );
   // Killed after every project's line: the user scope line is out, the count line is not.
   const scoped = await killedBy("a /x: up to date\nuser scope: no adapter on this root\n");
@@ -1319,4 +1341,146 @@ test("2026-11-09-001 AC-30: a swap cut short is put back and finished", async ()
     0,
   );
   expect(bare.seen.some((c) => c[0] === "tar")).toBe(false);
+});
+
+// Item 2026-11-09-003, Task 4: step 11 sweeps the staging folders a kill left, and step 12 logs the fleet's dry run first (AC-24, AC-25, AC-26, AC-35, AC-36).
+
+const FLEET_COUNT =
+  "1 updated, 0 would update, 2 up to date, 0 stale, 0 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone";
+const answered = (stdout: string) => ({ status: 0, exit: 0, stdout, stderr: "" });
+const STAGING = ".wizardingcode-developer-crew-next-";
+const swept = (name: string) => `  11. removed a staging folder an earlier swap left: ${name}`;
+
+test("2026-11-09-003 AC-24: step 12 logs the fleet's dry run before the real update, and never waits on it", async () => {
+  const dryCount =
+    "0 updated, 1 would update, 1 up to date, 0 stale, 0 refused, 0 failed, 0 other root, 0 no adapter, 0 left out, 0 gone";
+  const ran = await projectUpdateAnswers(
+    answered(`${FLEET_COUNT}\n`),
+    { installBundle: true },
+    answered(
+      `a /x: copilot would update\nb /y: up to date\nuser scope: no adapter on this root\n${dryCount}\n`,
+    ),
+  );
+  expect(ran.code, ran.log.join("\n")).toBe(0);
+  // Each line once: the project that would update, then the count line; the project up to date is not logged.
+  const logged = ran.log.filter((l) => l.startsWith("  12. dry run: "));
+  expect(logged).toEqual([
+    "  12. dry run: a /x: copilot would update",
+    `  12. dry run: ${dryCount}`,
+  ]);
+  expect(ran.log.indexOf(`  12. dry run: ${dryCount}`)).toBeLessThan(
+    ran.log.indexOf("  12. the project update: ok"),
+  );
+  const bundle = join(ran.home, ".local/share/wizardingcode-developer-crew/dist/crew.mjs");
+  expect(ran.dry12).toEqual(["node", bundle, "projects", "update", "--dry-run"]);
+  expect(ran.dryOpts12?.timeoutMs).toBe(60_000);
+  expect(ran.seen.indexOf(ran.dry12 as string[])).toBeLessThan(
+    ran.seen.indexOf(ran.update12 as string[]),
+  );
+  expect(ran.notify).toContain(`projects: ${FLEET_COUNT}`);
+  // A dry run killed at its bound, and one that prints no count line: said, and the update runs all the same.
+  const killed = await projectUpdateAnswers(
+    answered(`${FLEET_COUNT}\n`),
+    { installBundle: true },
+    { status: 1, exit: null, stdout: "", stderr: "", signal: "SIGTERM" },
+  );
+  expect(killed.log).toContain("  12. dry run: killed by SIGTERM");
+  expect(killed.update12).toBeDefined();
+  expect(killed.notify).toContain(`projects: ${FLEET_COUNT}`);
+  const silent = await projectUpdateAnswers(
+    answered(`${FLEET_COUNT}\n`),
+    { installBundle: true },
+    { status: 1, exit: 1, stdout: "", stderr: "boom\n" },
+  );
+  expect(silent.log).toContain("  12. dry run: no count line (exit 1)");
+  expect(silent.update12).toBeDefined();
+  expect(silent.notify).toContain(`projects: ${FLEET_COUNT}`);
+});
+
+test("2026-11-09-003 AC-25: a killed update that may leave a project written in part says where that is told", async () => {
+  const killedBy = (stdout: string) =>
+    projectUpdateAnswers({ status: 1, exit: null, stdout, stderr: "", signal: "SIGTERM" });
+  const clause = "; a project left unfinished says what to run at its session start)";
+  const none = await killedBy("");
+  expect(none.notify).toContain(`may be written in part and no other is updated${clause}`);
+  const between = await killedBy("a /x: copilot updated (1 differed, 0 removed)\n");
+  expect(between.notify).toContain(
+    `may be written in part or not updated; each updated project's sessions print its commit command${clause}`,
+  );
+  // After every project's line no install is in flight: the clause is not said.
+  const after = await killedBy("a /x: up to date\nuser scope: no adapter on this root\n");
+  expect(after.notify).toContain("after every project's line");
+  expect(after.notify).not.toContain("left unfinished");
+});
+
+test("2026-11-09-003 AC-35: the release's listing names both commands of step 12", async () => {
+  const planned = fixture();
+  const listing = runner(planned.root);
+  const log: string[] = [];
+  expect(
+    await release(
+      { root: planned.root, bump: "patch", reason: "x", home: planned.home, dryRun: true },
+      { run: listing.run, log: (l) => log.push(l) },
+    ),
+  ).toBe(0);
+  const step = log.find((l) => /^\s*12\. /.test(l)) ?? "";
+  expect(step).toContain("/dist/crew.mjs projects update --dry-run, then node ");
+  expect(step.endsWith("/dist/crew.mjs projects update (skipped when absent; 300 s bound)")).toBe(
+    true,
+  );
+});
+
+test("2026-11-09-003 AC-26: step 11 removes the staging folders an earlier swap left, and nothing else", async () => {
+  const { root, home } = fixture();
+  const install = join(home, LOCAL_INSTALL);
+  const beside = dirname(install);
+  mkdirSync(join(beside, `${STAGING}old`));
+  writeFileSync(join(beside, `${STAGING}old`, "file"), "x");
+  writeFileSync(join(beside, `${STAGING}file`), "x");
+  // Names that only resemble the prefix, and a folder of the person's.
+  mkdirSync(join(beside, ".wizardingcode-developer-crew-nextdoor"));
+  mkdirSync(join(beside, "keep"));
+  const log: string[] = [];
+  const at = runner(root);
+  expect(await release(fullRelease(root, home), { run: at.run, log: (l) => log.push(l) })).toBe(0);
+  expect(log.filter((l) => l.includes("removed a staging folder"))).toEqual([
+    swept(`${STAGING}file`),
+    swept(`${STAGING}old`),
+  ]);
+  expect(readdirSync(beside).filter((name) => name.startsWith(STAGING))).toEqual([]);
+  expect(existsSync(join(beside, ".wizardingcode-developer-crew-nextdoor"))).toBe(true);
+  expect(existsSync(join(beside, "keep"))).toBe(true);
+  expect(readFileSync(join(install, "bin", "crew"), "utf8")).toBe("new");
+  expect(readFileSync(join(`${install}.previous`, "bin", "crew"), "utf8")).toBe("old");
+});
+
+test("2026-11-09-003 AC-36: the sweep never follows a link, and a skipped step sweeps nothing", async () => {
+  const { root, home } = fixture();
+  const beside = dirname(join(home, LOCAL_INSTALL));
+  const outside = mkdtempSync(join(tmpdir(), "release-outside-"));
+  writeFileSync(join(outside, "kept"), "x");
+  const link = join(beside, `${STAGING}link`);
+  symlinkSync(outside, link);
+  const log: string[] = [];
+  const at = runner(root);
+  expect(await release(fullRelease(root, home), { run: at.run, log: (l) => log.push(l) })).toBe(0);
+  expect(log).toContain(swept(`${STAGING}link`));
+  expect(() => lstatSync(link)).toThrow();
+  expect(readFileSync(join(outside, "kept"), "utf8")).toBe("x");
+  // No local install: the step is skipped before the sweep.
+  const bare = fixture();
+  const bareInstall = join(bare.home, LOCAL_INSTALL);
+  rmSync(bareInstall, { recursive: true, force: true });
+  const left = join(dirname(bareInstall), `${STAGING}old`);
+  mkdirSync(left, { recursive: true });
+  const bareLog: string[] = [];
+  const skipped = runner(bare.root);
+  expect(
+    await release(fullRelease(bare.root, bare.home), {
+      run: skipped.run,
+      log: (l) => bareLog.push(l),
+    }),
+  ).toBe(0);
+  expect(existsSync(left)).toBe(true);
+  expect(bareLog.some((l) => l.includes("removed a staging folder"))).toBe(false);
 });
