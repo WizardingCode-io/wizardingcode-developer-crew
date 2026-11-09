@@ -1075,6 +1075,7 @@ test("2026-11-09-003 AC-45: only an install that began and did not return is lef
     }),
   );
   expect(result(uncheckedRefresh, "copilot")?.status).toBe("failed");
+  expect(result(uncheckedRefresh, "copilot")?.why).toContain("skill: stale");
   expect(markOf(unchecked.paths)[unchecked.root]?.runtimes).toEqual([
     { name: "copilot", config: false },
   ]);
@@ -1141,6 +1142,13 @@ test("2026-11-09-003 AC-31: a link or a folder at the mark's path is never writt
   expect(result(installed, "copilot")?.status).toBe("updated");
   expect(installed.markFailed).toBeDefined();
   expect(readFileSync(inside, "utf8")).toBe("x\n");
+  // A refused install over that folder: the restore fails as a mark not written, never removing it.
+  const h = fixture([RUNTIMES.copilot]);
+  const kept = folderAtTheMark(h.paths);
+  const refusedOver = refreshAdapters(h.paths, options(h, { install: () => ({ refused: "no" }) }));
+  expect(result(refusedOver, "copilot")?.status).toBe("refused");
+  expect(refusedOver.markFailed).toBeDefined();
+  expect(readFileSync(kept, "utf8")).toBe("x\n");
 });
 
 test("2026-11-09-003 AC-40: a version record or a register entry that cannot be written is said, and the refresh keeps its account", () => {

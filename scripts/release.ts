@@ -688,10 +688,17 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         for (const name of readdirSync(beside).sort()) {
           if (!name.startsWith(prefix)) continue;
           const path = join(beside, name);
-          const kind = lstatSync(path);
-          if (kind.isSymbolicLink()) unlinkSync(path);
-          else rmSync(path, { recursive: kind.isDirectory(), force: true });
-          log(`  11. removed a staging folder an earlier swap left: ${name}`);
+          // A leftover that cannot be removed is said and left: housekeeping never stops the swap.
+          try {
+            const kind = lstatSync(path);
+            if (kind.isSymbolicLink()) unlinkSync(path);
+            else rmSync(path, { recursive: kind.isDirectory(), force: true });
+            log(`  11. removed a staging folder an earlier swap left: ${name}`);
+          } catch (error) {
+            log(
+              `  11. a staging folder could not be removed: ${name} (${(error as Error).message})`,
+            );
+          }
         }
         // Staged beside the install, on the same device, and put back when the swap fails.
         const staging = mkdtempSync(join(beside, prefix));

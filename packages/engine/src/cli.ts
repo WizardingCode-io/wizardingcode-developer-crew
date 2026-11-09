@@ -115,13 +115,7 @@ import {
   updateEvidence,
   whoDecides,
 } from "./evidence.ts";
-import {
-  baseCommitOf,
-  changedPaths,
-  changedWatchedPaths,
-  hashPaths,
-  isGitRepo,
-} from "./fingerprint.ts";
+import { changedPaths, changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import {
   createFreeFile,
   createFreeFiles,
@@ -6590,9 +6584,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         // 2026-11-09-003); with no commit to name there is no mark to read.
         const own = canonical(root);
         const reminder =
-          scope !== "user" && baseCommitOf(env.paths.root) !== null
-            ? uncommittedAdapters(env.paths, { clear: true })
-            : null;
+          "marked" in done && done.marked ? uncommittedAdapters(env.paths, { clear: true }) : null;
         const markFailed = done.markFailed;
         const text = [
           lines.length

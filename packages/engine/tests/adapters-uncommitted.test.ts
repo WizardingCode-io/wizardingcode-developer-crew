@@ -432,6 +432,33 @@ test("2026-11-09-003 AC-12: a runtime is named under one root, and what is not r
   expect(readFileSync(markPath(p.paths), "utf8")).toBe(bytes);
 });
 
+test("2026-11-09-003 AC-47 (the reader): an entry read for a failed write is merged as its note would have been", () => {
+  // Another root names Codex and Gemini; the note that could not be written names Codex under
+  // this root. The reader takes Codex out of the other root's entry and keeps Gemini there.
+  const p = project();
+  plant(p.paths, {
+    "/r/other": {
+      version: "1.2.3",
+      at: AT,
+      head: head(p.root),
+      runtimes: [
+        { name: "gemini", config: false },
+        { name: "codex", config: false },
+      ],
+      register: false,
+    },
+  });
+  write(p.root, SKILL, "# edited\n");
+  const reminder = uncommittedAdapters(p.paths, {
+    clear: false,
+    also: { root: "/r/a", entry: entry(p.root, { register: false, runtimes: CODEX }) },
+  });
+  expect(reminder?.entries).toEqual([
+    { root: "/r/a", version: "1.2.3", updated: ["codex"], unfinished: [] },
+    { root: "/r/other", version: "1.2.3", updated: ["gemini"], unfinished: [] },
+  ]);
+});
+
 test("2026-11-09-003 AC-39: no command while an entry holds an unfinished runtime, and a clean entry goes", () => {
   // Two roots: Copilot unfinished under one, Codex finished under the other, the shared skill page changed.
   const p = project();

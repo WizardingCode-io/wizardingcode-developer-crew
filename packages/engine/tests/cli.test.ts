@@ -55,6 +55,7 @@ import {
   pluginRoot,
   RUNTIMES,
   type RuntimeName,
+  removeRuntime,
 } from "../src/runtimes.ts";
 import { SPEC_LENSES } from "../src/spec-review.ts";
 import { loadState, recordWorking, updateState } from "../src/state.ts";
@@ -13974,12 +13975,29 @@ test("2026-11-09-003 AC-10: with no repository, and at user scope, a hand instal
   expect(printed.map((line) => (line.startsWith(first) ? line.slice(first.length) : line))).toEqual(
     expected,
   );
-  // User scope, in a repository with a commit: no mark either.
+  // User scope, in a repository with a commit: no mark either, and the lines of the install alone.
   const root = await adapterProject(env, []);
   const user = await io(root, env).run("runtime", "install", "gemini", "--scope", "user");
   expect(user.code, user.err).toBe(0);
-  expect(user.out).not.toContain("adapters not committed");
   expect(existsSync(markPath(repoPaths(root, env)))).toBe(false);
+  const otherHome = tempDir("crew-home-");
+  const directUser = installRuntime(
+    RUNTIMES.gemini,
+    "user",
+    { project: tempDir("crew-no-repo-"), home: otherHome },
+    pluginRoot(),
+  );
+  if ("refused" in directUser) throw new Error(directUser.refused);
+  const home = env.HOME ?? "";
+  expect(
+    user.out
+      .trim()
+      .split("\n")
+      .map((line) => (line.startsWith(home) ? line.slice(home.length) : line)),
+  ).toEqual([
+    ...directUser.files.map((path) => path.slice(otherHome.length)),
+    ...(directUser.trust ? [`trust: ${directUser.trust}`] : []),
+  ]);
 });
 
 test("2026-11-09-003 AC-32: in a repository with no commit a hand install and a remove take no lock and write no mark", async () => {
@@ -13988,12 +14006,31 @@ test("2026-11-09-003 AC-32: in a repository with no commit a hand install and a 
   git(root, "init", "-q");
   lockAdapters(root, 60_000);
   const c = io(root, env);
+  // The lines are the bare install's and the bare removal's, taken in a second such repository.
+  const other = tempDir("crew-no-commit-");
+  git(other, "init", "-q");
+  const dirs = { project: other, home: env.HOME ?? "" };
+  const bare = installRuntime(RUNTIMES.copilot, "project", dirs, pluginRoot());
+  if ("refused" in bare) throw new Error(bare.refused);
+  const fromRoot = (out: string) =>
+    out
+      .trim()
+      .split("\n")
+      .map((line) => line.split(root).join("<root>"));
   const installed = await c.run("runtime", "install", "copilot");
   expect(installed.code, installed.err).toBe(0);
-  expect(installed.out).not.toContain("adapters not committed");
+  expect(fromRoot(installed.out)).toEqual([
+    ...bare.files.map((path) => path.split(other).join("<root>")),
+    ...(bare.trust ? [`trust: ${bare.trust}`] : []),
+  ]);
+  const bareRemoval = removeRuntime(RUNTIMES.copilot, "project", dirs);
+  if ("refused" in bareRemoval) throw new Error(bareRemoval.refused);
   const removed = await c.run("runtime", "remove", "copilot");
   expect(removed.code, removed.err).toBe(0);
-  expect(removed.out).not.toContain("adapters not committed");
+  expect(fromRoot(removed.out)).toEqual([
+    ...bareRemoval.rewritten.map((path) => `rewritten ${path.split(other).join("<root>")}`),
+    ...bareRemoval.removed.map((path) => `removed ${path.split(other).join("<root>")}`),
+  ]);
   expect(existsSync(join(root, ".crew", "local", "adapters", "uncommitted.json"))).toBe(false);
 });
 

@@ -3947,8 +3947,16 @@ function uncommittedAdapters(paths, opts) {
   if (opts.also) {
     const also = opts.also;
     const names = new Set(also.entry.runtimes.map((r) => r.name));
-    marks = Object.fromEntries(Object.entries(marks).filter(([root, entry]) => root !== also.root && !entry.runtimes.some((r) => names.has(r.name))));
-    marks[also.root] = also.entry;
+    const merged = {};
+    for (const [root, entry] of Object.entries(marks)) {
+      if (root === also.root)
+        continue;
+      const runtimes = entry.runtimes.filter((r) => !names.has(r.name));
+      if (runtimes.length)
+        merged[root] = { ...entry, runtimes };
+    }
+    merged[also.root] = also.entry;
+    marks = merged;
   }
   const roots = Object.keys(marks).sort();
   if (roots.length === 0)
@@ -4034,8 +4042,11 @@ function unfinishedSentence(name, version, held, own) {
   const how = own ? "again" : `again with the crew of its root, such as ${KEPT_ROOT_CREW}`;
   return `${name} left unfinished by crew ${version} (an install cut short or failed): run crew runtime install ${name} ${how}, then commit`;
 }
+function unfinishedOf(entry, held, own) {
+  return entry.unfinished.map((name) => unfinishedSentence(name, entry.version, held, entry.root === own));
+}
 function unfinishedParts(reminder, own) {
-  return (reminder?.entries ?? []).flatMap((entry) => entry.unfinished.map((name) => unfinishedSentence(name, entry.version, reminder?.held === true, entry.root === own)));
+  return reminder ? reminder.entries.flatMap((entry) => unfinishedOf(entry, reminder.held, own)) : [];
 }
 function reminderParts(reminder, opts) {
   const parts = [];
@@ -4044,8 +4055,7 @@ function reminderParts(reminder, opts) {
     const names = entry.updated.filter((name) => !now.includes(name));
     if (names.length)
       parts.push(names.length < entry.updated.length ? `${names.join(", ")} updated earlier and not committed` : `${names.join(", ")} updated by crew ${entry.version} and not committed`);
-    for (const name of entry.unfinished)
-      parts.push(unfinishedSentence(name, entry.version, reminder.held, entry.root === opts.own));
+    parts.push(...unfinishedOf(entry, reminder.held, opts.own));
   }
   return parts;
 }
@@ -4541,25 +4551,22 @@ function adaptersLine(refresh, extra = [], reminder = null, own = refresh?.root 
     line += `; commit them to adopt the adapter, or run crew runtime install ${never.runtime} again`;
   return `${line}.`;
 }
+function writeMark(o, write) {
+  if (o.head === null)
+    return;
+  try {
+    write(o.head);
+  } catch (error) {
+    o.markFailed(quoted(error.message));
+  }
+}
+function noteMark(o, runtimes, register) {
+  writeMark(o, (head) => noteUpdated(o.paths, o.root, { version: o.version, at: o.at, head, runtimes, register }));
+}
 function installUnderMark(o) {
-  const fenced = (write) => {
-    if (o.head === null)
-      return;
-    try {
-      write();
-    } catch (error) {
-      o.markFailed(quoted(error.message));
-    }
-  };
-  const note = (config, unfinished) => fenced(() => noteUpdated(o.paths, o.root, {
-    version: o.version,
-    at: o.at,
-    head: o.head,
-    runtimes: [{ name: o.name, config, ...unfinished ? { unfinished: true } : {} }],
-    register: false
-  }));
+  const note = (config, unfinished) => noteMark(o, [{ name: o.name, config, ...unfinished ? { unfinished: true } : {} }], false);
   const before = o.head === null ? null : markText(o.paths);
-  const restore = () => fenced(() => restoreMark(o.paths, before));
+  const restore = () => writeMark(o, () => restoreMark(o.paths, before));
   note(false, true);
   let done;
   try {
@@ -4644,9 +4651,9 @@ function removeByHand(paths, runtime, o) {
         return done;
       try {
         dropRuntime(paths, runtime.name);
-        return done;
+        return { ...done, marked: true };
       } catch (error) {
-        return { ...done, markFailed: quoted(error.message) };
+        return { ...done, marked: true, markFailed: quoted(error.message) };
       }
     }, { what: "adapter refresh", waitMs: handLockWait.ms });
   } catch (error) {
@@ -4812,18 +4819,19 @@ function refreshAdapters(paths, o) {
   const at = nowIso();
   const noted = [];
   let head = null;
-  const mark = (runtimes, register) => {
-    if (head === null)
-      return;
-    try {
-      noteUpdated(paths, o.root, { version: o.version, at, head, runtimes, register });
-    } catch (error) {
-      refresh.markFailed ??= quoted(error.message);
-    }
-  };
   try {
     withLock(lock, () => {
       head = baseCommitOf(paths.root);
+      const write = {
+        paths,
+        root: o.root,
+        version: o.version,
+        at,
+        head,
+        markFailed: (why) => {
+          refresh.markFailed ??= why;
+        }
+      };
       const still = toInstall.filter((a) => {
         if (isStale(check(a.runtime, a.root)))
           return true;
@@ -4849,16 +4857,9 @@ function refreshAdapters(paths, o) {
                 continue;
               }
               const outcome = installUnderMark({
-                paths,
-                root: o.root,
-                version: o.version,
-                at,
-                head,
+                ...write,
                 name: a.runtime.name,
-                install: () => (o.install ?? installRuntime)(a.runtime, "project", dirs, a.root),
-                markFailed: (why) => {
-                  refresh.markFailed ??= why;
-                }
+                install: () => (o.install ?? installRuntime)(a.runtime, "project", dirs, a.root)
               });
               if (outcome.kind === "installed") {
                 noted.push({ name: a.runtime.name, config: outcome.done.configWritten });
@@ -4901,7 +4902,7 @@ function refreshAdapters(paths, o) {
           register: refresh.appended
         };
         if (refresh.appended)
-          mark(noted, true);
+          noteMark(write, noted, true);
       }
     }, lockOptions);
   } catch (error) {
@@ -27301,7 +27302,7 @@ ${drafted.lesson}`, "lesson")[0];
           ...done.kept ? [`kept ${done.kept.path} (still used by ${done.kept.by.join(", ")})`] : []
         ];
         const own = canonical(root);
-        const reminder = scope !== "user" && baseCommitOf(env.paths.root) !== null ? uncommittedAdapters(env.paths, { clear: true }) : null;
+        const reminder = "marked" in done && done.marked ? uncommittedAdapters(env.paths, { clear: true }) : null;
         const markFailed = done.markFailed;
         const text = [
           lines.length ? lines.join(`

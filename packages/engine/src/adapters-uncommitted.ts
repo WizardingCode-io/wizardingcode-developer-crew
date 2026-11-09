@@ -270,7 +270,7 @@ function committedSince(root: string, head: string, pathspec: string[]): Set<str
  * the finished ones would commit a part-written copy. With `clear`, the clean entries of the file
  * are removed under the adapters lock, in one attempt, each only when it is still, key for key,
  * the entry that was judged: every write of an entry changes it. `also` stands for the root of a
- * write whose own note failed. Never throws: a mark that cannot be read counts as absent, a status
+ * write whose own note failed, and is read as that note would have been written. Never throws: a mark that cannot be read counts as absent, a status
  * that fails is said in `failed`, and a clear that fails removes nothing.
  */
 export function uncommittedAdapters(
@@ -281,14 +281,18 @@ export function uncommittedAdapters(
   const held = lockHeld(adaptersDir);
   let marks = readMarks(paths);
   if (opts.also) {
+    // Read as a note of the entry would have written it: it replaces its root's entry, and its
+    // runtimes leave the other roots' entries, an entry left with none going with them.
     const also = opts.also;
     const names = new Set(also.entry.runtimes.map((r) => r.name));
-    marks = Object.fromEntries(
-      Object.entries(marks).filter(
-        ([root, entry]) => root !== also.root && !entry.runtimes.some((r) => names.has(r.name)),
-      ),
-    );
-    marks[also.root] = also.entry;
+    const merged: Record<string, UncommittedEntry> = {};
+    for (const [root, entry] of Object.entries(marks)) {
+      if (root === also.root) continue;
+      const runtimes = entry.runtimes.filter((r) => !names.has(r.name));
+      if (runtimes.length) merged[root] = { ...entry, runtimes };
+    }
+    merged[also.root] = also.entry;
+    marks = merged;
   }
   const roots = Object.keys(marks).sort();
   if (roots.length === 0) return null;
@@ -369,7 +373,7 @@ export function uncommittedAdapters(
   return reminder.entries.length === 0 && reminder.failed === undefined ? null : reminder;
 }
 
-/** What a reader says of one runtime whose install has not ended checked, by whether the lock is held and whose root it is. */
+/** What a reader says of one runtime whose install began and did not return, by whether the lock is held and whose root it is. */
 function unfinishedSentence(name: RuntimeName, version: string, held: boolean, own: boolean) {
   if (held)
     return `${name}'s install has not ended and the adapters lock is held: look again in ten seconds with crew status`;
@@ -377,13 +381,18 @@ function unfinishedSentence(name: RuntimeName, version: string, held: boolean, o
   return `${name} left unfinished by crew ${version} (an install cut short or failed): run crew runtime install ${name} ${how}, then commit`;
 }
 
+/** One entry's unfinished runtimes as sentences; `own` is the reading engine's root. */
+function unfinishedOf(entry: ReminderEntry, held: boolean, own: string): string[] {
+  return entry.unfinished.map((name) =>
+    unfinishedSentence(name, entry.version, held, entry.root === own),
+  );
+}
+
 /** The sentences of a reminder's unfinished runtimes alone; `own` is the reading engine's root. */
 export function unfinishedParts(reminder: Reminder | null, own: string): string[] {
-  return (reminder?.entries ?? []).flatMap((entry) =>
-    entry.unfinished.map((name) =>
-      unfinishedSentence(name, entry.version, reminder?.held === true, entry.root === own),
-    ),
-  );
+  return reminder
+    ? reminder.entries.flatMap((entry) => unfinishedOf(entry, reminder.held, own))
+    : [];
 }
 
 /**
@@ -407,8 +416,7 @@ export function reminderParts(
           ? `${names.join(", ")} updated earlier and not committed`
           : `${names.join(", ")} updated by crew ${entry.version} and not committed`,
       );
-    for (const name of entry.unfinished)
-      parts.push(unfinishedSentence(name, entry.version, reminder.held, entry.root === opts.own));
+    parts.push(...unfinishedOf(entry, reminder.held, opts.own));
   }
   return parts;
 }

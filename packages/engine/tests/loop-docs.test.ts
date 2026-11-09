@@ -84,3 +84,26 @@ test("2026-10-28-001 AC-5: the README documents pause, resume and stop (kill -KI
   for (const word of ["`stop`", "relaunch", "unprobed", "dead tick"])
     expect(adr, word).toContain(word);
 });
+
+test("2026-11-09-003 AC-51: ADR 0023, the runtimes reference and CLAUDE.md say the unfinished adapter and what to run, the hand install's mark, the kept skill folder, step 11's sweep and step 12's dry run", () => {
+  const adr = read("docs/adr/0023-a-release-reaches-the-adapters.md");
+  expect(adr).toContain(
+    "## An install cut short, a hand install (2026-11-09, item 2026-11-09-003)",
+  );
+  expect(adr).toContain("left unfinished by crew <version> (an install cut short or failed)");
+  expect(adr).toContain("A removal keeps the shared skill folder");
+  const runtimes = read("plugins/core/skills/crew/references/runtimes.md");
+  expect(runtimes).toContain(
+    "A hand-run `crew runtime install` at project scope, in a repository with a commit, writes the same mark and ends with the same `adapters not committed:` line.",
+  );
+  expect(runtimes).toContain("left unfinished by crew <version> (an install cut short or failed)");
+  expect(runtimes).toContain("kept <path> (still used by <runtimes>)");
+  const claude = read("CLAUDE.md");
+  const releasing = claude.slice(claude.indexOf("## Releasing"), claude.indexOf("## Conventions"));
+  expect(releasing).toContain(
+    "removing each staging folder (`.wizardingcode-developer-crew-next-*`)",
+  );
+  expect(releasing).toContain(
+    "the fleet's dry run, a record of the projects the update is about to write",
+  );
+});

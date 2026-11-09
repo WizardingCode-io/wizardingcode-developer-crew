@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -1483,4 +1484,29 @@ test("2026-11-09-003 AC-36: the sweep never follows a link, and a skipped step s
   ).toBe(0);
   expect(existsSync(left)).toBe(true);
   expect(bareLog.some((l) => l.includes("removed a staging folder"))).toBe(false);
+});
+
+test("2026-11-09-003 AC-52: a staging folder the sweep cannot remove is said, and the swap goes on", async () => {
+  const { root, home } = fixture();
+  const install = join(home, LOCAL_INSTALL);
+  const stuck = join(dirname(install), `${STAGING}stuck`);
+  mkdirSync(stuck);
+  writeFileSync(join(stuck, "file"), "x");
+  // A folder whose entries cannot be unlinked: the removal fails on its file.
+  chmodSync(stuck, 0o555);
+  const log: string[] = [];
+  try {
+    const at = runner(root);
+    expect(await release(fullRelease(root, home), { run: at.run, log: (l) => log.push(l) })).toBe(
+      0,
+    );
+  } finally {
+    chmodSync(stuck, 0o755);
+  }
+  const said = log.find((l) => l.startsWith("  11. a staging folder could not be removed: ")) ?? "";
+  expect(said).toContain(`${STAGING}stuck (`);
+  expect(log.some((l) => l.includes("removed a staging folder"))).toBe(false);
+  expect(existsSync(join(stuck, "file"))).toBe(true);
+  expect(readFileSync(join(install, "bin", "crew"), "utf8")).toBe("new");
+  expect(readFileSync(join(`${install}.previous`, "bin", "crew"), "utf8")).toBe("old");
 });

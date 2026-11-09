@@ -617,7 +617,7 @@ test("2026-11-09-003 AC-2: a refresh killed inside an install leaves the runtime
   expect(text).not.toContain("Commit:");
 });
 
-test("2026-11-09-003 AC-42: while the lock is held the reader gives no instruction", () => {
+test("2026-11-09-003 AC-46: while the lock is held the reader gives no instruction", () => {
   const k = killedInside();
   expect(k.child.signal, k.child.stderr).toBe("SIGKILL");
   const ahead = new Date(Date.now() + 60_000);

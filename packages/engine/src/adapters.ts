@@ -283,6 +283,36 @@ export type MarkedInstall =
   /** `began`: the throw came from the block that holds the install's writes; `partly`: a write had ended. */
   | { kind: "threw"; message: string; began: boolean; partly: boolean };
 
+/** What a write of the mark needs: its key, the run's version, time and commit, and where a failure is told. */
+interface MarkWrite {
+  paths: CrewPaths;
+  /** The mark's key: the engine's canonical root. */
+  root: string;
+  version: string;
+  at: string;
+  /** The commit `HEAD` named when the run began to write; null when there is none, and then nothing is written. */
+  head: string | null;
+  /** Told the quoted reason each time a write of the mark fails. */
+  markFailed: (why: string) => void;
+}
+
+/** One fenced write of the mark: nothing with no commit to name; a write that fails is told to `markFailed` and never stops the caller. */
+function writeMark(o: MarkWrite, write: (head: string) => void): void {
+  if (o.head === null) return;
+  try {
+    write(o.head);
+  } catch (error) {
+    o.markFailed(quoted((error as Error).message));
+  }
+}
+
+/** One note of the mark, fenced: the runtimes under the key, and whether the register entry was appended. */
+function noteMark(o: MarkWrite, runtimes: UncommittedEntry["runtimes"], register: boolean): void {
+  writeMark(o, (head) =>
+    noteUpdated(o.paths, o.root, { version: o.version, at: o.at, head, runtimes, register }),
+  );
+}
+
 /**
  * One runtime installed under the not-committed mark, for a caller that holds the adapters lock
  * (item 2026-11-09-003): the refresh and the hand install share it. The mark names the runtime
@@ -296,37 +326,17 @@ export type MarkedInstall =
  * nothing is noted. A write of the mark that fails is told to `markFailed` and never stops the
  * install.
  */
-export function installUnderMark(o: {
-  paths: CrewPaths;
-  /** The mark's key: the engine's canonical root. */
-  root: string;
-  version: string;
-  at: string;
-  head: string | null;
-  name: RuntimeName;
-  install: () => Installed | { refused: string };
-  markFailed: (why: string) => void;
-}): MarkedInstall {
-  const fenced = (write: () => void) => {
-    if (o.head === null) return;
-    try {
-      write();
-    } catch (error) {
-      o.markFailed(quoted((error as Error).message));
-    }
-  };
+export function installUnderMark(
+  o: MarkWrite & { name: RuntimeName; install: () => Installed | { refused: string } },
+): MarkedInstall {
   const note = (config: boolean, unfinished: boolean) =>
-    fenced(() =>
-      noteUpdated(o.paths, o.root, {
-        version: o.version,
-        at: o.at,
-        head: o.head as string,
-        runtimes: [{ name: o.name, config, ...(unfinished ? { unfinished: true as const } : {}) }],
-        register: false,
-      }),
+    noteMark(
+      o,
+      [{ name: o.name, config, ...(unfinished ? { unfinished: true as const } : {}) }],
+      false,
     );
   const before = o.head === null ? null : markText(o.paths);
-  const restore = () => fenced(() => restoreMark(o.paths, before));
+  const restore = () => writeMark(o, () => restoreMark(o.paths, before));
   note(false, true);
   let done: Installed | { refused: string };
   try {
@@ -441,7 +451,7 @@ export function removeByHand(
   runtime: Runtime,
   o: { home: string },
 ):
-  | { rewritten: string[]; removed: string[]; kept?: Kept; markFailed?: string }
+  | { rewritten: string[]; removed: string[]; kept?: Kept; marked?: true; markFailed?: string }
   | { refused: string } {
   const dirs: InstallDirs = { project: paths.root, home: o.home };
   if (baseCommitOf(paths.root) === null) return removeRuntime(runtime, "project", dirs);
@@ -451,11 +461,12 @@ export function removeByHand(
       () => {
         const done = removeRuntime(runtime, "project", dirs);
         if ("refused" in done) return done;
+        // `marked`: the removal ran under the mark, so the caller reads what is still to commit.
         try {
           dropRuntime(paths, runtime.name);
-          return done;
+          return { ...done, marked: true as const };
         } catch (error) {
-          return { ...done, markFailed: quoted((error as Error).message) };
+          return { ...done, marked: true as const, markFailed: quoted((error as Error).message) };
         }
       },
       { what: "adapter refresh", waitMs: handLockWait.ms },
@@ -651,26 +662,29 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
     for (const a of toInstall) set(a, "stale", "time budget");
     return finish();
   }
-  // The not-committed mark (item 2026-11-09-001): written right after each install, before the
-  // version is recorded and the register entry appended, so a throw of either, or a kill after an
+  // The not-committed mark (items 2026-11-09-001 and 2026-11-09-003): each install is noted
+  // before it begins and once it has returned (`installUnderMark`), before the version is
+  // recorded and the register entry appended, so a throw of either, or a kill inside or after an
   // install, leaves the reminder. With no commit to name there is nothing to tie a change to, and
   // no mark. A write that fails is said once and never undoes the refresh.
   const at = nowIso();
   const noted: UncommittedEntry["runtimes"] = [];
   let head: string | null = null;
-  const mark = (runtimes: UncommittedEntry["runtimes"], register: boolean) => {
-    if (head === null) return;
-    try {
-      noteUpdated(paths, o.root, { version: o.version, at, head, runtimes, register });
-    } catch (error) {
-      refresh.markFailed ??= quoted((error as Error).message);
-    }
-  };
   try {
     withLock(
       lock,
       () => {
         head = baseCommitOf(paths.root);
+        const write: MarkWrite = {
+          paths,
+          root: o.root,
+          version: o.version,
+          at,
+          head,
+          markFailed: (why) => {
+            refresh.markFailed ??= why;
+          },
+        };
         const still = toInstall.filter((a) => {
           if (isStale(check(a.runtime, a.root))) return true;
           set(a, "up to date");
@@ -691,16 +705,9 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
                   continue;
                 }
                 const outcome = installUnderMark({
-                  paths,
-                  root: o.root,
-                  version: o.version,
-                  at,
-                  head,
+                  ...write,
                   name: a.runtime.name,
                   install: () => (o.install ?? installRuntime)(a.runtime, "project", dirs, a.root),
-                  markFailed: (why) => {
-                    refresh.markFailed ??= why;
-                  },
                 });
                 if (outcome.kind === "installed") {
                   // The files are whole and noted; whether the adapter is ok is the check's word.
@@ -752,7 +759,7 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
             runtimes: noted,
             register: refresh.appended,
           };
-          if (refresh.appended) mark(noted, true);
+          if (refresh.appended) noteMark(write, noted, true);
         }
       },
       lockOptions,
