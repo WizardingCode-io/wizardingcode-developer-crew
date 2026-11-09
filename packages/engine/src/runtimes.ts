@@ -1509,6 +1509,40 @@ function stripHooks(existing: unknown, isCrew: (entry: unknown) => boolean): unk
   return Object.keys(hooks).length ? { ...rest, hooks } : rest;
 }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** A folder a removal left in place, and the runtimes whose adapters still use it. */
+export interface Kept {
+  path: string;
+  by: RuntimeName[];
+}
+/**
+ * The other runtimes whose adapter of this scope shares the skill folder: the same folder in the
+ * table, and a configuration that still holds crew's hook. A configuration that cannot be read
+ * counts as one that does, so a folder in doubt is kept.
+ */
+function sharingSkill(
+  removed: Runtime,
+  scope: Scope,
+  dirs: InstallDirs,
+  skillTarget: string,
+): RuntimeName[] {
+  const by: RuntimeName[] = [];
+  for (const name of RUNTIME_NAMES) {
+    if (name === "claude" || name === removed.name) continue;
+    const other = RUNTIMES[name];
+    if (join(resolveScoped(other.skillsDir[scope], dirs), SKILL_FOLDER) !== skillTarget) continue;
+    const config = resolveScoped(
+      scope === "project" ? other.config.project : other.config.user,
+      dirs,
+    );
+    try {
+      if (!existsSync(config)) continue;
+      if (rootOf(readFileSync(config, "utf8"), other, "") !== null) by.push(name);
+    } catch {
+      by.push(name);
+    }
+  }
+  return by;
+}
 /**
  * The rollback of `installRuntime` (judgement round 2): crew's entries stripped from the merged
  * configuration (every foreign entry and every other key kept; a file crew alone filled, or the
@@ -1519,7 +1553,7 @@ export function removeRuntime(
   runtime: Runtime,
   scope: Scope,
   dirs: InstallDirs,
-): { rewritten: string[]; removed: string[] } | { refused: string } {
+): { rewritten: string[]; removed: string[]; kept?: Kept } | { refused: string } {
   const rewritten: string[] = [];
   const removed: string[] = [];
   const configPath = resolveScoped(
@@ -1553,7 +1587,10 @@ export function removeRuntime(
     }
   }
   const skillTarget = join(resolveScoped(runtime.skillsDir[scope], dirs), SKILL_FOLDER);
-  if (existsSync(skillTarget)) {
+  // The skill folder is one for every runtime that names it: it stays while another runtime's
+  // adapter of this scope remains, and goes with the last one (item 2026-11-09-003).
+  const by = existsSync(skillTarget) ? sharingSkill(runtime, scope, dirs, skillTarget) : [];
+  if (existsSync(skillTarget) && by.length === 0) {
     rmSync(skillTarget, { recursive: true, force: true });
     removed.push(skillTarget);
   }
@@ -1567,7 +1604,7 @@ export function removeRuntime(
         removed.push(join(agentsTarget, name));
       }
   }
-  return { rewritten, removed };
+  return { rewritten, removed, ...(by.length ? { kept: { path: skillTarget, by } } : {}) };
 }
 
 const ROOT_IN_COMMAND = /node (\S+)\/dist\/crew\.mjs hook\b/;

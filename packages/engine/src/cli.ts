@@ -4,9 +4,12 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   type AdapterStatus,
   foreignText,
+  type HandInstall,
+  installByHand,
   markFailedText,
   quoted,
   refreshAdapters,
+  removeByHand,
   resultText,
   unwrittenMark,
 } from "./adapters.ts";
@@ -112,7 +115,13 @@ import {
   updateEvidence,
   whoDecides,
 } from "./evidence.ts";
-import { changedPaths, changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
+import {
+  baseCommitOf,
+  changedPaths,
+  changedWatchedPaths,
+  hashPaths,
+  isGitRepo,
+} from "./fingerprint.ts";
 import {
   createFreeFile,
   createFreeFiles,
@@ -322,6 +331,7 @@ import {
   checkRuntime,
   ENGINE_EVENTS,
   type EngineEvent,
+  type Installed,
   installRuntime,
   listLines,
   pluginRoot,
@@ -1081,7 +1091,15 @@ async function taskGate(
     `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); ${waysPastCap(opened.work.id, `gate ${task}`)}`,
   );
   if (held) return held;
-  const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
+  // Under the run marker, as crew tdd and crew gate run (finding 230): the Stop hook lets one
+  // turn end while a task's gate runs.
+  const result = await withRunning(
+    env.paths,
+    opened.work.id,
+    env.session,
+    `crew task ${opened.work.id} gate ${task}`,
+    () => runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope),
+  );
   const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped;
   const planned = planTaskJudgement(env, {
     work: opened.work,
@@ -6495,23 +6513,57 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(
             "claude is installed as a plugin (claude plugin install wizardingcode-developer-crew@wizardingcode-plugins)",
           );
-        const done = installRuntime(runtime, scope ?? "project", dirs, root);
-        // A refusal and a leftover name what a cloned repository wrote: quoted (item 2026-11-08-002,
-        // AC-24); a leftover's path is shown relative to the project when it lies under it.
-        if ("refused" in done) return refuse(quoted(done.refused));
+        // At project scope the install runs under the adapters lock and the not-committed mark
+        // (item 2026-11-09-003); at user scope, which is no checkout, as it always did. A refusal
+        // and a leftover name what a cloned repository wrote: quoted (item 2026-11-08-002, AC-24);
+        // a leftover's path is shown relative to the project when it lies under it.
+        let done: Installed;
+        let marked: HandInstall | null = null;
+        if (scope === "user") {
+          const user = installRuntime(runtime, "user", dirs, root);
+          if ("refused" in user) return refuse(quoted(user.refused));
+          done = user;
+        } else {
+          const hand = installByHand(env.paths, runtime, {
+            root,
+            version: VERSION,
+            home: dirs.home,
+          });
+          if ("refused" in hand) return refuse(hand.refused);
+          done = hand.done;
+          marked = hand;
+        }
         const shown = (p: string) =>
           quoted(p.startsWith(`${env.paths.root}/`) ? p.slice(env.paths.root.length + 1) : p);
+        // What is now to commit, from the mark the install wrote; read only when it wrote one.
+        const own = canonical(root);
+        const reminder = marked?.entry
+          ? uncommittedAdapters(env.paths, {
+              clear: true,
+              also: marked.markFailed ? { root: own, entry: marked.entry } : undefined,
+            })
+          : null;
         const lines = [
           ...done.files,
           ...done.removed.map((p) => `removed ${shown(p)}`),
           ...done.left.map((p) => `left ${shown(p)}`),
           ...(done.trust ? [`trust: ${done.trust}`] : []),
+          ...(marked?.markFailed ? [markFailedText(marked.markFailed)] : []),
+          ...(reminder ? [notCommittedLine(reminder, own)] : []),
         ];
         return ok(lines.join("\n"), {
           files: done.files,
           removed: done.removed,
           left: done.left,
           trust: done.trust,
+          ...(reminder
+            ? {
+                adaptersUncommitted: {
+                  parts: reminderParts(reminder, { own }),
+                  command: reminder.command,
+                },
+              }
+            : {}),
         });
       }
       if (sub === "remove") {
@@ -6521,18 +6573,47 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(
             "claude is installed as a plugin (claude plugin uninstall wizardingcode-developer-crew@wizardingcode-plugins)",
           );
-        const done = removeRuntime(runtime, scope ?? "project", dirs);
-        if ("refused" in done) return refuse(done.refused);
+        const removed: ReturnType<typeof removeByHand> =
+          scope === "user"
+            ? removeRuntime(runtime, "user", dirs)
+            : removeByHand(env.paths, runtime, { home: dirs.home });
+        if ("refused" in removed) return refuse(removed.refused);
+        const done = removed;
         const lines = [
           ...done.rewritten.map((p) => `rewritten ${p}`),
           ...done.removed.map((p) => `removed ${p}`),
+          ...(done.kept
+            ? [`kept ${done.kept.path} (still used by ${done.kept.by.join(", ")})`]
+            : []),
         ];
-        return ok(
+        // What the mark still holds to commit, once the removed runtime left it (item
+        // 2026-11-09-003); with no commit to name there is no mark to read.
+        const own = canonical(root);
+        const reminder =
+          scope !== "user" && baseCommitOf(env.paths.root) !== null
+            ? uncommittedAdapters(env.paths, { clear: true })
+            : null;
+        const markFailed = done.markFailed;
+        const text = [
           lines.length
             ? lines.join("\n")
             : `nothing of crew's installed for ${runtime.name} at ${scope ?? "project"} scope`,
-          { rewritten: done.rewritten, removed: done.removed },
-        );
+          ...(markFailed ? [markFailedText(markFailed)] : []),
+          ...(reminder ? [notCommittedLine(reminder, own)] : []),
+        ].join("\n");
+        return ok(text, {
+          rewritten: done.rewritten,
+          removed: done.removed,
+          ...(done.kept ? { kept: done.kept } : {}),
+          ...(reminder
+            ? {
+                adaptersUncommitted: {
+                  parts: reminderParts(reminder, { own }),
+                  command: reminder.command,
+                },
+              }
+            : {}),
+        });
       }
       const checked = checkRuntime(runtime, scope ?? null, dirs, root);
       return {

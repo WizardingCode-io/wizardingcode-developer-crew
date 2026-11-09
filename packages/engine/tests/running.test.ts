@@ -84,6 +84,60 @@ test("AC-14 (finding 146): crew gate run and crew tdd write the marker while the
   expect(existsSync(join(root, marker))).toBe(false);
 }, 60_000);
 
+test("2026-11-09-003 AC-17: crew task gate keeps the run marker while it runs, and removes it after", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh t.sh" } }),
+    "t.sh": "exit 0\n",
+    "src/a.ts": "x",
+  });
+  const env = { ...testEnv(), CLAUDE_CODE_SESSION_ID: "sess-9" };
+  const run = cliIo(root, env);
+  await run("detect");
+  const started = await run(
+    "start",
+    "A change",
+    "--answers",
+    JSON.stringify({
+      work_type: "chore",
+      is_vague: 0.1,
+      scope: 0,
+      touches_auth: 0,
+      touches_payments: 0,
+      touches_personal_data: 0,
+      touches_data_migration: 0,
+      touches_infra: 0,
+      touches_public_api: 0,
+    }),
+    "--criterion",
+    "a says A",
+  );
+  const id = /started (\S+)/.exec(started.out)?.[1] as string;
+  write(root, "src/a.ts", "y");
+  const noted = await run(
+    "task",
+    id,
+    "note",
+    "T-1",
+    "--criteria",
+    "AC-1",
+    "--scope",
+    "src/a.ts",
+    "--text",
+    "a says A",
+  );
+  expect(noted.code, noted.err).toBe(0);
+  // The CLI runs in this process, so the marker is named by this process's pid (finding 146).
+  const marker = `.crew/work/${id}/running/${process.pid}.json`;
+  // The test command copies the marker it finds while the task's gate runs.
+  write(root, "t.sh", `cp ${marker} seen-task-gate.json 2>/dev/null; exit 0\n`);
+  await run("task", id, "gate", "T-1");
+  expect(JSON.parse(readFileSync(join(root, "seen-task-gate.json"), "utf8"))).toMatchObject({
+    command: `crew task ${id} gate T-1`,
+    session: "sess-9",
+  });
+  expect(existsSync(join(root, marker))).toBe(false);
+}, 60_000);
+
 function stopSession() {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
@@ -204,4 +258,16 @@ test("AC-13 (finding 146): each run keeps its own marker under running/: two liv
   });
   expect(existsSync(runningFile(paths, item.id))).toBe(false);
   expect(existsSync(other)).toBe(true);
+});
+
+test("2026-11-09-003 AC-17 (the Stop hook): a task gate's marker lets one turn end, naming the gate", () => {
+  const { ctx, work, mark } = stopSession();
+  mark({ command: `crew task ${work.id} gate T-1` });
+  const first = onStop(ctx);
+  expect(first.decision).toBeUndefined();
+  expect(String(first.systemMessage)).toContain(
+    `Crew: crew task ${work.id} gate T-1 is still running (started 2026-10-23T22:00:00.000Z)`,
+  );
+  // The same run again: the permit is spent.
+  expect(onStop(ctx).decision).toBe("block");
 });

@@ -22,6 +22,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { handLockWait } from "../src/adapters.ts";
 import { markPath, noteUpdated } from "../src/adapters-uncommitted.ts";
 import { ROUTE_QUESTIONS } from "../src/classify.ts";
 import { type CliIo, main } from "../src/cli.ts";
@@ -29,8 +30,10 @@ import { appendDecision, listDecisions } from "../src/decisions.ts";
 import { envRecordPath } from "../src/environment.ts";
 import { emptyEvidence, loadEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
 import { jsonText, nowIso, writeJson } from "../src/fs.ts";
+import { onSessionStart } from "../src/hooks/session-start.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { readBase } from "../src/knowledge.ts";
+import { COMMAND_LOCK_WAIT_MS } from "../src/lock.ts";
 import * as mailModule from "../src/mail.ts";
 import {
   mailbox,
@@ -72,6 +75,7 @@ import {
   makeRepo as bareRepo,
   filedRuling,
   git,
+  hookContext,
   repoPaths,
   spyMailReads,
   tempDir,
@@ -8823,7 +8827,12 @@ test("SP6-T4 AC-3: crew runtime list; install merges the hook configuration, cop
   write(root, ".cursor/agents/mine.md", "---\nname: mine\n---\n\nmine\n");
   const installed = await c.run("runtime", "install", "cursor");
   expect(installed.code, installed.err).toBe(0);
-  const files = installed.out.trim().split("\n");
+  // The last line says what is now to commit (item 2026-11-09-003); the lines before it are the files.
+  const printed = installed.out.trim().split("\n");
+  expect(printed.at(-1)).toStartWith(
+    `adapters not committed: cursor updated by crew ${VERSION} and not committed. Commit: git add -A -- `,
+  );
+  const files = printed.slice(0, -1);
   expect(files[0]).toBe(join(root, ".cursor", "hooks.json"));
   for (const f of files) expect(isAbsolute(f), f).toBe(true);
   expect(files).toContain(join(root, ".agents", "skills", "crew-method", "SKILL.md"));
@@ -8978,14 +8987,17 @@ test("SP6-T4 AC-3: crew runtime list; install merges the hook configuration, cop
   expect(removedCursor.code, removedCursor.err).toBe(0);
   const cursorLines = removedCursor.out.trim().split("\n");
   expect(cursorLines[0]).toBe(`rewritten ${join(root, ".cursor", "hooks.json")}`);
-  expect(cursorLines).toContain(`removed ${join(root, ".agents", "skills", "crew-method")}`);
+  // The skill folder is shared: it stays while Codex's and OpenCode's adapters remain (item 2026-11-09-003).
+  expect(cursorLines).toContain(
+    `kept ${join(root, ".agents", "skills", "crew-method")} (still used by codex, opencode)`,
+  );
   expect(cursorLines).toContain(`removed ${join(root, ".cursor", "agents", "crew-tech-lead.md")}`);
   expect(cursorLines.filter((l) => l.includes("/.cursor/agents/"))).toHaveLength(23);
   expect(JSON.parse(readFileSync(join(root, ".cursor", "hooks.json"), "utf8"))).toEqual({
     version: 1,
     hooks: { stop: [mine] },
   });
-  expect(existsSync(join(root, ".agents", "skills", "crew-method"))).toBe(false);
+  expect(existsSync(join(root, ".agents", "skills", "crew-method", "SKILL.md"))).toBe(true);
   expect(existsSync(join(root, ".cursor", "agents", "crew-tech-lead.md"))).toBe(false);
   expect(readFileSync(join(root, ".cursor", "agents", "mine.md"), "utf8")).toBe(
     "---\nname: mine\n---\n\nmine\n",
@@ -9011,12 +9023,14 @@ test("SP6-T4 AC-3: crew runtime list; install merges the hook configuration, cop
   expect(existsSync(join(root, ".opencode", "plugins", "wizardingcode-crew.js"))).toBe(false);
   expect(existsSync(join(root, ".opencode", "agents", "crew-researcher.md"))).toBe(false);
   const removedCodex = await c.run("runtime", "remove", "codex");
+  // The last adapter that used the skill folder: the folder goes with it.
   expect(removedCodex).toEqual({
     code: 0,
-    out: `removed ${join(root, ".codex", "hooks.json")}\n`,
+    out: `removed ${join(root, ".codex", "hooks.json")}\nremoved ${join(root, ".agents", "skills", "crew-method")}\n`,
     err: "",
   });
   expect(existsSync(join(root, ".codex", "hooks.json"))).toBe(false);
+  expect(existsSync(join(root, ".agents", "skills", "crew-method"))).toBe(false);
   // Nothing of crew's: said, exit 0. A configuration that is not JSON: refused as at install.
   expect(await c.run("runtime", "remove", "copilot")).toEqual({
     code: 0,
@@ -13835,4 +13849,341 @@ test("2026-11-09-003 AC-20 (the fleet): a project whose refresh threw still gets
   expect(commitLineOf(run.out, A)).toBe(
     `commit in ${basename(A)}: git add -A -- '.codex/agents/crew-*' && git commit -m 'adapters refreshed by crew ${VERSION}'`,
   );
+});
+
+// Item 2026-11-09-003, Task 3: the hand install and the remove write the mark, and a removal keeps the shared skill folder (AC-8 to AC-16, AC-32, AC-48 to AC-50).
+
+const OWN_ROOT = canonical(pluginRoot());
+const NOT_COMMITTED = `adapters not committed: copilot updated by crew ${VERSION} and not committed. Commit: `;
+const lastLine = (out: string) => out.trim().split("\n").at(-1) ?? "";
+const markOf = (root: string, env: NodeJS.ProcessEnv) =>
+  JSON.parse(readFileSync(markPath(repoPaths(root, env)), "utf8")) as Record<
+    string,
+    { version: string; head: string; runtimes: unknown[]; register: boolean }
+  >;
+/** The adapters lock of a project, made by the row and stamped `ms` from now: ahead holds it, behind ages it. */
+function lockAdapters(root: string, ms: number): string {
+  const lock = join(root, ".crew", "local", "adapters", ".lock");
+  mkdirSync(lock, { recursive: true });
+  const at = new Date(Date.now() + ms);
+  utimesSync(lock, at, at);
+  return lock;
+}
+/** The text of a session start in a project, after the engine's line. */
+function startText(root: string, env: NodeJS.ProcessEnv): string {
+  const response = onSessionStart(hookContext({ session_id: "s", cwd: root }, env), {
+    source: "startup",
+  });
+  const text =
+    (response.hookSpecificOutput as { additionalContext?: string } | undefined)
+      ?.additionalContext ?? "";
+  const engine = `Engine: crew ${VERSION}.`;
+  return text.slice(text.indexOf(engine) + engine.length).trimStart();
+}
+
+test("2026-11-09-003 AC-8: a hand install writes the mark and ends with the commit command, which runs as printed", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  const installed = await io(root, env).run("runtime", "install", "copilot");
+  expect(installed.code, installed.err).toBe(0);
+  const mark = markOf(root, env);
+  expect(Object.keys(mark)).toEqual([OWN_ROOT]);
+  expect(mark[OWN_ROOT]).toMatchObject({
+    version: VERSION,
+    head: git(root, "rev-parse", "HEAD"),
+    runtimes: [{ name: "copilot", config: true }],
+    register: false,
+  });
+  const last = lastLine(installed.out);
+  expect(last.startsWith(`${NOT_COMMITTED}git add -A -- `)).toBe(true);
+  const command = last.slice(NOT_COMMITTED.length);
+  // --json carries the same, as data.
+  const second = await adapterProject(env, []);
+  const json = JSON.parse(
+    (await io(second, env).run("runtime", "install", "copilot", "--json")).out,
+  ) as { adaptersUncommitted: { parts: string[]; command: string } };
+  expect(json.adaptersUncommitted).toEqual({
+    parts: [`copilot updated by crew ${VERSION} and not committed`],
+    command,
+  });
+  // The command runs as printed, and the reminder stops.
+  const ran = spawnSync("sh", ["-c", command], {
+    cwd: root,
+    env: {
+      ...env,
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@t",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@t",
+    },
+    encoding: "utf8",
+  });
+  expect(ran.status, ran.stderr).toBe(0);
+  expect(git(root, "status", "--porcelain")).toBe("");
+  expect(startText(root, env)).not.toContain("adapters:");
+  expect(existsSync(markPath(repoPaths(root, env)))).toBe(false);
+});
+
+test("2026-11-09-003 AC-9: a start on another root reminds of a hand install nobody committed", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  // A second root is a second bundle: the hand install runs from the other root's copy of the built one.
+  const other = otherEngineRoot();
+  const child = spawnSync(
+    "node",
+    [join(other, "dist", "crew.mjs"), "runtime", "install", "copilot"],
+    {
+      cwd: root,
+      env,
+      encoding: "utf8",
+    },
+  );
+  expect(child.status, child.stderr).toBe(0);
+  expect(Object.keys(markOf(root, env))).toEqual([other]);
+  const text = startText(root, env);
+  expect(
+    text.startsWith(
+      `${NOT_COMMITTED.replace("adapters not committed: ", "adapters: ")}git add -A -- `,
+    ),
+  ).toBe(true);
+  expect(text).toContain("'.github/hooks/crew.json'");
+});
+
+test("2026-11-09-003 AC-10: with no repository, and at user scope, a hand install is as it was", async () => {
+  const env = fleetEnv();
+  // No repository: no lock is taken (one is held), no mark, the lines of the install alone.
+  const first = tempDir("crew-no-repo-");
+  const second = tempDir("crew-no-repo-");
+  lockAdapters(first, 60_000);
+  const ran = await io(first, env).run("runtime", "install", "copilot");
+  expect(ran.code, ran.err).toBe(0);
+  expect(existsSync(join(first, ".crew", "local", "adapters", "uncommitted.json"))).toBe(false);
+  expect(ran.out).not.toContain("adapters not committed");
+  const direct = installRuntime(
+    RUNTIMES.copilot,
+    "project",
+    { project: second, home: env.HOME ?? "" },
+    pluginRoot(),
+  );
+  if ("refused" in direct) throw new Error(direct.refused);
+  const printed = ran.out.trim().split("\n");
+  const expected = [
+    ...direct.files.map((path) => path.slice(second.length)),
+    ...(direct.trust ? [`trust: ${direct.trust}`] : []),
+  ];
+  expect(printed.map((line) => (line.startsWith(first) ? line.slice(first.length) : line))).toEqual(
+    expected,
+  );
+  // User scope, in a repository with a commit: no mark either.
+  const root = await adapterProject(env, []);
+  const user = await io(root, env).run("runtime", "install", "gemini", "--scope", "user");
+  expect(user.code, user.err).toBe(0);
+  expect(user.out).not.toContain("adapters not committed");
+  expect(existsSync(markPath(repoPaths(root, env)))).toBe(false);
+});
+
+test("2026-11-09-003 AC-32: in a repository with no commit a hand install and a remove take no lock and write no mark", async () => {
+  const env = fleetEnv();
+  const root = tempDir("crew-no-commit-");
+  git(root, "init", "-q");
+  lockAdapters(root, 60_000);
+  const c = io(root, env);
+  const installed = await c.run("runtime", "install", "copilot");
+  expect(installed.code, installed.err).toBe(0);
+  expect(installed.out).not.toContain("adapters not committed");
+  const removed = await c.run("runtime", "remove", "copilot");
+  expect(removed.code, removed.err).toBe(0);
+  expect(removed.out).not.toContain("adapters not committed");
+  expect(existsSync(join(root, ".crew", "local", "adapters", "uncommitted.json"))).toBe(false);
+});
+
+test("2026-11-09-003 AC-11: a hand install and a remove refuse while the adapters lock is held, and break one a dead process left", async () => {
+  // The wait is the one of a command a person types; the row shortens it for the two refusals.
+  expect(handLockWait.ms).toBe(COMMAND_LOCK_WAIT_MS);
+  const env = fleetEnv();
+  const A = await adapterProject(env, []);
+  const B = await adapterProject(env, ["copilot"]);
+  lockAdapters(A, 60_000);
+  lockAdapters(B, 60_000);
+  handLockWait.ms = 200;
+  try {
+    const install = await io(A, env).run("runtime", "install", "copilot");
+    expect(install.code).toBe(1);
+    expect(install.err.trim()).toBe(
+      "another session is updating the adapters: run crew runtime install copilot again",
+    );
+    expect(git(A, "status", "--porcelain")).toBe("");
+    const remove = await io(B, env).run("runtime", "remove", "copilot");
+    expect(remove.code).toBe(1);
+    expect(remove.err.trim()).toBe(
+      "another session is updating the adapters: run crew runtime remove copilot again",
+    );
+    expect(git(B, "status", "--porcelain")).toBe("");
+  } finally {
+    handLockWait.ms = COMMAND_LOCK_WAIT_MS;
+  }
+  // A lock twenty seconds old is a dead process's: the install breaks it and goes on.
+  const C = await adapterProject(env, []);
+  lockAdapters(C, -20_000);
+  const went = await io(C, env).run("runtime", "install", "copilot");
+  expect(went.code, went.err).toBe(0);
+  expect(lastLine(went.out).startsWith(NOT_COMMITTED)).toBe(true);
+});
+
+test("2026-11-09-003 AC-13: a hand install over an unfinished runtime ends it finished", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  noteUpdated(repoPaths(root, env), OWN_ROOT, {
+    ...copilotMark(root),
+    runtimes: [{ name: "copilot", config: false, unfinished: true }],
+  });
+  write(root, SKILL_PAGE_OF_AN_ADAPTER, "# half written\n");
+  const installed = await io(root, env).run("runtime", "install", "copilot");
+  expect(installed.code, installed.err).toBe(0);
+  expect(installed.out).toContain("copilot updated by crew");
+  expect(installed.out).toContain("Commit:");
+  expect(installed.out).not.toContain("left unfinished");
+  expect(markOf(root, env)[OWN_ROOT]?.runtimes).toEqual([{ name: "copilot", config: true }]);
+});
+
+test("2026-11-09-003 AC-14: a refused hand install leaves the mark as it was, and one that fails after writing leaves the runtime unfinished", async () => {
+  const env = fleetEnv();
+  // Refused: a configuration that is not JSON.
+  const refusedIn = await adapterProject(env, []);
+  noteUpdated(repoPaths(refusedIn, env), "/r/other", {
+    ...copilotMark(refusedIn),
+    runtimes: [{ name: "codex", config: false }],
+  });
+  const before = readFileSync(markPath(repoPaths(refusedIn, env)), "utf8");
+  write(refusedIn, ".github/hooks/crew.json", "{not json");
+  const refused = await io(refusedIn, env).run("runtime", "install", "copilot");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("is not JSON: fix or move it first");
+  expect(readFileSync(markPath(repoPaths(refusedIn, env)), "utf8")).toBe(before);
+  // Fails after the skill is copied: the agents' folder cannot be written.
+  const failedIn = await adapterProject(env, []);
+  const agents = join(failedIn, ".github", "agents");
+  mkdirSync(agents, { recursive: true });
+  const failed = await readOnlyFolder(agents, () =>
+    io(failedIn, env).run("runtime", "install", "copilot"),
+  );
+  expect(failed.code).toBe(1);
+  expect(
+    failed.err.trim().endsWith("; partly written: run crew runtime install copilot again"),
+  ).toBe(true);
+  expect(markOf(failedIn, env)[OWN_ROOT]?.runtimes).toEqual([
+    { name: "copilot", config: false, unfinished: true },
+  ]);
+});
+
+test("2026-11-09-003 AC-15: a remove takes its runtime out of every entry of the mark", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  const c = io(root, env);
+  expect((await c.run("runtime", "install", "copilot")).code).toBe(0);
+  expect((await c.run("runtime", "install", "codex")).code).toBe(0);
+  // A second root that names Copilot too, written by hand.
+  const mark = markOf(root, env);
+  writeFileSync(
+    markPath(repoPaths(root, env)),
+    JSON.stringify({
+      ...mark,
+      "/r/other": { ...mark[OWN_ROOT], runtimes: [{ name: "copilot", config: false }] },
+    }),
+  );
+  const removed = await c.run("runtime", "remove", "copilot");
+  expect(removed.code, removed.err).toBe(0);
+  expect(Object.keys(markOf(root, env))).toEqual([OWN_ROOT]);
+  expect(markOf(root, env)[OWN_ROOT]?.runtimes).toEqual([{ name: "codex", config: true }]);
+  expect(lastLine(removed.out).startsWith("adapters not committed: codex updated by crew")).toBe(
+    true,
+  );
+  const last = await c.run("runtime", "remove", "codex");
+  expect(last.code, last.err).toBe(0);
+  expect(last.out).not.toContain("adapters not committed");
+  expect(existsSync(markPath(repoPaths(root, env)))).toBe(false);
+});
+
+test("2026-11-09-003 AC-16: a hand install whose mark cannot be written still installs, says so and gives the command", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  mkdirSync(markPath(repoPaths(root, env)), { recursive: true });
+  writeFileSync(join(markPath(repoPaths(root, env)), "in-the-way"), "x\n");
+  const installed = await io(root, env).run("runtime", "install", "copilot");
+  expect(installed.code, installed.err).toBe(0);
+  expect(existsSync(join(root, SKILL_PAGE_OF_AN_ADAPTER))).toBe(true);
+  const lines = installed.out.trim().split("\n");
+  expect(lines.some((l) => l.startsWith("the not-committed mark was not written ("))).toBe(true);
+  expect(lastLine(installed.out).startsWith(`${NOT_COMMITTED}git add -A -- `)).toBe(true);
+});
+
+test("2026-11-09-003 AC-48: a remove keeps the skill folder another adapter uses, and the last adapter takes it", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  const c = io(root, env);
+  const skill = join(root, ".agents", "skills", "crew-method");
+  expect((await c.run("runtime", "install", "copilot")).code).toBe(0);
+  expect((await c.run("runtime", "install", "codex")).code).toBe(0);
+  const removed = await c.run("runtime", "remove", "copilot");
+  expect(removed.code, removed.err).toBe(0);
+  const lines = removed.out.trim().split("\n");
+  expect(lines).toContain(`kept ${skill} (still used by codex)`);
+  expect(lines).not.toContain(`removed ${skill}`);
+  expect(existsSync(join(skill, "SKILL.md"))).toBe(true);
+  const last = await c.run("runtime", "remove", "codex");
+  expect(last.out.trim().split("\n")).toContain(`removed ${skill}`);
+  expect(existsSync(skill)).toBe(false);
+  // --json names the folder kept and who uses it.
+  const second = await adapterProject(env, []);
+  const d = io(second, env);
+  await d.run("runtime", "install", "copilot");
+  await d.run("runtime", "install", "codex");
+  const json = JSON.parse((await d.run("runtime", "remove", "copilot", "--json")).out) as {
+    kept: { path: string; by: string[] };
+  };
+  expect(json.kept).toEqual({
+    path: join(second, ".agents", "skills", "crew-method"),
+    by: ["codex"],
+  });
+});
+
+test("2026-11-09-003 AC-49: the folder is kept for a configuration that cannot be read, and at user scope", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  const c = io(root, env);
+  expect((await c.run("runtime", "install", "copilot")).code).toBe(0);
+  // Codex's configuration is there and cannot be read as a file.
+  mkdirSync(join(root, ".codex", "hooks.json"), { recursive: true });
+  writeFileSync(join(root, ".codex", "hooks.json", "inside"), "x\n");
+  const removed = await c.run("runtime", "remove", "copilot");
+  expect(removed.code, removed.err).toBe(0);
+  expect(removed.out.trim().split("\n")).toContain(
+    `kept ${join(root, ".agents", "skills", "crew-method")} (still used by codex)`,
+  );
+  // The user scope, under the row's own home.
+  const home = env.HOME ?? "";
+  const skill = join(home, ".agents", "skills", "crew-method");
+  expect((await c.run("runtime", "install", "gemini", "--scope", "user")).code).toBe(0);
+  expect((await c.run("runtime", "install", "cursor", "--scope", "user")).code).toBe(0);
+  const first = await c.run("runtime", "remove", "gemini", "--scope", "user");
+  expect(first.out.trim().split("\n")).toContain(`kept ${skill} (still used by cursor)`);
+  expect(existsSync(join(skill, "SKILL.md"))).toBe(true);
+  const second = await c.run("runtime", "remove", "cursor", "--scope", "user");
+  expect(second.out.trim().split("\n")).toContain(`removed ${skill}`);
+  expect(existsSync(skill)).toBe(false);
+});
+
+test("2026-11-09-003 AC-50: a refused remove leaves the mark as it was", async () => {
+  const env = fleetEnv();
+  const root = await adapterProject(env, []);
+  const c = io(root, env);
+  expect((await c.run("runtime", "install", "copilot")).code).toBe(0);
+  const before = readFileSync(markPath(repoPaths(root, env)), "utf8");
+  write(root, ".github/hooks/crew.json", "{not json");
+  const refused = await c.run("runtime", "remove", "copilot");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    `${join(root, ".github", "hooks", "crew.json")} is not JSON: fix or move it first`,
+  );
+  expect(readFileSync(markPath(repoPaths(root, env)), "utf8")).toBe(before);
 });

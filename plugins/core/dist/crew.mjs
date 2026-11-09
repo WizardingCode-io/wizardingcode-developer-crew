@@ -3375,6 +3375,26 @@ function stripHooks(existing, isCrew) {
   return Object.keys(hooks).length ? { ...rest, hooks } : rest;
 }
 var same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function sharingSkill(removed, scope, dirs, skillTarget) {
+  const by = [];
+  for (const name of RUNTIME_NAMES) {
+    if (name === "claude" || name === removed.name)
+      continue;
+    const other = RUNTIMES[name];
+    if (join6(resolveScoped(other.skillsDir[scope], dirs), SKILL_FOLDER) !== skillTarget)
+      continue;
+    const config = resolveScoped(scope === "project" ? other.config.project : other.config.user, dirs);
+    try {
+      if (!existsSync2(config))
+        continue;
+      if (rootOf(readFileSync4(config, "utf8"), other, "") !== null)
+        by.push(name);
+    } catch {
+      by.push(name);
+    }
+  }
+  return by;
+}
 function removeRuntime(runtime, scope, dirs) {
   const rewritten = [];
   const removed = [];
@@ -3406,7 +3426,8 @@ function removeRuntime(runtime, scope, dirs) {
     }
   }
   const skillTarget = join6(resolveScoped(runtime.skillsDir[scope], dirs), SKILL_FOLDER);
-  if (existsSync2(skillTarget)) {
+  const by = existsSync2(skillTarget) ? sharingSkill(runtime, scope, dirs, skillTarget) : [];
+  if (existsSync2(skillTarget) && by.length === 0) {
     rmSync2(skillTarget, { recursive: true, force: true });
     removed.push(skillTarget);
   }
@@ -3418,7 +3439,7 @@ function removeRuntime(runtime, scope, dirs) {
         removed.push(join6(agentsTarget, name));
       }
   }
-  return { rewritten, removed };
+  return { rewritten, removed, ...by.length ? { kept: { path: skillTarget, by } } : {} };
 }
 var ROOT_IN_COMMAND = /node (\S+)\/dist\/crew\.mjs hook\b/;
 var ROOT_IN_PLUGIN = /const ROOT = "((?:[^"\\]|\\.)*)";/;
@@ -3896,6 +3917,15 @@ function restoreMark(paths, text) {
     rmSync3(markPath(paths), { force: true });
   else
     writeText(markPath(paths), text);
+}
+function dropRuntime(paths, name) {
+  const raw = readRaw(paths);
+  if (!withoutRuntimes(raw, new Set([name]), null))
+    return;
+  if (Object.keys(raw).length === 0)
+    rmSync3(markPath(paths), { force: true });
+  else
+    writeJson(markPath(paths), raw);
 }
 function belongs(path, spec) {
   if (spec.endsWith("crew-*"))
@@ -4551,6 +4581,81 @@ function installUnderMark(o) {
   }
   note(done.configWritten, false);
   return { kind: "installed", done };
+}
+var handLockWait = { ms: COMMAND_LOCK_WAIT_MS };
+function installByHand(paths, runtime, o) {
+  const dirs = { project: paths.root, home: o.home };
+  const install = () => (o.install ?? installRuntime)(runtime, "project", dirs, o.root);
+  const head = baseCommitOf(paths.root);
+  if (head === null) {
+    const done = install();
+    return "refused" in done ? { refused: quoted(done.refused) } : { done };
+  }
+  const at = nowIso();
+  let markFailed;
+  try {
+    return withLock(join10(paths.localDir, "adapters"), () => {
+      const outcome = installUnderMark({
+        paths,
+        root: canonical(o.root),
+        version: o.version,
+        at,
+        head,
+        name: runtime.name,
+        install,
+        markFailed: (why) => {
+          markFailed ??= why;
+        }
+      });
+      if (outcome.kind === "refused")
+        return { refused: quoted(outcome.refused) };
+      if (outcome.kind === "threw")
+        return {
+          refused: outcome.partly ? `${outcome.message}; partly written: run crew runtime install ${runtime.name} again` : outcome.message
+        };
+      return {
+        done: outcome.done,
+        ...markFailed ? { markFailed } : {},
+        entry: {
+          version: o.version,
+          at,
+          head,
+          runtimes: [{ name: runtime.name, config: outcome.done.configWritten }],
+          register: false
+        }
+      };
+    }, { what: "adapter refresh", waitMs: handLockWait.ms });
+  } catch (error) {
+    if (!(error instanceof LockBusy))
+      throw error;
+    return {
+      refused: `another session is updating the adapters: run crew runtime install ${runtime.name} again`
+    };
+  }
+}
+function removeByHand(paths, runtime, o) {
+  const dirs = { project: paths.root, home: o.home };
+  if (baseCommitOf(paths.root) === null)
+    return removeRuntime(runtime, "project", dirs);
+  try {
+    return withLock(join10(paths.localDir, "adapters"), () => {
+      const done = removeRuntime(runtime, "project", dirs);
+      if ("refused" in done)
+        return done;
+      try {
+        dropRuntime(paths, runtime.name);
+        return done;
+      } catch (error) {
+        return { ...done, markFailed: quoted(error.message) };
+      }
+    }, { what: "adapter refresh", waitMs: handLockWait.ms });
+  } catch (error) {
+    if (!(error instanceof LockBusy))
+      throw error;
+    return {
+      refused: `another session is updating the adapters: run crew runtime remove ${runtime.name} again`
+    };
+  }
 }
 function refreshAdapters(paths, o) {
   const dirs = { project: paths.root, home: o.home };
@@ -23050,7 +23155,7 @@ async function taskGate(env, opened, parsed, record) {
   const held = continueOrRefuse(env, opened.work, "gate", task, env.policy.team.maxGateRounds, round, `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); ${waysPastCap(opened.work.id, `gate ${task}`)}`);
   if (held)
     return held;
-  const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
+  const result = await withRunning(env.paths, opened.work.id, env.session, `crew task ${opened.work.id} gate ${task}`, () => runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope));
   const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped;
   const planned = planTaskJudgement(env, {
     work: opened.work,
@@ -27137,36 +27242,85 @@ ${drafted.lesson}`, "lesson")[0];
       if (sub === "install") {
         if (runtime.name === "claude")
           return refuse("claude is installed as a plugin (claude plugin install wizardingcode-developer-crew@wizardingcode-plugins)");
-        const done = installRuntime(runtime, scope ?? "project", dirs, root);
-        if ("refused" in done)
-          return refuse(quoted(done.refused));
+        let done;
+        let marked = null;
+        if (scope === "user") {
+          const user = installRuntime(runtime, "user", dirs, root);
+          if ("refused" in user)
+            return refuse(quoted(user.refused));
+          done = user;
+        } else {
+          const hand = installByHand(env.paths, runtime, {
+            root,
+            version: VERSION,
+            home: dirs.home
+          });
+          if ("refused" in hand)
+            return refuse(hand.refused);
+          done = hand.done;
+          marked = hand;
+        }
         const shown = (p) => quoted(p.startsWith(`${env.paths.root}/`) ? p.slice(env.paths.root.length + 1) : p);
+        const own = canonical(root);
+        const reminder = marked?.entry ? uncommittedAdapters(env.paths, {
+          clear: true,
+          also: marked.markFailed ? { root: own, entry: marked.entry } : undefined
+        }) : null;
         const lines = [
           ...done.files,
           ...done.removed.map((p) => `removed ${shown(p)}`),
           ...done.left.map((p) => `left ${shown(p)}`),
-          ...done.trust ? [`trust: ${done.trust}`] : []
+          ...done.trust ? [`trust: ${done.trust}`] : [],
+          ...marked?.markFailed ? [markFailedText(marked.markFailed)] : [],
+          ...reminder ? [notCommittedLine(reminder, own)] : []
         ];
         return ok(lines.join(`
 `), {
           files: done.files,
           removed: done.removed,
           left: done.left,
-          trust: done.trust
+          trust: done.trust,
+          ...reminder ? {
+            adaptersUncommitted: {
+              parts: reminderParts(reminder, { own }),
+              command: reminder.command
+            }
+          } : {}
         });
       }
       if (sub === "remove") {
         if (runtime.name === "claude")
           return refuse("claude is installed as a plugin (claude plugin uninstall wizardingcode-developer-crew@wizardingcode-plugins)");
-        const done = removeRuntime(runtime, scope ?? "project", dirs);
-        if ("refused" in done)
-          return refuse(done.refused);
+        const removed = scope === "user" ? removeRuntime(runtime, "user", dirs) : removeByHand(env.paths, runtime, { home: dirs.home });
+        if ("refused" in removed)
+          return refuse(removed.refused);
+        const done = removed;
         const lines = [
           ...done.rewritten.map((p) => `rewritten ${p}`),
-          ...done.removed.map((p) => `removed ${p}`)
+          ...done.removed.map((p) => `removed ${p}`),
+          ...done.kept ? [`kept ${done.kept.path} (still used by ${done.kept.by.join(", ")})`] : []
         ];
-        return ok(lines.length ? lines.join(`
-`) : `nothing of crew's installed for ${runtime.name} at ${scope ?? "project"} scope`, { rewritten: done.rewritten, removed: done.removed });
+        const own = canonical(root);
+        const reminder = scope !== "user" && baseCommitOf(env.paths.root) !== null ? uncommittedAdapters(env.paths, { clear: true }) : null;
+        const markFailed = done.markFailed;
+        const text = [
+          lines.length ? lines.join(`
+`) : `nothing of crew's installed for ${runtime.name} at ${scope ?? "project"} scope`,
+          ...markFailed ? [markFailedText(markFailed)] : [],
+          ...reminder ? [notCommittedLine(reminder, own)] : []
+        ].join(`
+`);
+        return ok(text, {
+          rewritten: done.rewritten,
+          removed: done.removed,
+          ...done.kept ? { kept: done.kept } : {},
+          ...reminder ? {
+            adaptersUncommitted: {
+              parts: reminderParts(reminder, { own }),
+              command: reminder.command
+            }
+          } : {}
+        });
       }
       const checked = checkRuntime(runtime, scope ?? null, dirs, root);
       return {

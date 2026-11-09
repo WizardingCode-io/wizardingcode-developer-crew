@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
+  dropRuntime,
   KEPT_ROOT_CREW,
   markText,
   noteUpdated,
@@ -13,7 +14,7 @@ import {
 import { appendDecision, lastEntryText, registerTampered } from "./decisions.ts";
 import { baseCommitOf, gitStatusEntries } from "./fingerprint.ts";
 import { nowIso, readText } from "./fs.ts";
-import { LockBusy, withLock } from "./lock.ts";
+import { COMMAND_LOCK_WAIT_MS, LockBusy, withLock } from "./lock.ts";
 import { type CrewPaths, canonical } from "./paths.ts";
 import { quotedText } from "./quote.ts";
 import {
@@ -23,10 +24,12 @@ import {
   type Installed,
   InstallFailed,
   installRuntime,
+  type Kept,
   RUNTIME_NAMES,
   RUNTIMES,
   type Runtime,
   type RuntimeName,
+  removeRuntime,
   resolveScoped,
   rootOf,
 } from "./runtimes.ts";
@@ -344,6 +347,125 @@ export function installUnderMark(o: {
   }
   note(done.configWritten, false);
   return { kind: "installed", done };
+}
+
+/**
+ * How long a hand install and a remove wait for the adapters lock: the wait of a command a person
+ * types, which is the age at which a lock is broken. An object, so a test can shorten the wait.
+ */
+export const handLockWait = { ms: COMMAND_LOCK_WAIT_MS };
+
+/** What a hand install did: the install's own account, and the mark's. */
+export interface HandInstall {
+  done: Installed;
+  /** Why the mark could not be written, quoted. */
+  markFailed?: string;
+  /** What the install noted, for the reader's `also` when the mark could not be written. */
+  entry?: UncommittedEntry;
+}
+
+/**
+ * `crew runtime install <name>` at project scope (item 2026-11-09-003): with a commit to name, the
+ * install runs under the adapters lock and the mark, as the refresh's does, so a person who does
+ * not commit the adapter is reminded on every root. The lock is waited for as a command waits,
+ * which is the age at which a lock is broken, so one a killed process left is broken inside the
+ * wait. With no commit to name it runs as it always did: no lock, no mark. Every refusal comes
+ * back as the text to print.
+ */
+export function installByHand(
+  paths: CrewPaths,
+  runtime: Runtime,
+  o: { root: string; version: string; home: string; install?: typeof installRuntime },
+): HandInstall | { refused: string } {
+  const dirs: InstallDirs = { project: paths.root, home: o.home };
+  const install = () => (o.install ?? installRuntime)(runtime, "project", dirs, o.root);
+  const head = baseCommitOf(paths.root);
+  if (head === null) {
+    const done = install();
+    return "refused" in done ? { refused: quoted(done.refused) } : { done };
+  }
+  const at = nowIso();
+  let markFailed: string | undefined;
+  try {
+    return withLock(
+      join(paths.localDir, "adapters"),
+      (): HandInstall | { refused: string } => {
+        const outcome = installUnderMark({
+          paths,
+          root: canonical(o.root),
+          version: o.version,
+          at,
+          head,
+          name: runtime.name,
+          install,
+          markFailed: (why) => {
+            markFailed ??= why;
+          },
+        });
+        if (outcome.kind === "refused") return { refused: quoted(outcome.refused) };
+        if (outcome.kind === "threw")
+          return {
+            refused: outcome.partly
+              ? `${outcome.message}; partly written: run crew runtime install ${runtime.name} again`
+              : outcome.message,
+          };
+        return {
+          done: outcome.done,
+          ...(markFailed ? { markFailed } : {}),
+          entry: {
+            version: o.version,
+            at,
+            head,
+            runtimes: [{ name: runtime.name, config: outcome.done.configWritten }],
+            register: false,
+          },
+        };
+      },
+      { what: "adapter refresh", waitMs: handLockWait.ms },
+    );
+  } catch (error) {
+    if (!(error instanceof LockBusy)) throw error;
+    return {
+      refused: `another session is updating the adapters: run crew runtime install ${runtime.name} again`,
+    };
+  }
+}
+
+/**
+ * `crew runtime remove <name>` at project scope (item 2026-11-09-003): with a commit to name, the
+ * removal runs under the adapters lock and takes the runtime out of the mark; a refused removal
+ * leaves the mark untouched. With no commit to name it runs as it always did.
+ */
+export function removeByHand(
+  paths: CrewPaths,
+  runtime: Runtime,
+  o: { home: string },
+):
+  | { rewritten: string[]; removed: string[]; kept?: Kept; markFailed?: string }
+  | { refused: string } {
+  const dirs: InstallDirs = { project: paths.root, home: o.home };
+  if (baseCommitOf(paths.root) === null) return removeRuntime(runtime, "project", dirs);
+  try {
+    return withLock(
+      join(paths.localDir, "adapters"),
+      () => {
+        const done = removeRuntime(runtime, "project", dirs);
+        if ("refused" in done) return done;
+        try {
+          dropRuntime(paths, runtime.name);
+          return done;
+        } catch (error) {
+          return { ...done, markFailed: quoted((error as Error).message) };
+        }
+      },
+      { what: "adapter refresh", waitMs: handLockWait.ms },
+    );
+  } catch (error) {
+    if (!(error instanceof LockBusy)) throw error;
+    return {
+      refused: `another session is updating the adapters: run crew runtime remove ${runtime.name} again`,
+    };
+  }
 }
 
 /** The refresh of one checkout, at project scope: the spec's "The refresh of one checkout", step by step. */
