@@ -72,11 +72,11 @@ function openFindings(text: string): number[] {
 // 227 (the spec review runs to its cap and never converges) fixed in 2026-11-08-001.
 // 228 (a release fixture's clone fails once under the whole suite) recorded by 2026-11-08-002.
 // 229 (the commit command of refreshed adapters never reaches the person) fixed in 2026-11-09-001.
-// 230 (a task's gate run writes no run marker, so the Stop hook holds the turn) recorded open by 2026-11-09-001.
-// 231 (the advisories the judgement left on 2026-11-09-001) recorded deferred by 2026-11-09-002.
+// 230 (a task's gate run writes no run marker, so the Stop hook holds the turn) and 231 (the advisories the
+// judgement left on 2026-11-09-001) closed by 2026-11-09-003, which also recorded and closed 232 (a removal
+// deleted the skill folder every runtime shares).
 const OPEN = [
   77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222, 224, 228,
-  230, 231,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -113,4 +113,19 @@ test("2026-10-29-001 AC-12 (the test-quality advisory at round 1): finding 198's
       .split(/\n(?=### \d+\. )/)
       .find((s) => s.startsWith("### 198. ")) ?? "";
   expect(section).toContain("- Outcome: closed by `2026-10-29-001` (AC-1)");
+});
+
+test("2026-11-09-003 AC-27: findings 230 and 231 read fixed by the item, 231 with its two refusals, and 232 is recorded closed", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const sectionOf = (n: number) =>
+    text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+  const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionOf(n))?.[1]?.trim() ?? "";
+  expect(outcomeOf(230)).toStartWith("fixed in 2026-11-09-003");
+  expect(outcomeOf(231)).toStartWith("fixed in 2026-11-09-003");
+  expect(outcomeOf(231)).toContain("(1) refused");
+  expect(outcomeOf(231)).toContain("(b) refused");
+  expect(outcomeOf(232)).toStartWith("fixed in 2026-11-09-003");
+  expect(openFindings(text)).not.toContain(230);
+  expect(openFindings(text)).not.toContain(231);
+  expect(openFindings(text)).not.toContain(232);
 });
