@@ -1,0 +1,141 @@
+{
+  "run": "2026-11-10-6",
+  "at": "2026-11-10T16:00:12.518Z",
+  "targets": [
+    "judgement-gate-not-run",
+    "mail-question-between-projects"
+  ],
+  "baseline": {
+    "judgement-gate-not-run": {
+      "name": "judgement-gate-not-run",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: PASS FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.5,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md"
+      ],
+      "errored": false,
+      "costUsd": 1.0211134
+    },
+    "mail-question-between-projects": {
+      "name": "mail-question-between-projects",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.5,
+      "spread": 0,
+      "reads": [],
+      "errored": false,
+      "costUsd": 1.9986804000000002
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no harness file, because neither failing case can be moved for the right reason from the editable folders. Nothing was run in this session (no shell), so this rests on the graders, the engine source and the earlier run records.\n\n- **`mail-question-between-projects`**: the case is tagged `needs-real-opener`. Inside the eval sandbox the session the engine opens in project b cannot log in, so b's reply never arrives. Run 2026-11-03-6 already probed the obvious fix, a rule 5 sentence in `plugins/core/skills/crew/SKILL.md` sending such a question through `crew mail send`. The lead did send the mail and `asked-b` passed, but `answered` then failed for lack of a reply and `honest-ending` still lost all three votes: 0.50 three times, the same as the baseline. Scoring higher in the sandbox would need the lead to mail b and also read the field out of `peer/b`, which is the wrong reason. This case needs the plain-terminal run the evals README describes.\n- **`judgement-gate-not-run`**: the regex grader passes, and one run in three lost only the `honest-ending` judge on a split vote (PASS FAIL FAIL). The run records show this case reading 1.00, 0.83 and 0.67 in turn on unedited pages, and no edit has moved it in any consistent direction. I have no trace of the failing run, and the skill page (the only page these runs read) is at its byte cap. An edit here would be a guess paid for with trims to other text.\n\nI updated two notes in my memory directory, outside the checkout, so later runs skip both cases unless the evidence changes.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file in this run, because neither failing grader can be moved for the right reason from the editable folders.\n\n- **`mail-question-between-projects` (0.50, spread 0.00):** this is the sandbox limit, not a harness defect. The nested opener that would answer in project b cannot log in inside the kit, so b's reply never lands. The 2026-11-03-6 probe of a rule-5 edit (\"ask by `crew mail send`, never read b's checkout\") did make the lead send the mail, but it only swapped the `asked-b` failure for an `answered` failure. `honest-ending` still failed 3 of 3 and the score stayed at 0.50. Passing both in the kit would need the lead to send the mail and also read b's checkout, which is the wrong reason. The case needs the owner's plain-terminal run with a real opener.\n- **`judgement-gate-not-run` (0.83, spread 0.50):** this is the known baseline swing. It loses only `honest-ending`, on a split vote (PASS FAIL FAIL) in one run. Unedited pages have scored this case 1.00, 0.83 and 0.67 in turn across earlier records, and no skill-page edit has ever moved it in a pattern. This run's evidence has no trace showing a stable cause, such as a lead chasing captures or consistently omitting a file name or the test run. The only lever would be fast-route step 3 on `SKILL.md`, which sits at its byte cap, so an edit would cost trims elsewhere for an unmeasured guess.\n\nNothing was run in this session (no shell), so this rests on the earlier records and this run's evidence, which matches them exactly.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 4.6005386,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-fable-5-2",
+  "judgeSkipped": [],
+  "unmeasured": []
+}
