@@ -76,8 +76,11 @@ function openFindings(text: string): number[] {
 // judgement left on 2026-11-09-001) closed by 2026-11-09-003, which also recorded and closed 232 (a removal
 // deleted the skill folder every runtime shares).
 // 208's cause (a grader whose judge call failed scored as failed) answered by 2026-11-09-004, which put the eval judge back on Fable.
+// 220 (a child's end lost under the whole suite) fixed by 2026-11-10-001, which recorded 233 (the
+// advisories the judgement left on 2026-11-09-004) and 234 (the lock row's 20 seconds of its 30).
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222, 224, 228,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 228, 233,
+  234,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -129,4 +132,26 @@ test("2026-11-09-003 AC-27: findings 230 and 231 read fixed by the item, 231 wit
   expect(openFindings(text)).not.toContain(230);
   expect(openFindings(text)).not.toContain(231);
   expect(openFindings(text)).not.toContain(232);
+});
+
+test("2026-11-10-001 AC-5: finding 220 reads fixed by the item with its cause and what the word rests on, and 233 and 234 are recorded open", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const sectionOf = (n: number) =>
+    text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+  const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionOf(n))?.[1]?.trim() ?? "";
+  expect(outcomeOf(220)).toStartWith("fixed in 2026-11-10-001");
+  // The cause, and the two proofs the word rests on.
+  expect(sectionOf(220)).toContain("Twelfth occurrence");
+  expect(outcomeOf(220)).toContain("before it returns");
+  expect(outcomeOf(220)).toContain("AC-1");
+  expect(outcomeOf(220)).toContain("AC-11");
+  // AC-12 replaced AC-11: the record names the proof the word rests on now, and where its runs are.
+  expect(outcomeOf(220)).toContain("AC-12");
+  expect(outcomeOf(220)).toContain("probes/ac11.md");
+  expect(openFindings(text)).not.toContain(220);
+  expect(sectionOf(233)).toContain("2026-11-09-004");
+  expect(sectionOf(233)).toContain("probeJudge");
+  expect(sectionOf(234)).toContain("lock.test.ts");
+  expect(openFindings(text)).toContain(233);
+  expect(openFindings(text)).toContain(234);
 });

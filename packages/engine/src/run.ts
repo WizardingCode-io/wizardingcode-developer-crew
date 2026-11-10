@@ -1,7 +1,15 @@
-import { spawn } from "node:child_process";
-import { appendFileSync, createWriteStream, mkdirSync, writeFileSync } from "node:fs";
+import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process";
+import {
+  appendFileSync,
+  closeSync,
+  constants,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, dirname, extname, join } from "node:path";
-import type { Writable } from "node:stream";
 import {
   COMMAND_WRAPPERS,
   type CommandWrapper,
@@ -21,6 +29,9 @@ function wrapperTakesNext(wrapper: CommandWrapper, option: string): boolean {
   return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
 }
 
+/** What starts a run's child: the command line and the options `runCommand` built for it. */
+export type Spawn = (command: string, options: SpawnOptions) => ChildProcess;
+
 export interface RunOptions {
   cwd: string;
   timeoutMs: number;
@@ -29,8 +40,8 @@ export interface RunOptions {
   stdin?: string;
   /** Where stderr goes when it must not mix with stdout in the log (the e2e gate grades a logs command's stdout alone); the tail still holds both. */
   stderrLogPath?: string;
-  /** The stream a log path is written through: the file's by default; a test passes one whose end is slow, to see the promise wait for it (SP9 Task 10 AC-10). */
-  openLog?: (path: string) => Writable;
+  /** What starts the child: `node:child_process`'s `spawn` by default; a test passes one whose child has already ended, never ends or throws (finding 220). */
+  spawn?: Spawn;
   /** Write the child's events, each with its time, to `eventsPathOf(logPath)` as they come (finding 220). */
   events?: boolean;
 }
@@ -43,11 +54,55 @@ export interface RunResult {
 }
 
 const TAIL_LINES = 40;
+/** How much of a log's end the tail is read from, so a log of any size costs the same to finish. */
+const TAIL_WINDOW = 256 * 1024;
+/**
+ * A log is opened empty and in append mode: every write lands at the file's end, so a process an
+ * earlier run on the same path left behind cannot write at a stale offset over a newer run's log.
+ */
+const LOG_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_APPEND;
 
 /**
- * How long a run waits for its child's `close` after the timeout's kill: a descendant that left the
- * group keeps the pipes, and a runtime can lose the child's end (finding 220), so the run then
- * resolves timed out instead of hanging.
+ * A log's last lines, at most forty, read from its end; none for a file that cannot be read. A last
+ * line with no newline is a line. When the window starts inside the file, the text up to its first
+ * newline is a cut line and is dropped; a window with no newline (one line longer than the window)
+ * is kept from its first whole character.
+ */
+export function tailOf(path: string): string[] {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return [];
+  }
+  try {
+    const size = fstatSync(fd).size;
+    const buffer = Buffer.alloc(Math.min(size, TAIL_WINDOW));
+    let read = 0;
+    while (read < buffer.length) {
+      const got = readSync(fd, buffer, read, buffer.length - read, size - buffer.length + read);
+      if (got === 0) break;
+      read += got;
+    }
+    let from = 0;
+    if (size > buffer.length) {
+      const newline = buffer.indexOf(10);
+      if (newline >= 0) from = newline + 1;
+      else while (from < read && ((buffer[from] ?? 0) & 0xc0) === 0x80) from += 1;
+    }
+    const lines = buffer.subarray(from, read).toString("utf8").split("\n");
+    if (lines.at(-1) === "") lines.pop();
+    return lines.slice(-TAIL_LINES);
+  } catch {
+    return [];
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * How long a run waits for its child's `close` after the timeout's kill: a runtime can lose the
+ * child's end (finding 220), so the run then resolves timed out instead of hanging.
  */
 export const KILL_GRACE_MS = 2000;
 
@@ -165,100 +220,110 @@ export function shellRefusal(words: readonly string[]): string | null {
   return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
 }
 
+/**
+ * Runs a command line in a shell and resolves with its exit code and the tail of its output.
+ *
+ * The child writes its output straight to the log by descriptor, and its end is read from its own
+ * fields once `spawn()` has returned, then from `close`. Nothing of the result comes from an event
+ * a runtime may emit before a listener exists: bun's `spawn()` reaps a child it finds ended and
+ * emits its `exit`, its `close` and the end of its pipes before it returns (finding 220). So a run
+ * resolves when its command exits, and a process the command left behind can still write to the log
+ * after that.
+ */
 export function runCommand(command: string, options: RunOptions): Promise<RunResult> {
-  const open = options.openLog ?? ((path: string): Writable => createWriteStream(path));
+  const spawnChild = options.spawn ?? spawn;
   mkdirSync(dirname(options.logPath), { recursive: true });
-  const log = open(options.logPath);
-  let errors: Writable | null = null;
+  const out = openSync(options.logPath, LOG_FLAGS);
+  let err = out;
   if (options.stderrLogPath) {
-    mkdirSync(dirname(options.stderrLogPath), { recursive: true });
-    errors = open(options.stderrLogPath);
-  }
-  const lines: string[] = [];
-  let partial = "";
-  const absorb = (chunk: Buffer, to: Writable = log): void => {
-    to.write(chunk);
-    partial += chunk.toString("utf8");
-    const pieces = partial.split("\n");
-    partial = pieces.pop() ?? "";
-    for (const line of pieces) {
-      lines.push(line);
-      if (lines.length > TAIL_LINES) lines.shift();
+    try {
+      mkdirSync(dirname(options.stderrLogPath), { recursive: true });
+      err = openSync(options.stderrLogPath, LOG_FLAGS);
+    } catch (error) {
+      closeSync(out);
+      throw error;
     }
+  }
+  // The child holds its own copies once it has started; the parent's are closed on every path.
+  const release = (): void => {
+    closeSync(out);
+    if (err !== out) closeSync(err);
   };
   const note = eventsWriter(options);
   note(`start ${new Date().toISOString()} ${JSON.stringify(command)}`);
   const started = Date.now();
   const at = (): string => `+${Date.now() - started}ms`;
   return new Promise((resolve) => {
-    // A detached child leads its own process group, so the timeout can kill it and everything it started.
-    const child = spawn(command, {
-      cwd: options.cwd,
-      shell: true,
-      detached: process.platform !== "win32",
-      env: options.env ?? process.env,
-      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-    });
-    child.on("spawn", () => note(`spawn ${at()} pid ${child.pid}`));
-    child.on("exit", (code, signal) => note(`exit ${at()} code ${code} signal ${signal}`));
-    for (const [name, stream] of [
-      ["stdout", child.stdout],
-      ["stderr", child.stderr],
-    ] as const) {
-      stream?.on("end", () => note(`${name} end ${at()}`));
-      stream?.on("close", () => note(`${name} close ${at()}`));
-    }
     let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (options.events) note(`probe ${at()} ${probe(child.pid)}`);
-      killTree(child.pid);
-      note(`timeout ${at()} killed the group`);
-      grace = setTimeout(() => {
-        note(`gave up ${at()} no close after the kill`);
-        // The pipes go first, so nothing a descendant writes later reaches a log stream that
-        // finish ends.
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        finish(null);
-      }, KILL_GRACE_MS);
-    }, options.timeoutMs);
-    child.stdout?.on("data", (chunk: Buffer) => absorb(chunk));
-    child.stderr?.on("data", (chunk: Buffer) => absorb(chunk, errors ?? log));
-    if (options.stdin !== undefined) child.stdin?.end(options.stdin);
-    // The promise resolves once the log streams have finished, so a caller that reads the log file
-    // right after (the deep audit reads a tool's reply from it) finds the whole output: ending the
-    // streams and resolving at once left a short file under load (SP9 Task 10). Finished once: the
-    // error and close events may both arrive, and the grace after the timeout's kill may end it first.
+    // Finished once: the error and close events may both arrive, and the grace after the timeout's
+    // kill may end the run first. The tail is the log's as it is now, stdout's lines before
+    // stderr's when stderr has its own file.
     let finished = false;
     const finish = (exit: number | null): void => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
       clearTimeout(grace);
-      if (partial) lines.push(partial);
+      const lines = tailOf(options.logPath);
+      if (options.stderrLogPath) lines.push(...tailOf(options.stderrLogPath));
       const result = {
         exit,
         durationMs: Date.now() - started,
         tail: lines.slice(-TAIL_LINES).join("\n"),
         timedOut,
       };
-      let pending = errors ? 2 : 1;
-      const closed = (): void => {
-        pending -= 1;
-        if (pending > 0) return;
-        note(`logs ended ${at()}`);
-        resolve(result);
-      };
-      log.end(closed);
-      errors?.end(closed);
+      note(`resolved ${at()}`);
+      resolve(result);
     };
-    child.on("error", (error) => {
+    const fail = (error: Error): void => {
       note(`error ${at()} ${error.message}`);
-      absorb(Buffer.from(`${error.message}\n`));
+      try {
+        appendFileSync(options.logPath, `${error.message}\n`);
+      } catch {
+        // The run ends with no child either way; the events file holds the message.
+      }
       finish(null);
-    });
+    };
+    let child: ChildProcess;
+    try {
+      // A detached child leads its own process group, so the timeout can kill it and everything it started.
+      child = spawnChild(command, {
+        cwd: options.cwd,
+        shell: true,
+        detached: process.platform !== "win32",
+        env: options.env ?? process.env,
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", out, err],
+      });
+    } catch (error) {
+      release();
+      fail(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    release();
+    // A child that has ended refuses the write; the result is the child's, never the pipe's.
+    child.stdin?.on("error", () => {});
+    if (child.exitCode !== null || child.signalCode !== null) {
+      note(`ended at return ${at()} code ${child.exitCode} signal ${child.signalCode}`);
+      child.stdin?.destroy();
+      finish(child.exitCode);
+      return;
+    }
+    child.on("spawn", () => note(`spawn ${at()} pid ${child.pid}`));
+    child.on("exit", (code, signal) => note(`exit ${at()} code ${code} signal ${signal}`));
+    timer = setTimeout(() => {
+      timedOut = true;
+      if (options.events) note(`probe ${at()} ${probe(child.pid)}`);
+      killTree(child.pid);
+      note(`timeout ${at()} killed the group`);
+      grace = setTimeout(() => {
+        note(`gave up ${at()} no close after the kill`);
+        finish(null);
+      }, KILL_GRACE_MS);
+    }, options.timeoutMs);
+    if (options.stdin !== undefined) child.stdin?.end(options.stdin);
+    child.on("error", fail);
     child.on("close", (code, signal) => {
       note(`close ${at()} code ${code} signal ${signal}`);
       finish(code);

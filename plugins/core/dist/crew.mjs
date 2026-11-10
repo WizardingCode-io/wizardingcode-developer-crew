@@ -5403,11 +5403,11 @@ function queryRefusal(paths, id, query) {
 
 // packages/engine/src/e2e.ts
 import {
-  closeSync as closeSync4,
+  closeSync as closeSync5,
   existsSync as existsSync19,
   mkdirSync as mkdirSync8,
-  openSync as openSync4,
-  readSync as readSync2,
+  openSync as openSync5,
+  readSync as readSync3,
   realpathSync as realpathSync5,
   statSync as statSync7,
   unlinkSync as unlinkSync5
@@ -5707,7 +5707,16 @@ import { join as join24 } from "node:path";
 
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
-import { appendFileSync, createWriteStream, mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  constants,
+  fstatSync,
+  mkdirSync as mkdirSync4,
+  openSync,
+  readSync,
+  writeFileSync as writeFileSync3
+} from "node:fs";
 import { basename as basename4, dirname as dirname6, extname, join as join14 } from "node:path";
 function wrapperTakesNext(wrapper, option) {
   if (takesNext(wrapper, option))
@@ -5720,6 +5729,45 @@ function wrapperTakesNext(wrapper, option) {
   return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
 }
 var TAIL_LINES = 40;
+var TAIL_WINDOW = 256 * 1024;
+var LOG_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_APPEND;
+function tailOf(path) {
+  let fd;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    return [];
+  }
+  try {
+    const size = fstatSync(fd).size;
+    const buffer = Buffer.alloc(Math.min(size, TAIL_WINDOW));
+    let read = 0;
+    while (read < buffer.length) {
+      const got = readSync(fd, buffer, read, buffer.length - read, size - buffer.length + read);
+      if (got === 0)
+        break;
+      read += got;
+    }
+    let from = 0;
+    if (size > buffer.length) {
+      const newline = buffer.indexOf(10);
+      if (newline >= 0)
+        from = newline + 1;
+      else
+        while (from < read && ((buffer[from] ?? 0) & 192) === 128)
+          from += 1;
+    }
+    const lines = buffer.subarray(from, read).toString("utf8").split(`
+`);
+    if (lines.at(-1) === "")
+      lines.pop();
+    return lines.slice(-TAIL_LINES);
+  } catch {
+    return [];
+  } finally {
+    closeSync(fd);
+  }
+}
 var KILL_GRACE_MS = 2000;
 function exists2(pid) {
   try {
@@ -5812,68 +5860,32 @@ function shellRefusal(words) {
   return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
 }
 function runCommand(command, options) {
-  const open = options.openLog ?? ((path) => createWriteStream(path));
+  const spawnChild = options.spawn ?? spawn;
   mkdirSync4(dirname6(options.logPath), { recursive: true });
-  const log = open(options.logPath);
-  let errors = null;
+  const out = openSync(options.logPath, LOG_FLAGS);
+  let err = out;
   if (options.stderrLogPath) {
-    mkdirSync4(dirname6(options.stderrLogPath), { recursive: true });
-    errors = open(options.stderrLogPath);
-  }
-  const lines = [];
-  let partial = "";
-  const absorb = (chunk, to = log) => {
-    to.write(chunk);
-    partial += chunk.toString("utf8");
-    const pieces = partial.split(`
-`);
-    partial = pieces.pop() ?? "";
-    for (const line of pieces) {
-      lines.push(line);
-      if (lines.length > TAIL_LINES)
-        lines.shift();
+    try {
+      mkdirSync4(dirname6(options.stderrLogPath), { recursive: true });
+      err = openSync(options.stderrLogPath, LOG_FLAGS);
+    } catch (error) {
+      closeSync(out);
+      throw error;
     }
+  }
+  const release = () => {
+    closeSync(out);
+    if (err !== out)
+      closeSync(err);
   };
   const note = eventsWriter(options);
   note(`start ${new Date().toISOString()} ${JSON.stringify(command)}`);
   const started = Date.now();
   const at = () => `+${Date.now() - started}ms`;
   return new Promise((resolve) => {
-    const child = spawn(command, {
-      cwd: options.cwd,
-      shell: true,
-      detached: process.platform !== "win32",
-      env: options.env ?? process.env,
-      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
-    });
-    child.on("spawn", () => note(`spawn ${at()} pid ${child.pid}`));
-    child.on("exit", (code, signal) => note(`exit ${at()} code ${code} signal ${signal}`));
-    for (const [name, stream] of [
-      ["stdout", child.stdout],
-      ["stderr", child.stderr]
-    ]) {
-      stream?.on("end", () => note(`${name} end ${at()}`));
-      stream?.on("close", () => note(`${name} close ${at()}`));
-    }
     let timedOut = false;
+    let timer;
     let grace;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (options.events)
-        note(`probe ${at()} ${probe(child.pid)}`);
-      killTree(child.pid);
-      note(`timeout ${at()} killed the group`);
-      grace = setTimeout(() => {
-        note(`gave up ${at()} no close after the kill`);
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        finish(null);
-      }, KILL_GRACE_MS);
-    }, options.timeoutMs);
-    child.stdout?.on("data", (chunk) => absorb(chunk));
-    child.stderr?.on("data", (chunk) => absorb(chunk, errors ?? log));
-    if (options.stdin !== undefined)
-      child.stdin?.end(options.stdin);
     let finished = false;
     const finish = (exit) => {
       if (finished)
@@ -5881,8 +5893,9 @@ function runCommand(command, options) {
       finished = true;
       clearTimeout(timer);
       clearTimeout(grace);
-      if (partial)
-        lines.push(partial);
+      const lines = tailOf(options.logPath);
+      if (options.stderrLogPath)
+        lines.push(...tailOf(options.stderrLogPath));
       const result = {
         exit,
         durationMs: Date.now() - started,
@@ -5890,23 +5903,55 @@ function runCommand(command, options) {
 `),
         timedOut
       };
-      let pending = errors ? 2 : 1;
-      const closed = () => {
-        pending -= 1;
-        if (pending > 0)
-          return;
-        note(`logs ended ${at()}`);
-        resolve(result);
-      };
-      log.end(closed);
-      errors?.end(closed);
+      note(`resolved ${at()}`);
+      resolve(result);
     };
-    child.on("error", (error) => {
+    const fail = (error) => {
       note(`error ${at()} ${error.message}`);
-      absorb(Buffer.from(`${error.message}
-`));
+      try {
+        appendFileSync(options.logPath, `${error.message}
+`);
+      } catch {}
       finish(null);
-    });
+    };
+    let child;
+    try {
+      child = spawnChild(command, {
+        cwd: options.cwd,
+        shell: true,
+        detached: process.platform !== "win32",
+        env: options.env ?? process.env,
+        stdio: [options.stdin === undefined ? "ignore" : "pipe", out, err]
+      });
+    } catch (error) {
+      release();
+      fail(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    release();
+    child.stdin?.on("error", () => {});
+    if (child.exitCode !== null || child.signalCode !== null) {
+      note(`ended at return ${at()} code ${child.exitCode} signal ${child.signalCode}`);
+      child.stdin?.destroy();
+      finish(child.exitCode);
+      return;
+    }
+    child.on("spawn", () => note(`spawn ${at()} pid ${child.pid}`));
+    child.on("exit", (code, signal) => note(`exit ${at()} code ${code} signal ${signal}`));
+    timer = setTimeout(() => {
+      timedOut = true;
+      if (options.events)
+        note(`probe ${at()} ${probe(child.pid)}`);
+      killTree(child.pid);
+      note(`timeout ${at()} killed the group`);
+      grace = setTimeout(() => {
+        note(`gave up ${at()} no close after the kill`);
+        finish(null);
+      }, KILL_GRACE_MS);
+    }, options.timeoutMs);
+    if (options.stdin !== undefined)
+      child.stdin?.end(options.stdin);
+    child.on("error", fail);
     child.on("close", (code, signal) => {
       note(`close ${at()} code ${code} signal ${signal}`);
       finish(code);
@@ -5920,13 +5965,13 @@ function shellWord(path) {
 
 // packages/engine/src/ui.ts
 import {
-  closeSync,
+  closeSync as closeSync2,
   existsSync as existsSync11,
   lstatSync as lstatSync4,
-  openSync,
+  openSync as openSync2,
   readdirSync as readdirSync7,
   readFileSync as readFileSync8,
-  readSync,
+  readSync as readSync2,
   rmSync as rmSync4,
   unlinkSync as unlinkSync2
 } from "node:fs";
@@ -8703,13 +8748,13 @@ var DARK_FILES_MAX = 400;
 var DARK_BYTES_MAX = 256 * 1024;
 var DARK = /prefers-color-scheme:\s*dark|\.dark(?![\w-])|data-theme=["']dark["']/;
 function readHead(path, max) {
-  const fd = openSync(path, "r");
+  const fd = openSync2(path, "r");
   try {
     const buffer = Buffer.alloc(max);
-    const read = readSync(fd, buffer, 0, max, 0);
+    const read = readSync2(fd, buffer, 0, max, 0);
     return buffer.subarray(0, read).toString("utf8");
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
 }
 function darkScheme(root, profile) {
@@ -9917,17 +9962,17 @@ function writeAudit(paths, id, record) {
 
 // packages/engine/src/environment.ts
 import { spawn as spawn3 } from "node:child_process";
-import { closeSync as closeSync3, mkdirSync as mkdirSync7, openSync as openSync3, unlinkSync as unlinkSync4 } from "node:fs";
+import { closeSync as closeSync4, mkdirSync as mkdirSync7, openSync as openSync4, unlinkSync as unlinkSync4 } from "node:fs";
 import { dirname as dirname9, join as join37 } from "node:path";
 
 // packages/engine/src/open.ts
 import { execFileSync as execFileSync5, spawn as spawn2 } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync6, openSync as openSync2 } from "node:fs";
+import { closeSync as closeSync3, mkdirSync as mkdirSync6, openSync as openSync3 } from "node:fs";
 import { dirname as dirname8, join as join36 } from "node:path";
 
 // packages/engine/src/mail.ts
 import { createHash as createHash5 } from "node:crypto";
-import { accessSync, constants, existsSync as existsSync14 } from "node:fs";
+import { accessSync, constants as constants2, existsSync as existsSync14 } from "node:fs";
 import { basename as basename7, isAbsolute as isAbsolute4, join as join26, resolve as resolve6 } from "node:path";
 
 // packages/engine/src/mail-status.ts
@@ -10323,7 +10368,7 @@ function boxFile(dir, name) {
 function readBox(dir, which) {
   const file = boxFile(dir, which);
   if (existsSync14(file))
-    accessSync(file, constants.R_OK);
+    accessSync(file, constants2.R_OK);
   const read = readProtectedJsonAt(boxFile(dir, "integrity"), file);
   const box = read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
   return { box, tampered: read.tampered };
@@ -12387,7 +12432,7 @@ function openSession(ctx, request, notes = []) {
   let fd;
   try {
     mkdirSync6(dirname8(request.log), { recursive: true });
-    fd = openSync2(request.log, "a");
+    fd = openSync3(request.log, "a");
   } catch (error) {
     return undone(`could not open the log ${request.log}: ${error.message}`);
   }
@@ -12407,10 +12452,10 @@ function openSession(ctx, request, notes = []) {
     child.on("error", () => {});
     child.unref();
   } catch (error) {
-    closeSync2(fd);
+    closeSync3(fd);
     return undone(`could not start ${claudeBinary(ctx.env)}: ${error.message}`);
   }
-  closeSync2(fd);
+  closeSync3(fd);
   if (child.pid === undefined)
     return undone("the session did not start (no pid)");
   const opened = {
@@ -12780,7 +12825,7 @@ async function startEnvironment(paths, environment, sleep = (ms) => new Promise(
   }
   const log = envLog(paths, `start-${stamp()}.txt`);
   mkdirSync7(dirname9(log), { recursive: true });
-  const fd = openSync3(log, "a");
+  const fd = openSync4(log, "a");
   let pid;
   try {
     const child = spawn3(environment.start.command, {
@@ -12793,7 +12838,7 @@ async function startEnvironment(paths, environment, sleep = (ms) => new Promise(
     child.unref();
     pid = child.pid;
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
   if (pid === undefined)
     return { refused: `the environment did not start (${environment.start.command})` };
@@ -12900,13 +12945,13 @@ function readSince(file, from) {
   const length = size - start;
   if (length <= 0)
     return "";
-  const fd = openSync4(file, "r");
+  const fd = openSync5(file, "r");
   try {
     const buffer = Buffer.alloc(length);
-    readSync2(fd, buffer, 0, length, start);
+    readSync3(fd, buffer, 0, length, start);
     return buffer.toString("utf8");
   } finally {
-    closeSync4(fd);
+    closeSync5(fd);
   }
 }
 async function readLogs(paths, work, logs, logsFile, log) {
@@ -15853,7 +15898,7 @@ import { statSync as statSync11 } from "node:fs";
 import { join as join50 } from "node:path";
 
 // packages/engine/src/gates.ts
-import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync10, rmSync as rmSync7 } from "node:fs";
+import { accessSync as accessSync2, constants as constants3, mkdirSync as mkdirSync10, rmSync as rmSync7 } from "node:fs";
 import { basename as basename10, delimiter as delimiter2, join as join49 } from "node:path";
 
 // packages/engine/src/audit.ts
@@ -16622,7 +16667,7 @@ function onPath2(binary, env) {
       continue;
     for (const extension of extensions) {
       try {
-        accessSync2(join49(dir, binary + extension), constants2.X_OK);
+        accessSync2(join49(dir, binary + extension), constants3.X_OK);
         return true;
       } catch {}
     }
@@ -21599,7 +21644,7 @@ function writeJourneyReport(userDir, id, text) {
 
 // packages/engine/src/journey-real.ts
 import { spawn as spawn4, spawnSync as spawnSync3 } from "node:child_process";
-import { closeSync as closeSync5, mkdirSync as mkdirSync13, openSync as openSync5, rmSync as rmSync9, writeFileSync as writeFileSync7 } from "node:fs";
+import { closeSync as closeSync6, mkdirSync as mkdirSync13, openSync as openSync6, rmSync as rmSync9, writeFileSync as writeFileSync7 } from "node:fs";
 import { dirname as dirname13 } from "node:path";
 function realJourneyDeps(processEnv) {
   const home = processEnv.HOME ?? "";
@@ -21616,7 +21661,7 @@ function realJourneyDeps(processEnv) {
     baseEnv: processEnv,
     spawn: (args, options) => {
       mkdirSync13(dirname13(options.log), { recursive: true });
-      const fd = openSync5(options.log, "a");
+      const fd = openSync6(options.log, "a");
       try {
         const child = spawn4(claudeBinary(processEnv), args, {
           cwd: options.cwd,
@@ -21630,7 +21675,7 @@ function realJourneyDeps(processEnv) {
           return { failed: "the session did not start (no pid)" };
         return { pid: child.pid, processStart: processStart(child.pid) };
       } finally {
-        closeSync5(fd);
+        closeSync6(fd);
       }
     },
     isSession: (pid, start) => !processGone(pid) && (!start || processStart(pid) === start),
