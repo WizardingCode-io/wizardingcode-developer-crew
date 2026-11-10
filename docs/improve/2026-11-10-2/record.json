@@ -1,0 +1,121 @@
+{
+  "run": "2026-11-10-2",
+  "at": "2026-11-10T02:00:07.504Z",
+  "targets": [
+    "cto-report-from-records",
+    "pack-laravel-refines-the-gates"
+  ],
+  "baseline": {
+    "cto-report-from-records": {
+      "name": "cto-report-from-records",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/learn.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/learn.md"
+      ],
+      "errored": false,
+      "costUsd": 0.8913239
+    },
+    "pack-laravel-refines-the-gates": {
+      "name": "pack-laravel-refines-the-gates",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.3794436
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. Both listed graders, `cto-report-from-records` and `pack-laravel-refines-the-gates`, are at mean 1.00 with spread 0.00 and evidence `none`, so they are passing and there is no failure to fix; the last CTO plan is also `none`. Any edit to the harness pages would risk the passing scores (the skill page sits within bytes of its cap) for no measurable gain, so the smallest correct change is none. Nothing was run in this session.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. Both graders listed, `cto-report-from-records` and `pack-laravel-refines-the-gates`, are at mean 1.00 with spread 0.00 and no failure evidence, so they are passing and there is nothing to make pass. The last CTO plan is also empty, so nothing else points at a harness page to change. Any edit here would only risk moving cases that already score full marks, and `SKILL.md` sits within a few bytes of its cap. Nothing was run in this session, as it has no shell.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 3.5556463,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
