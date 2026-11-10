@@ -78,9 +78,9 @@ function openFindings(text: string): number[] {
 // 208's cause (a grader whose judge call failed scored as failed) answered by 2026-11-09-004, which put the eval judge back on Fable.
 // 220 (a child's end lost under the whole suite) fixed by 2026-11-10-001, which recorded 233 (the
 // advisories the judgement left on 2026-11-09-004) and 234 (the lock row's 20 seconds of its 30).
+// 234 (the fixtures the tests left in the temporary folder) fixed by 2026-11-10-002.
 const OPEN = [
   77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 228, 233,
-  234,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -153,5 +153,20 @@ test("2026-11-10-001 AC-5: finding 220 reads fixed by the item with its cause an
   expect(sectionOf(233)).toContain("probeJudge");
   expect(sectionOf(234)).toContain("lock.test.ts");
   expect(openFindings(text)).toContain(233);
-  expect(openFindings(text)).toContain(234);
+});
+
+test("2026-11-10-002 AC-6: finding 234 reads fixed by the item, with the fixtures left in the temporary folder as its cause, what was measured and what was inferred, and the limit of the fix", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith("### 234. ")) ?? "";
+  const outcome = /\n- Outcome:(.*)/.exec(section)?.[1]?.trim() ?? "";
+  expect(outcome).toStartWith("fixed in 2026-11-10-002");
+  // The cause in place of the machine's load: the folder's size and the measured starts.
+  expect(section).toContain("83 807 entries");
+  expect(outcome).toContain("mkdtempSync");
+  expect(outcome).toContain("beside the system temporary folder");
+  expect(outcome).toContain("57 ms");
+  // What was measured, what is tied by inference, and where the fix does not reach.
+  expect(outcome).toContain("by inference alone");
+  expect(outcome).toContain("shared");
+  expect(openFindings(text)).not.toContain(234);
 });

@@ -3,12 +3,14 @@ import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  type Stats,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -56,6 +58,132 @@ export function tempDir(prefix = "crew-"): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   TEMP_DIRS.add(dir);
   return dir;
+}
+
+/** A run folder's name: the pid of the process that made it, then what `mkdtemp` adds. */
+const RUN_NAME = /^crew-run-(\d+)-/;
+/** The folder the run folders live in, beside the system temporary folder. */
+const RUNS_HOME = "crew-tests";
+
+/** The current user's id; -1 where the platform has none, which no folder's owner equals. */
+function currentUser(): number {
+  return process.getuid?.() ?? -1;
+}
+
+/** Whether an entry, as `lstat` read it, is a real folder of `owner`'s that group and others cannot write. */
+function ownFolder(stat: Stats, owner: number): boolean {
+  return stat.isDirectory() && stat.uid === owner && (stat.mode & 0o022) === 0;
+}
+
+/** Whether a pid names a live process: signal 0, `EPERM` counting as alive. */
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * The folder a run's own temporary folder is made in (finding 234). A process started from a script
+ * pays for every ancestor folder's size, and the system temporary folder is one every project on
+ * the machine fills, so the home is `crew-tests` beside it, in its parent. That fixed name is safe
+ * only where nobody else can make it first: the parent must be the user's alone and not the
+ * filesystem's root, and an existing home a real folder of the user's alone. Anything else answers
+ * the temporary folder itself and leaves what it found as it is. `tmp` is canonical; `owner` is the
+ * current user unless a row names another. A run started inside a run answers that run's home, so
+ * no home is made inside a home.
+ */
+export function runsHome(tmp: string, owner: number = currentUser()): string {
+  const parent = dirname(tmp);
+  try {
+    if (parent === dirname(parent) || !ownFolder(lstatSync(parent), owner)) return tmp;
+    if (basename(parent) === RUNS_HOME && RUN_NAME.test(basename(tmp))) return parent;
+    const home = join(parent, RUNS_HOME);
+    let found: Stats;
+    try {
+      found = lstatSync(home);
+    } catch {
+      mkdirSync(home, { mode: 0o700 });
+      return home;
+    }
+    return ownFolder(found, owner) ? home : tmp;
+  } catch {
+    return tmp;
+  }
+}
+
+/** A run's temporary folder and the one way out of it. */
+export interface RunFolder {
+  folder: string;
+  /** Puts `TMPDIR` back as the entry found it, then removes the folder the entry made; once. */
+  leave(): void;
+}
+
+/**
+ * Makes this run's temporary folder in `home` and points the process's `TMPDIR` at it, so every
+ * fixture lands inside it whoever makes it: `tempDir`, a test's own
+ * `mkdtempSync(join(tmpdir(), …))`, a child process (finding 234). The leave removes that one
+ * folder and takes no path; with `WIZARDINGCODE_CREW_KEEP_FIXTURES=1` it removes nothing and marks
+ * the folder with `.keep`, which `sweepDeadRuns` then skips. A removal that fails is swallowed: the
+ * next run's sweep takes what is left.
+ */
+export function enterRunFolder(home: string): RunFolder {
+  const env = process.env;
+  const folder = mkdtempSync(join(home, `crew-run-${process.pid}-`));
+  const previous = env.TMPDIR;
+  env.TMPDIR = folder;
+  let left = false;
+  return {
+    folder,
+    leave() {
+      if (left) return;
+      left = true;
+      if (previous === undefined) delete env.TMPDIR;
+      else env.TMPDIR = previous;
+      try {
+        if (env.WIZARDINGCODE_CREW_KEEP_FIXTURES === "1") writeFileSync(join(folder, ".keep"), "");
+        else rmSync(folder, { recursive: true, force: true });
+      } catch {
+        // Not removed now: its pid is dead at the next run, whose sweep removes it.
+      }
+    },
+  };
+}
+
+/**
+ * Removes the run folders that runs which never left have left in `home` (a killed suite), and
+ * returns how many. An entry is taken only when it is all of: named as a run folder, a real folder
+ * of `owner`'s by one `lstat` (a link is never followed, another owner's folder never walked: in a
+ * shared temporary folder anyone can make the name), of a pid that names no live process, and
+ * without the `.keep` of a kept post-mortem. The entry is named as listed, nothing resolved. One
+ * that cannot be removed is skipped and not counted, and nothing is thrown: the preload calls this
+ * as it loads, where a throw would stop every test.
+ */
+export function sweepDeadRuns(home: string, owner: number = currentUser()): number {
+  let names: string[];
+  try {
+    names = readdirSync(home);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const name of names) {
+    const pid = RUN_NAME.exec(name)?.[1];
+    if (pid === undefined) continue;
+    const path = join(home, name);
+    try {
+      const stat = lstatSync(path);
+      if (!stat.isDirectory() || stat.uid !== owner) continue;
+      if (processExists(Number(pid)) || existsSync(join(path, ".keep"))) continue;
+      rmSync(path, { recursive: true });
+      removed += 1;
+    } catch {
+      // Gone since the listing (another suite's sweep) or not removable: skipped.
+    }
+  }
+  return removed;
 }
 
 /**

@@ -13357,7 +13357,11 @@ test("2026-11-08-002 AC-10: crew projects update refreshes every registered proj
   expect(gLine).toContain("cursor names ");
   expect(gLine).not.toContain("\x1b");
   expect(gLine).not.toContain("IGNORE ALL");
-  for (const part of gLine.split(", ")) expect(part.length).toBeLessThanOrEqual(320);
+  // The bound is on each unit: the engine caps a quoted value at 200, and the line's prefix is the
+  // fixture's own path, as long as the folder the run was given (finding 234).
+  const units = gLine.slice(`${basename(G)} ${G}: `.length).split(", ");
+  expect(units.length).toBeGreaterThanOrEqual(2);
+  for (const unit of units) expect(unit.length).toBeLessThanOrEqual(320);
   expect(foreign.out).toContain(`${basename(H)} ${H}: copilot on another root (`);
   expect(foreign.out).toContain(" 2 other root, ");
   expect(foreign.out).toContain("user scope: opencode unreadable (");
