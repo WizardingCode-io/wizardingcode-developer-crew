@@ -1,0 +1,41 @@
+# Improvement run 2026-11-10-3
+
+- At: 2026-11-10T03:00:07.443Z
+- Targets: personalities-differ, priority-lowered-with-reason
+- Provider: runtime (agent claude-sonnet-5-5, judge claude-opus-5-5)
+
+## Baseline
+
+| Case | Scores | Mean | Spread |
+| :- | :- | -: | -: |
+| personalities-differ | 0.80, 0.20, 1.00 | 0.67 | 0.80 |
+| priority-lowered-with-reason | 1.00, 1.00, 1.00 | 1.00 | 0.00 |
+
+## P-1: unprobed (the probe set (16 cases, about 116.81 USD by the baseline's costs) is above what is left under the ceiling (12.30 USD); not probed)
+
+- Diff: M plugins/core/skills/crew/references/conclave.md
+- Rationale: I changed one harness page and nothing else: `plugins/core/skills/crew/references/conclave.md`, with two added sentences. Nothing was run in this session (no shell), so there is no test run and no eval rerun, and whether the score moves is unmeasured. `priority-lowered-with-reason` is listed at mean 1.00 with no evidence, so it is passing and I edited nothing for it. For `personalities-differ` I had no trace of the failing runs, so both causes are inferred from the grader evidence and the page.
+
+- **The run that lost only `proposals-differ`:** the debate ran and the ending dropped it. That judge reads the final message alone, the engine's report prints only `Debate: opened (<reason>), closed`, and step 5's "one screen to the user" goes by mid-run when nobody is present. The 2026-11-03 records show the case reading `conclave.md` and never `deliver.md`. Step 5 now ends by saying that with nobody present the screen opens the last message of the run, read from `conclave/proposals.md` and `conclave/judge.md`: each proposal with its lens, its design and its rejected alternative and why, then the proposal the judge closed on.
+- **The run that lost all three personality regexes but kept an honest ending:** no expert was ever launched. My reading is that the lead followed "Decisions only the user can make", which comes first on the page, recorded the storage choice with a default and answered it itself under the fixture's `count` policy. That section now says a choice the request leaves to the team is recorded the same way and answered only with the judge's ruling after the debate, never with its default or the lead's own pick.
+
+If that second run instead lost its experts to a quota or API error, it needs a rerun and this edit will not move it. The sentences pinned in `skill.test.ts` are intact, and the page has no size cap. I left `SKILL.md` alone because it sits at its byte cap.
+
+## P-2: unprobed (the probe set (16 cases, about 116.81 USD by the baseline's costs) is above what is left under the ceiling (11.02 USD); not probed)
+
+- Diff: M plugins/core/skills/crew/references/conclave.md
+- Rationale: I changed one harness page and nothing else: `plugins/core/skills/crew/references/conclave.md`, two added sentences. Nothing was run in this session (no shell), so there is no test run and no eval rerun, and whether the score moves is unmeasured. `priority-lowered-with-reason` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `personalities-differ`, the evidence shows two different failing runs, and I had no trace of either, so both causes are inferred.
+
+- **No `personality:` line at all, and no debate in the ending.** Only an expert's answer prints that line, so no expert answered under a lens. The fixture's policy counts a decision the agent records with `--mode`, and the "Decisions only the user can make" section told the lead to record the decision with a default and answer it. The rule that a choice left to the team is debated sits only in a later section. My reading is that the lead answered D-1 itself and built. That section now says such a choice is answered only after its debate closes, with the proposal the judge closed on, never before with the default or the lead's own pick.
+- **Debate ran, split judge votes on `proposals-differ`.** That judge reads the final message alone. Step 5's "one screen to the user" goes by mid-run with nobody there, and the earlier recorded runs of this case never read `references/deliver.md`. Step 7 (Close) now says that with nobody present the delivery message repeats that screen from `conclave/proposals.md` and `conclave/judge.md`: each proposal's design with its rejected alternative and why, then the proposal the judge closed on.
+
+Both sentences are appended next to existing ones, so every string the skill tests pin on the page is intact and the page has no size cap. The skill page was left alone because it sits at its byte cap. A similar step-5 clause was probed on 2026-10-27 and scored 0.93 on this case against a 0.93 baseline; the case has also scored 1.00 three times with no edi
+
+## Outcome
+
+- Composition: none
+- Kept: nothing
+- Lessons: none
+- Cases no run has measured (never probed): none
+- Cost: 8.98 USD
+- Exit status: 0
