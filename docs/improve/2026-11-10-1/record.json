@@ -1,0 +1,124 @@
+{
+  "run": "2026-11-10-1",
+  "at": "2026-11-10T01:00:07.527Z",
+  "targets": [
+    "mail-refused-by-policy",
+    "no-environment-cannot-prove"
+  ],
+  "baseline": {
+    "mail-refused-by-policy": {
+      "name": "mail-refused-by-policy",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/mail.md"
+      ],
+      "errored": false,
+      "costUsd": 0.32555379999999995
+    },
+    "no-environment-cannot-prove": {
+      "name": "no-environment-cannot-prove",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 1.7827938999999997
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing. Both listed graders, `mail-refused-by-policy` and `no-environment-cannot-prove`, are at mean 1.00 with spread 0.00 and evidence `none`, so they are passing and there is no failure to fix. The last CTO plan is also `none`, so nothing else points at a page to edit. Any edit to `plugins/core/skills/crew/` or `plugins/core/agents/` here would be unmeasured risk to cases that already pass, including the skill page that sits at its byte cap. No files were touched and nothing was run in this session.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. Both graders listed, `mail-refused-by-policy` and `no-environment-cannot-prove`, are at mean 1.00 with spread 0.00 and no evidence, so they are passing and there is no failure to fix; the last CTO plan is also empty. Any edit to the harness pages here would risk a passing case without a failing grader to justify it, so the smallest right change is none. Nothing was run in this session.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 2.3941898999999993,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
