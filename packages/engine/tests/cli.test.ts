@@ -673,7 +673,7 @@ test("a fast-route fix from start to a proven report", async () => {
     "src/a.ts": "x",
   });
   const c = io(root);
-  expect((await c.run("--version")).out.trim()).toBe("0.23.0");
+  expect((await c.run("--version")).out.trim()).toBe("0.23.1");
   const detect = await c.json("detect");
   expect(detect.code).toBe(0);
   expect((detect.data.profile as { targets: unknown[] }).targets).toHaveLength(1);
