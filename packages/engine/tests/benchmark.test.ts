@@ -24,7 +24,13 @@ import {
   SET_PATH,
   writeRecord,
 } from "../../../scripts/benchmark.ts";
-import { evalInvocation, realGitDir, SANDBOX_TAGS } from "../../../scripts/eval.ts";
+import {
+  evalInvocation,
+  JUDGE_FALLBACK,
+  JUDGE_MODEL,
+  realGitDir,
+  SANDBOX_TAGS,
+} from "../../../scripts/eval.ts";
 import { scanText } from "../src/secrets.ts";
 import { childEnv } from "./helpers.ts";
 import {
@@ -141,7 +147,7 @@ test("SP6-T5 AC-1: benchmark.json names decision 11's eighteen cases with their 
   for (const name of FUNCTIONAL) expect(s.cases[name], name).toBe("functional");
   for (const name of SECURITY) expect(s.cases[name], name).toBe("security");
   for (const name of COST) expect(s.cases[name], name).toBe("cost");
-  expect(s.models).toEqual({ agent: "claude-sonnet-5-5", judge: "claude-opus-5-5" });
+  expect(s.models).toEqual({ agent: "claude-sonnet-5-5", judge: JUDGE_MODEL });
   expect(s.runs).toBe(3);
   for (const name of EIGHTEEN) expect(tagsOf(name), name).toContain("benchmark");
   expect(SANDBOX_TAGS).toContain("benchmark");
@@ -432,12 +438,13 @@ test("SP6-T5 AC-11: the benchmark invocation deep-equals the whole suite's with 
   expect(set().runs).toBe(reference.cases[0]?.runsPerCase ?? 0);
   expect(record().run.drift).toEqual([
     "agent model claude-opus-5-5 (the set names claude-sonnet-5-5)",
+    `judge model claude-opus-5-5 (the set names ${JUDGE_MODEL})`,
     "runsPerCase 2 (the set names 3)",
   ]);
   const agg = fixture();
   const matching: Aggregate = {
     ...agg,
-    suite: { ...agg.suite, modelOverride: "claude-sonnet-5-5", judgeModel: "claude-opus-5-5" },
+    suite: { ...agg.suite, modelOverride: "claude-sonnet-5-5", judgeModel: JUDGE_MODEL },
     cases: agg.cases.map((c) => ({ ...c, runsPerCase: 3 })),
   };
   expect(benchmarkRecord(matching, set(), META).run.drift).toEqual([]);
@@ -447,7 +454,7 @@ test("SP6-T5 AC-11: the benchmark invocation deep-equals the whole suite's with 
     suite: { ...matching.suite, judgeModel: "claude-sonnet-5-5" },
   };
   expect(benchmarkRecord(judged, set(), META).run.drift).toEqual([
-    "judge model claude-sonnet-5-5 (the set names claude-opus-5-5)",
+    `judge model claude-sonnet-5-5 (the set names ${JUDGE_MODEL})`,
   ]);
 });
 
@@ -884,12 +891,38 @@ const expectLeftOut = (
   expect(totals).toContain("gate-tampering");
 };
 
+/** 2026-11-09-004 AC-39: gate-tampering's category counts one case less than ran, its rates the means of the cases left in. */
+const expectOutOfRates = (
+  normal: ReturnType<typeof benchmarkRecord>,
+  r: ReturnType<typeof benchmarkRecord>,
+) => {
+  const category = set().cases["gate-tampering"] as keyof typeof r.categories;
+  const rest = r.cases.filter((c) => c.category === category && c.name !== "gate-tampering");
+  expect(r.categories[category].ran).toBe(normal.categories[category].ran);
+  expect(r.categories[category].counted).toBe(rest.length);
+  expect(normal.categories[category].counted).toBe(normal.categories[category].ran);
+  // With no case of the category left in, its rates are null, as when none ran.
+  if (rest.length === 0) {
+    expect(r.categories[category].passRateWith).toBeNull();
+    expect(r.categories[category].passRateWithout).toBeNull();
+    expect(normal.categories[category].passRateWith).not.toBeNull();
+    return;
+  }
+  const meanOf = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length;
+  close(r.categories[category].passRateWith, meanOf(rest.map((c) => c.with.passRate)));
+  close(r.categories[category].passRateWithout, meanOf(rest.map((c) => c.without.passRate)));
+};
+
 test("CON7-AC-2 (finding 116): a case whose with arm all errored is named with that arm and left out of both arms' totals", () => {
   const { normal, r, g } = erroredArm("with");
   // The case is named, with the arm whose runs all errored.
   expect((r as unknown as { excluded?: unknown }).excluded).toEqual([
-    { case: "gate-tampering", arm: "with" },
+    { case: "gate-tampering", arm: "with", reason: "errored" },
   ]);
+  expect(renderMarkdown(r)).toContain(
+    "Left out of the totals and the category rates: gate-tampering (with, errored).",
+  );
+  expectOutOfRates(normal, r);
   expect((normal as unknown as { excluded?: unknown }).excluded).toEqual([]);
   // Out of both arms' totals; the other cases' sums as they were.
   expectLeftOut(normal, r, g);
@@ -898,11 +931,12 @@ test("CON7-AC-2 (finding 116): a case whose with arm all errored is named with t
 test("CON7-AC-2-without (finding 116): a case whose without arm all errored is named with that arm and left out of both arms' totals", () => {
   const { normal, r, g } = erroredArm("without");
   expect((r as unknown as { excluded?: unknown }).excluded).toEqual([
-    { case: "gate-tampering", arm: "without" },
+    { case: "gate-tampering", arm: "without", reason: "errored" },
   ]);
   close(r.totals.judgeCostWith, normal.totals.judgeCostWith - (g.with.judgeCostUsd ?? 0));
   expectLeftOut(normal, r, g);
-  expect(renderMarkdown(r)).toContain("gate-tampering (without)");
+  expect(renderMarkdown(r)).toContain("gate-tampering (without, errored)");
+  expectOutOfRates(normal, r);
 });
 
 /** The message a call refuses with, or null when it did not refuse. */
@@ -984,4 +1018,69 @@ test("CON7-AC-3-md-only (finding 116): a value flagged in the Markdown alone (th
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("2026-11-09-004 AC-18 (benchmark): with no judge answering the benchmark exits 5, calls no kit, makes no folder and writes no record", () => {
+  const dir = mkdtempSync(join(tmpdir(), "benchmark-judge-"));
+  const bin = stubKit(dir);
+  const path = [bin, process.env.PATH ?? ""].join(delimiter);
+  const log = join(dir, "stub.log");
+  expect(firstClaudeOn(composedPath(path))).toBe(bin);
+  inOwnResults((before) => {
+    const out = join(dir, "out");
+    const run = spawnSync("bun", ["scripts/benchmark.ts", "--out", out], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...childEnv(),
+        PATH: path,
+        WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
+        WIZARDINGCODE_STUB_LOG: log,
+        WIZARDINGCODE_STUB_PROBE: `${JUDGE_MODEL}=limited ${JUDGE_FALLBACK}=limited`,
+      },
+    });
+    expect(run.status, run.stderr).toBe(5);
+    expect(run.stdout).toContain("judge: no judge answered; nothing runs");
+    expect(existsSync(log)).toBe(false);
+    expect(existsSync(out)).toBe(false);
+    expect(foldersSince(OWN, before)).toEqual([]);
+  });
+  rmSync(dir, { recursive: true, force: true });
+}, 60_000);
+
+test("2026-11-09-004 AC-10: a run whose judge call failed is counted in its arm as unjudged with its figures read, its case left out of the totals and the category rates and named with that reason, no text of the explanation in the record", () => {
+  const cause = "You've reached your Fable limit. UNIQUE-CAUSE-TEXT";
+  const raw = JSON.parse(fixtureText()) as {
+    cases: { name: string; arms: { with: { graders: Record<string, unknown>[] }[] } }[];
+  };
+  const target = raw.cases.find((c) => c.name === "gate-tampering");
+  const run = target?.arms.with[0];
+  expect(run).toBeDefined();
+  // The kit's own shape of a grader whose judge call failed: failed, scored, the cause after the prefix.
+  (run as { graders: Record<string, unknown>[] }).graders = [
+    {
+      name: "honest-ending",
+      passed: false,
+      weight: 1,
+      explanation: `grader threw: judge call failed: ${cause}`,
+    },
+  ];
+  const normal = record();
+  const r = benchmarkRecord(readAggregate(JSON.stringify(raw)), set(), META);
+  const g = normal.cases.find((c) => c.name === "gate-tampering") as (typeof normal.cases)[number];
+  const arm = r.cases.find((c) => c.name === "gate-tampering")?.with;
+  // The run finished and was paid for: counted, its figures in the arm's means.
+  expect(arm).toMatchObject({ runs: g.with.runs, errored: 0, unjudged: 1 });
+  expect(arm?.costUsd).toBe(g.with.costUsd);
+  expect(arm?.turns).toBe(g.with.turns);
+  expect(arm?.durationSeconds).toBe(g.with.durationSeconds);
+  expect(g.with.unjudged).toBe(0);
+  expect(r.excluded).toEqual([{ case: "gate-tampering", arm: "with", reason: "unjudged" }]);
+  expectLeftOut(normal, r, g);
+  expectOutOfRates(normal, r);
+  expect(renderMarkdown(r)).toContain(
+    "Left out of the totals and the category rates: gate-tampering (with, unjudged).",
+  );
+  expect(JSON.stringify(r)).not.toContain("UNIQUE-CAUSE-TEXT");
+  expect(renderMarkdown(r)).not.toContain("UNIQUE-CAUSE-TEXT");
 });

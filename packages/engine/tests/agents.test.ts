@@ -183,9 +183,9 @@ test("SP7a AC-2 (Task 3): the expert takes a personality, the fault-finder is sc
   expect(judge).toMatch(/JSON object alone/);
 });
 
-test("SP7a AC-5 (Task 4): the tech lead validates with a verdict and numbered returns on sonnet; the CTO plans from the figures on opus; neither writes", () => {
+test("SP7a AC-5 (Task 4): the tech lead validates with a verdict and numbered returns on fable; the CTO plans from the figures on fable; neither writes", () => {
   const lead = agent("tech-lead");
-  expect(lead.meta.model).toBe("sonnet");
+  expect(lead.meta.model).toBe("fable");
   expect(tools(lead.meta)).toEqual(["Read", "Grep", "Glob"]);
   expect(lead.body).toContain("verdict: validated | returned");
   expect(lead.body).toContain("## Returns");
@@ -193,7 +193,7 @@ test("SP7a AC-5 (Task 4): the tech lead validates with a verdict and numbered re
   expect(lead.body).toMatch(/not a yes-man/i);
   expect(lead.body).toMatch(/qa|security|architects|etl|devops/);
   const cto = agent("cto");
-  expect(cto.meta.model).toBe("opus");
+  expect(cto.meta.model).toBe("fable");
   expect(tools(cto.meta)).toEqual(["Read", "Grep", "Glob"]);
   for (const heading of ["## What the figures say", "## Keep", "## Change", "## Measure"])
     expect(cto.body).toContain(heading);
@@ -201,11 +201,11 @@ test("SP7a AC-5 (Task 4): the tech lead validates with a verdict and numbered re
   expect(cto.body).toMatch(/never transcripts/);
 });
 
-test("SP9-T5 AC-7: the tech lead lists frontend among its teams, in the description and in the body's team line, with its model and tools unchanged", () => {
+test("SP9-T5 AC-7: the tech lead lists frontend among its teams, in the description and in the body's team line, with its tools unchanged", () => {
   const lead = agent("tech-lead");
   expect(lead.meta.description).toMatch(/QA, security, architects, ETL, DevOps, frontend/);
   expect(lead.body).toMatch(/`etl`, `devops` or `frontend`/);
-  expect(lead.meta.model).toBe("sonnet");
+  expect(lead.meta.model).toBe("fable");
   expect(tools(lead.meta)).toEqual(["Read", "Grep", "Glob"]);
 });
 

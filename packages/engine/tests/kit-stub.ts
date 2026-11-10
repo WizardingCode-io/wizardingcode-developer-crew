@@ -14,6 +14,10 @@ import { evalInvocation, realGitDir } from "../../../scripts/eval.ts";
  * `WIZARDINGCODE_STUB_EXIT` the status; `WIZARDINGCODE_STUB_LOG` a file that receives the cwd on its first line and the
  * arguments on the second; `WIZARDINGCODE_STUB_ENV` a file that receives the kit's environment, `env`'s lines; `WIZARDINGCODE_STUB_DECOY` a folder created (with its parents) during the run holding
  * `WIZARDINGCODE_STUB_DECOY_AGGREGATE` as its aggregate, the "newer folder written beside it" of AC-3 and AC-4.
+ * A judge probe (first argument `-p`, 2026-11-09-004) is answered apart and leaves those files alone:
+ * `WIZARDINGCODE_STUB_PROBE` holds space-separated `model=answer` pairs (`ok`, `limited`, `overloaded` or `failed`; a model
+ * not named answers `ok`), `WIZARDINGCODE_STUB_PROBE_LOG` receives one `probe <model>` line per probe and
+ * `WIZARDINGCODE_STUB_PROBE_ENV` the probe's environment.
  */
 export const stubKit = (dir: string): string => {
   const bin = join(dir, "bin");
@@ -23,6 +27,21 @@ export const stubKit = (dir: string): string => {
     stub,
     [
       "#!/bin/sh",
+      // A judge probe (`claude -p … --model <m>`): answered by the model, and never part of the kit's log.
+      'if [ "$1" = "-p" ]; then',
+      '  model=""; prev=""',
+      '  for a in "$@"; do if [ "$prev" = "--model" ]; then model="$a"; fi; prev="$a"; done',
+      "  answer=ok",
+      '  for pair in $WIZARDINGCODE_STUB_PROBE; do if [ "${pair%%=*}" = "$model" ]; then answer="${pair#*=}"; fi; done',
+      '  if [ -n "$WIZARDINGCODE_STUB_PROBE_LOG" ]; then echo "probe $model" >> "$WIZARDINGCODE_STUB_PROBE_LOG"; fi',
+      '  if [ -n "$WIZARDINGCODE_STUB_PROBE_ENV" ]; then env > "$WIZARDINGCODE_STUB_PROBE_ENV"; fi',
+      '  case "$answer" in',
+      '    limited) echo "You\'ve reached your Fable limit. Switch to another model." >&2; exit 1;;',
+      '    overloaded) echo "API Error: 529 Overloaded" >&2; exit 1;;',
+      '    failed) echo "login expired" >&2; exit 1;;',
+      "  esac",
+      "  echo ok; exit 0",
+      "fi",
       'out=""',
       'if [ -n "$WIZARDINGCODE_STUB_LOG" ]; then pwd > "$WIZARDINGCODE_STUB_LOG"; echo "$@" >> "$WIZARDINGCODE_STUB_LOG"; fi',
       'if [ -n "$WIZARDINGCODE_STUB_ENV" ]; then env > "$WIZARDINGCODE_STUB_ENV"; fi',
@@ -157,11 +176,19 @@ export const writeTrace = (path: string, lines: readonly string[]): string => {
   return path;
 };
 
-/** The smallest aggregate `scanResults` reads: one case per entry, each run named by its trace path. */
-export const scanAggregate = (cases: Record<string, string[]>): string =>
+/** The smallest aggregate `scanResults` reads: one case per entry, each run named by its trace path and, when `graders` names the case, holding that run's graders (one array per run, aligned with the traces). */
+export const scanAggregate = (
+  cases: Record<string, string[]>,
+  graders: Record<string, unknown[][]> = {},
+): string =>
   JSON.stringify({
     cases: Object.entries(cases).map(([name, traces]) => ({
       name,
-      arms: { with: traces.map((tracePath) => ({ tracePath })) },
+      arms: {
+        with: traces.map((tracePath, i) => ({
+          tracePath,
+          ...(graders[name]?.[i] ? { graders: graders[name]?.[i] } : {}),
+        })),
+      },
     })),
   });

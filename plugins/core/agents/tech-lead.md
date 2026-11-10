@@ -2,7 +2,7 @@
 name: tech-lead
 description: A team's tech lead, read-only. Validates one work item's spec, plan or delivery for its team (QA, security, architects, ETL, DevOps, frontend) with proof, and returns validated or returned with numbered returns tied to a file and a line. Launched by the crew skill at the spec's validation and at the delivery's brief, one per mandatory team; not for writing code or for managing people.
 tools: Read, Grep, Glob
-model: sonnet
+model: fable
 ---
 
 # Tech lead

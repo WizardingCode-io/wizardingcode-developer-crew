@@ -29,6 +29,8 @@ export interface DayState {
   stoppedRuns?: string[];
   /** The first tick of the day that ran nothing because the day's budget was spent (2026-10-27-006 AC-5): when, the priced cost it read and the reason as it was written, so a report rewritten later in the day says the same words. */
   budgetSkip?: { at: string; costUsd: number; reason: string };
+  /** The first tick of the day whose run found no judge answering (2026-11-09-004): nothing ran and no record was written, so the report says when. */
+  judgeSkip?: { at: string };
 }
 
 /** A tick that died: what its lock said, once checked (an integer pid above 1, an ISO start; null otherwise), and the run folder it left without a record (2026-10-28-001 AC-9). */

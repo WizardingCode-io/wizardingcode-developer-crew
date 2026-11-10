@@ -16,6 +16,12 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import {
+  DEFAULT_AGENT_MODEL,
+  JUDGE_FALLBACK,
+  JUDGE_MODEL,
+  type ProbeAnswer,
+} from "../../../scripts/eval.ts";
+import {
   adoptionGate,
   adoptRun,
   backoffHours,
@@ -27,8 +33,10 @@ import {
   dueRun,
   type InstallDeps,
   install,
+  judgeArgs,
   LABEL,
   type LoopConfig,
+  lastMeasuredOf,
   launchdPlist,
   launcherScript,
   parseRuling,
@@ -76,7 +84,7 @@ test("2026-10-25-005 AC-1 (runtime): the runtime provider adds nothing to the en
     name: "runtime",
     env: {},
     agentModel: "claude-sonnet-5-5",
-    judgeModel: "claude-opus-5-5",
+    judgeModel: JUDGE_MODEL,
     claudeModels: true,
     secrets: [],
   });
@@ -371,8 +379,17 @@ const claude = {
 };
 
 /** The adoption's deps: real git, a judge that answers as told, a release that records its call. */
-function adoptDeps(answer: string | (() => string)) {
+function adoptDeps(
+  answer: string | (() => string),
+  options: {
+    /** The judge probe's answer for a model, in place of `ok` (2026-11-09-004). */
+    probe?: (model: string) => ProbeAnswer;
+    /** The judge call's own answer for its nth call, in place of status 0 with `answer`. */
+    judgeAnswer?: (n: number) => { status: number; output: string; stderr?: string } | undefined;
+  } = {},
+) {
   const seen = {
+    probes: [] as { model: string; cwd: string; env: Record<string, string> }[],
     judge: [] as { args: string[]; env: Record<string, string> }[],
     release: [] as { reason: string; notes: string[] }[],
     log: [] as string[],
@@ -394,8 +411,14 @@ function adoptDeps(answer: string | (() => string)) {
         });
         return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
       },
+      probeJudge: (call: { model: string; cwd: string; env: Record<string, string> }) => {
+        seen.probes.push(call);
+        return options.probe?.(call.model) ?? { status: 0, output: "ok", timedOut: false };
+      },
       judge: (call: { cwd: string; args: string[]; env: Record<string, string> }) => {
         seen.judge.push({ args: call.args, env: call.env });
+        const own = options.judgeAnswer?.(seen.judge.length);
+        if (own) return own;
         return { status: 0, output: typeof answer === "string" ? answer : answer() };
       },
       release: async (call: { reason: string; notes: string[] }) => {
@@ -733,6 +756,8 @@ type Seen = {
   /** The run ceiling each improvement received (2026-10-27-006 AC-2, AC-6). */
   ceilings: (number | undefined)[];
   judge: number;
+  /** The models the adoption's judge probe asked. */
+  probes: string[];
   release: string[];
   /** The step each resumed release was asked to start from, `undefined` when none was passed (2026-11-09-001 AC-19). */
   fromSteps: (number | undefined)[];
@@ -772,6 +797,12 @@ function tickDeps(
     signalDuringRun?: boolean;
     /** A resumed release fails again at this step (2026-11-09-001 AC-19). */
     resumeFails?: number;
+    /** No judge answered the run's probes (2026-11-09-004): the run makes no folder and returns 5. */
+    noJudge?: boolean;
+    /** The run stopped at a baseline not judged for this cause: its record carries it, exit 6. */
+    unjudged?: string;
+    /** The adoption's judge probe answers this for a model, in place of `ok` (2026-11-09-004 AC-36). */
+    probe?: (model: string) => ProbeAnswer;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
   const seen: Seen = {
@@ -781,6 +812,7 @@ function tickDeps(
     improve: [],
     ceilings: [],
     judge: 0,
+    probes: [],
     release: [],
     fromSteps: [],
     accounts: [],
@@ -839,6 +871,7 @@ function tickDeps(
     improve: async (opts, repo) => {
       seen.improve.push({ cases: opts.cases, provider: opts.provider?.name ?? "none" });
       seen.ceilings.push(opts.maxCostUsd);
+      if (options.noJudge) return 5;
       if (options.signalDuringRun) seen.handler?.();
       const date = now.toISOString().slice(0, 10);
       // The next free folder of the day, as createImproveFolder names it.
@@ -857,15 +890,25 @@ function tickDeps(
         run,
         at: now.toISOString(),
         targets: opts.cases,
-        baseline: Object.fromEntries(opts.cases.map((c) => [c, figures(0.5)])),
-        proposals: [
-          {
-            id: "P-1",
-            probe: Object.fromEntries(opts.cases.map((c) => [c, figures(0.9)])),
-            verdict: options.kept ? "win" : "lose",
-            rationale: options.echo ?? "",
-          },
-        ],
+        baseline: Object.fromEntries(
+          opts.cases.map((c) => [
+            c,
+            options.unjudged === undefined
+              ? figures(0.5)
+              : { ...figures(0), unjudged: true, runs: [{ score: 0, unjudged: options.unjudged }] },
+          ]),
+        ),
+        proposals:
+          options.unjudged !== undefined
+            ? []
+            : [
+                {
+                  id: "P-1",
+                  probe: Object.fromEntries(opts.cases.map((c) => [c, figures(0.9)])),
+                  verdict: options.kept ? "win" : "lose",
+                  rationale: options.echo ?? "",
+                },
+              ],
         composition: null,
         kept: options.kept ? { kind: "single", id: "P-1" } : null,
         branch: options.kept ? `improve/${run}` : null,
@@ -873,7 +916,7 @@ function tickDeps(
           ? { name: opts.provider.name, claudeModels: opts.provider.claudeModels }
           : null,
         costUsd: 1.5,
-        exit: options.exit ?? 0,
+        exit: options.unjudged === undefined ? (options.exit ?? 0) : 6,
         ...(listed === undefined ? {} : { lessons: listed }),
       };
       writeFileSync(join(folder, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
@@ -891,7 +934,11 @@ function tickDeps(
         git(repo, "commit", "-q", "-am", `Improvement run ${record.run}: P-1`);
         git(repo, "checkout", "-q", "main");
       }
-      return 0;
+      return options.unjudged === undefined ? 0 : 6;
+    },
+    probeJudge: (call) => {
+      seen.probes.push(call.model);
+      return options.probe?.(call.model) ?? { status: 0, output: "ok", timedOut: false };
     },
     judge: () => {
       seen.judge += 1;
@@ -2702,4 +2749,313 @@ test("2026-11-09-001 AC-19: a pending release resumes by the step's name", async
     failedStep: 11,
     failedName: "the local install",
   });
+});
+
+const FABLE_LIMIT_TEXT = "You've reached your Fable limit. Switch to another model.";
+const limitedProbe: ProbeAnswer = { status: 1, output: FABLE_LIMIT_TEXT, timedOut: false };
+/** The suite's own provider: the judge that gives way to the fallback. */
+const suiteProvider = {
+  ...claude,
+  agentModel: DEFAULT_AGENT_MODEL,
+  judgeModel: JUDGE_MODEL,
+  env: { CLAUDE_CODE_OAUTH_TOKEN: "t" },
+};
+const adopt = (
+  fixture: { repo: string; folder: string },
+  deps: ReturnType<typeof adoptDeps>["deps"],
+  provider: typeof claude = suiteProvider,
+) =>
+  adoptRun(
+    { ...fixture, record: keptRecord("2026-10-25-1"), provider, judgeSystemPrompt: "# Judge" },
+    deps,
+  );
+const rulingOf = (fixture: { folder: string }) =>
+  readFileSync(join(fixture.folder, "adoption/ruling.md"), "utf8");
+const modelOf = (call: { args: string[] } | undefined) =>
+  call?.args[(call?.args.indexOf("--model") ?? -1) + 1];
+
+test("2026-11-09-004 AC-36: the adoption judge is chosen by a probe in the provider's environment and named in the ruling; a judge call that fails is never a ruling: at a limit the next candidate rules, otherwise nothing is ruled or released", async () => {
+  expect(judgeArgs("p", "s", "m")).toContain("--strict-mcp-config");
+  const args = judgeArgs("p", "s", "m");
+  expect(args[args.indexOf("--model") + 1]).toBe("m");
+  // Fable answers its probe: it rules, and the ruling says so.
+  const first = adoptionFixture();
+  const fable = adoptDeps(holdsJson);
+  expect((await adopt(first, fable.deps)).released).toBe("0.15.1");
+  expect(fable.seen.probes).toEqual([
+    { model: JUDGE_MODEL, cwd: first.repo, env: suiteProvider.env },
+  ]);
+  expect(modelOf(fable.seen.judge[0])).toBe(JUDGE_MODEL);
+  expect(rulingOf(first)).toContain(`- judge: ${JUDGE_MODEL}\n- passed over: none\n\nholds`);
+  // Fable limited at the probe: Opus rules (D-3), named with the model passed over.
+  const second = adoptionFixture();
+  const fell = adoptDeps(holdsJson, {
+    probe: (model) =>
+      model === JUDGE_MODEL ? limitedProbe : { status: 0, output: "ok", timedOut: false },
+  });
+  expect((await adopt(second, fell.deps)).released).toBe("0.15.1");
+  expect(fell.seen.judge.map(modelOf)).toEqual([JUDGE_FALLBACK]);
+  expect(rulingOf(second)).toContain(
+    `- judge: ${JUDGE_FALLBACK}\n- passed over: ${JUDGE_MODEL} (limited)\n\nholds`,
+  );
+  // Neither answers: no judge is launched, nothing is released, fixed words alone.
+  const third = adoptionFixture();
+  const none = adoptDeps(holdsJson, { probe: () => limitedProbe });
+  const unruled = await adopt(third, none.deps);
+  const words = `no judge answered (${JUDGE_MODEL}: limited, ${JUDGE_FALLBACK}: limited)`;
+  expect(unruled).toEqual({ released: null, reason: words });
+  expect(none.seen.judge).toEqual([]);
+  expect(none.seen.release).toEqual([]);
+  expect(rulingOf(third)).toContain(
+    `- judge: none\n- passed over: ${JUDGE_MODEL} (limited), ${JUDGE_FALLBACK} (limited)\n\nnot ruled: ${words}`,
+  );
+  expect(none.seen.log.join("\n")).toContain(`adoption of 2026-10-25-1: not ruled: ${words}`);
+  expect(rulingOf(third)).not.toContain("Switch to another model");
+  expect(unruled.reason).not.toContain("Switch to another model");
+  expect(git(third.repo, "log", "-1", "--format=%s").trim()).toBe("init");
+  // The limit met during the ruling, in stderr alone: the next candidate rules, whole.
+  const fourth = adoptionFixture();
+  const midway = adoptDeps(holdsJson, {
+    judgeAnswer: (n) => (n === 1 ? { status: 1, output: "", stderr: FABLE_LIMIT_TEXT } : undefined),
+  });
+  expect((await adopt(fourth, midway.deps)).released).toBe("0.15.1");
+  expect(midway.seen.judge.map(modelOf)).toEqual([JUDGE_MODEL, JUDGE_FALLBACK]);
+  expect(rulingOf(fourth)).toContain(
+    `- judge: ${JUDGE_FALLBACK}\n- passed over: ${JUDGE_MODEL} (limited)\n\nholds`,
+  );
+  // Every candidate at its limit during the ruling: not ruled, never "does not hold".
+  const fifth = adoptionFixture();
+  const spent = adoptDeps(holdsJson, {
+    judgeAnswer: () => ({ status: 1, output: FABLE_LIMIT_TEXT }),
+  });
+  const exhausted = await adopt(fifth, spent.deps);
+  expect(exhausted).toEqual({
+    released: null,
+    reason: "not ruled: every judge was at its limit",
+  });
+  expect(spent.seen.judge).toHaveLength(2);
+  expect(rulingOf(fifth)).toContain(
+    `- judge: none\n- passed over: ${JUDGE_MODEL} (limited), ${JUDGE_FALLBACK} (limited)\n\nnot ruled: every judge was at its limit`,
+  );
+  expect(rulingOf(fifth)).not.toContain("does not hold");
+  // Another failure of the judge call: one call, not ruled, the status named.
+  const sixth = adoptionFixture();
+  const broken = adoptDeps(holdsJson, {
+    judgeAnswer: () => ({ status: 1, output: "Invalid API key" }),
+  });
+  const failed = await adopt(sixth, broken.deps);
+  expect(failed).toEqual({ released: null, reason: "not ruled: the judge exited 1" });
+  expect(broken.seen.judge).toHaveLength(1);
+  expect(rulingOf(sixth)).toContain(
+    `- judge: none\n- passed over: ${JUDGE_MODEL} (failed)\n\nnot ruled: the judge exited 1`,
+  );
+  expect(rulingOf(sixth)).not.toContain("does not hold");
+  expect(broken.seen.release).toEqual([]);
+  // A pinned judge (the shared fixture's) is probed alone: limited gives not ruled.
+  const seventh = adoptionFixture();
+  const pinned = adoptDeps(holdsJson, { probe: () => limitedProbe });
+  const alone = await adopt(seventh, pinned.deps, claude);
+  expect(pinned.seen.probes.map((p) => p.model)).toEqual([claude.judgeModel]);
+  expect(alone.reason).toBe(`no judge answered (${claude.judgeModel}: limited)`);
+});
+
+test("2026-11-09-004 AC-40: an answer of the adoption judge marked as an error is no ruling at any exit status: at a limit the next candidate rules, otherwise nothing is ruled", async () => {
+  // The limit as an error answer of a call that exits 0: the status the CLI gives at a limit is recorded nowhere.
+  const first = adoptionFixture();
+  const quota = adoptDeps(holdsJson, {
+    judgeAnswer: (n) =>
+      n === 1
+        ? { status: 0, output: JSON.stringify({ is_error: true, result: FABLE_LIMIT_TEXT }) }
+        : undefined,
+  });
+  expect((await adopt(first, quota.deps)).released).toBe("0.15.1");
+  expect(quota.seen.judge.map(modelOf)).toEqual([JUDGE_MODEL, JUDGE_FALLBACK]);
+  expect(rulingOf(first)).toContain(
+    `- judge: ${JUDGE_FALLBACK}\n- passed over: ${JUDGE_MODEL} (limited)\n\nholds`,
+  );
+  // Another error answer with status 0: one call, not ruled, never "does not hold".
+  const second = adoptionFixture();
+  const errored = adoptDeps(holdsJson, {
+    judgeAnswer: () => ({
+      status: 0,
+      output: JSON.stringify({ is_error: true, result: "holds" }),
+    }),
+  });
+  const out = await adopt(second, errored.deps);
+  expect(out).toEqual({ released: null, reason: "not ruled: the judge's answer was an error" });
+  expect(errored.seen.judge).toHaveLength(1);
+  expect(rulingOf(second)).toContain(
+    `- judge: none\n- passed over: ${JUDGE_MODEL} (failed)\n\nnot ruled: the judge's answer was an error`,
+  );
+  expect(rulingOf(second)).not.toContain("does not hold");
+  expect(errored.seen.release).toEqual([]);
+  // A ruling whose own words name a usage limit is still a ruling: only an error answer is read for it.
+  const third = adoptionFixture();
+  const wordy = adoptDeps(
+    JSON.stringify({
+      result: "does not hold\n\nMissing: the rule on the usage limit was softened.",
+    }),
+  );
+  const ruled = await adopt(third, wordy.deps);
+  expect(ruled.reason).toBe(
+    'the judge ruled "does not hold": the rule on the usage limit was softened.',
+  );
+  expect(wordy.seen.judge).toHaveLength(1);
+});
+
+test("2026-11-09-004 AC-36 (through the tick): the adoption probes through the tick's own probe, and with no judge answering the kept run is not released", async () => {
+  const world = loopWorld();
+  const { deps, seen } = tickDeps(world, { kept: true, probe: () => limitedProbe });
+  expect(await tick({}, deps)).toBe(0);
+  expect(seen.probes).toEqual([JUDGE_MODEL, JUDGE_FALLBACK]);
+  expect(seen.judge).toBe(0);
+  expect(seen.release).toEqual([]);
+  const notices = seen.sh.filter((c) => c[0] === "osascript");
+  expect(notices.at(-1)?.join(" ")).toContain("no judge answered");
+});
+
+test("2026-11-09-004 AC-41: a provider whose agent or judge model is no model name is refused before anything runs", () => {
+  const gateway = (overrides: Record<string, string>): LoopConfig["provider"] => ({
+    name: "openrouter",
+    baseUrl: "https://openrouter.ai/api",
+    authToken: { keychain: "or-token" },
+    models: { ...models, ...overrides },
+  });
+  expect(() =>
+    providerEnv({ provider: gateway({ judge: "--print" }) } as LoopConfig, keychain),
+  ).toThrow('the provider\'s judge model "--print" is not a model name; nothing runs');
+  expect(() =>
+    providerEnv({ provider: gateway({ agent: "a b" }) } as LoopConfig, keychain),
+  ).toThrow('the provider\'s agent model "a b" is not a model name; nothing runs');
+  expect(providerEnv({ provider: gateway({}) } as LoopConfig, keychain).judgeModel).toBe(
+    models.judge,
+  );
+});
+
+test("2026-11-09-004 AC-37: a run with no judge is a skip of the tick, told once a day beside a budget skip, with no record, no lastRun and no failure; a run stopped at a limit leaves the tick due, one stopped by another cause does not; lastMeasuredOf follows", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  const stateOf = () => JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(stateOf().lastRun.run).toBe("2026-10-25-1");
+  const pushRule = (n: number) => {
+    git(world.user, "pull", "-q", "--rebase", "origin", "main");
+    writeFileSync(join(world.user, "plugins/core/skills/crew/SKILL.md"), `# Crew\n\nRule ${n}.\n`);
+    git(world.user, "add", "-A");
+    git(world.user, "commit", "-q", "-m", `rule ${n}`);
+    git(world.user, "push", "-q", "origin", "main");
+  };
+  const runsOf = () =>
+    readdirSync(join(world.home, "repo/docs/improve"))
+      .filter((n) => n.startsWith("2026-10-25-"))
+      .sort();
+  // Due (the plugin's text changed), and no judge answers: an earlier run's record is in the clone.
+  pushRule(2);
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", noJudge: true });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(second.seen.improve).toHaveLength(1);
+  expect(runsOf()).toEqual(["2026-10-25-1"]);
+  expect(stateOf().lastRun.run).toBe("2026-10-25-1");
+  expect(stateOf().failures ?? 0).toBe(0);
+  expect(stateOf().backoffUntil ?? null).toBeNull();
+  expect(stateOf().day.judgeSkip).toEqual({ at: "2026-10-25T21:00:00.000Z" });
+  expect(originHead(world.origin)).toBe("Improvement tick 2026-10-25: no judge answered");
+  const report = () => git(world.origin, "show", "main:docs/improve/daily/2026-10-25.md");
+  expect(report()).toContain("## Skipped ticks");
+  expect(report()).toContain("- 21:00 UTC: no judge answered; a later due tick probes again");
+  const notices = second.seen.sh.filter((c) => c[0] === "osascript");
+  expect(notices).toHaveLength(1);
+  expect(notices[0]?.join(" ")).toContain("skipped: no judge answered");
+  // The same again that day: the log alone.
+  const third = tickDeps(world, { now: "2026-10-25T22:00:00.000Z", noJudge: true });
+  expect(await tick({}, third.deps)).toBe(0);
+  expect(third.seen.sh.filter((c) => c[0] === "osascript")).toEqual([]);
+  expect(third.seen.log.join("\n")).toContain("skipped: no judge answered; reported at 21:00 UTC");
+  expect(originHead(world.origin)).toBe("Improvement tick 2026-10-25: no judge answered");
+  // A run stopped at a baseline not judged at a limit: on record, the tick still due.
+  const fourth = tickDeps(world, { now: "2026-10-25T22:30:00.000Z", unjudged: FABLE_LIMIT_TEXT });
+  expect(await tick({}, fourth.deps)).toBe(0);
+  expect(runsOf()).toEqual(["2026-10-25-1", "2026-10-25-2"]);
+  expect(originHead(world.origin)).toBe(
+    "Improvement run 2026-10-25-2: stopped: a run was not judged",
+  );
+  expect(stateOf().lastRun.run).toBe("2026-10-25-1");
+  expect(stateOf().failures).toBe(0);
+  expect(fourth.seen.judge).toBe(0);
+  // The same stop for a cause that is no limit: the run is the last run, and the tick is not due again.
+  const fifth = tickDeps(world, {
+    now: "2026-10-25T23:00:00.000Z",
+    unjudged: "API Error: Fable 5.2's safeguards flagged this message",
+  });
+  expect(await tick({}, fifth.deps)).toBe(0);
+  expect(stateOf().lastRun.run).toBe("2026-10-25-3");
+  const sixth = tickDeps(world, { now: "2026-10-25T23:30:00.000Z" });
+  expect(await tick({}, sixth.deps)).toBe(0);
+  expect(sixth.seen.improve).toEqual([]);
+  // The day's budget spent on the same day: both skips stand in the report.
+  pushRule(3);
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ maxRunUsd: 0, maxDayUsd: 1 }));
+  const seventh = tickDeps(world, { now: "2026-10-25T23:45:00.000Z" });
+  expect(await tick({}, seventh.deps)).toBe(0);
+  expect(report()).toContain("- 21:00 UTC: no judge answered; a later due tick probes again");
+  expect(report()).toContain("every later tick of the day skips the same way");
+
+  expect(verdictText({ exit: 6 } as Parameters<typeof verdictText>[0])).toBe(
+    "stopped: a run was not judged",
+  );
+  const at = "2026-10-25T22:30:00.000Z";
+  const stopped = (cause: string, where: "baseline" | "probe") => {
+    const marked = { ...figures(0), unjudged: true, runs: [{ score: 0, unjudged: cause }] };
+    return {
+      run: "r",
+      at,
+      baseline: where === "baseline" ? { t: marked } : { t: figures(0.5) },
+      proposals: where === "probe" ? [{ id: "P-1", probe: { u: marked } }] : [],
+    } as unknown as Parameters<typeof lastMeasuredOf>[0][number];
+  };
+  const none = { t: null, u: null };
+  expect(lastMeasuredOf([stopped(FABLE_LIMIT_TEXT, "baseline")], ["t", "u"])).toEqual(none);
+  expect(lastMeasuredOf([stopped("API Error: 529 Overloaded", "baseline")], ["t", "u"])).toEqual(
+    none,
+  );
+  expect(
+    lastMeasuredOf([stopped("safeguards flagged this message", "baseline")], ["t", "u"]),
+  ).toEqual({
+    t: at,
+    u: null,
+  });
+  // A proposal's probe not judged at a limit: its baseline's case counts, the probed one does not.
+  expect(lastMeasuredOf([stopped(FABLE_LIMIT_TEXT, "probe")], ["t", "u"])).toEqual({
+    t: at,
+    u: null,
+  });
+  // A record written before the field: counted as it was.
+  expect(
+    lastMeasuredOf(
+      [{ run: "r", at, baseline: { t: figures(0.5) }, proposals: [] } as never],
+      ["t", "u"],
+    ),
+  ).toEqual({ t: at, u: null });
+}, 120_000);
+
+test("2026-11-09-004 AC-41 (through the tick): a tick whose provider names no model name fails before any probe, run or judge", async () => {
+  const world = loopWorld();
+  writeFileSync(
+    join(world.home, "config.json"),
+    JSON.stringify({
+      provider: {
+        name: "local",
+        baseUrl: "http://127.0.0.1:1234",
+        models: { ...models, judge: "--print" },
+      },
+    }),
+  );
+  const { deps, seen } = tickDeps(world);
+  expect(await tick({}, deps)).toBe(1);
+  expect(seen.improve).toEqual([]);
+  expect(seen.probes).toEqual([]);
+  expect(seen.judge).toBe(0);
+  expect(seen.log.join("\n")).toContain(
+    'the provider\'s judge model "--print" is not a model name; nothing runs',
+  );
 });

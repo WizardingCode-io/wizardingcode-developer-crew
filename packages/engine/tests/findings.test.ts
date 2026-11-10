@@ -75,6 +75,7 @@ function openFindings(text: string): number[] {
 // 230 (a task's gate run writes no run marker, so the Stop hook holds the turn) and 231 (the advisories the
 // judgement left on 2026-11-09-001) closed by 2026-11-09-003, which also recorded and closed 232 (a removal
 // deleted the skill folder every runtime shares).
+// 208's cause (a grader whose judge call failed scored as failed) answered by 2026-11-09-004, which put the eval judge back on Fable.
 const OPEN = [
   77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222, 224, 228,
 ];

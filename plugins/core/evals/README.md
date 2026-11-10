@@ -21,7 +21,7 @@ It prints the `claude plugin eval` command it runs, which is:
 PATH="$PWD/plugins/core/evals/fixtures/bin:$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" WIZARDINGCODE_CREW_REPO="$PWD" claude plugin eval plugins/core \
   --scaffold --trust-plugin --no-publish --keep-temp \
   --output-dir plugins/core/evals/results/<UTC stamp>-suite \
-  --model claude-sonnet-5-5 --judge-model claude-opus-5-5 \
+  --model claude-sonnet-5-5 --judge-model claude-fable-5-2 \
   --concurrency 3 \
   --tag cost enforcement method risk stacks gap kind validator judgement team environment priority contracts reception jev issue strategy audit knowledge benchmark packs ui \
   <the tool grant> \
@@ -38,7 +38,7 @@ One case while iterating (one run, no baseline arm, the suite's judge model for 
 bun scripts/eval.ts --case false-done
 ```
 
-The agent under test runs on Sonnet 5.5 and the judge on Fable 5.1 (the owner's choice: the judge must not be weaker than the agent it grades). If a model id is rejected, use the aliases `sonnet` and `fable`. On Linux, Bash in evals needs `bubblewrap` and `socat`; macOS has its own sandbox.
+The agent under test runs on Sonnet 5.5 and the judge on Fable 5.2 (`claude-fable-5-2`; the owner's rule: the judge is never weaker than the agent it grades). `bun scripts/eval.ts` asks the judge one question before the run: at Fable's usage limit `claude-opus-5-5` judges the whole run and the output says so; with neither answering nothing runs (exit 5). A line `needs-rerun: <case> (not judged: <grader>: <cause>)` names a run whose judge call failed during the run: run the case again. If a model id is rejected, use the aliases `sonnet` and `fable`. On Linux, Bash in evals needs `bubblewrap` and `socat`; macOS has its own sandbox.
 
 ## Cases
 

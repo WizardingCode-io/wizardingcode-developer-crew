@@ -27,7 +27,7 @@ let workspace = null
 const LADDER = ['fable', 'opus', 'sonnet', 'haiku']
 // Each crew role's declared model, as its agent file's `model:` line says (a test holds the two equal)
 const ROLE_MODELS = {
-  cto: 'opus',
+  cto: 'fable',
   'devils-advocate': 'opus',
   expert: 'opus',
   'fault-finder': 'opus',
@@ -49,7 +49,7 @@ const ROLE_MODELS = {
   'review-security': 'sonnet',
   'review-test-quality': 'sonnet',
   'review-ui-ux': 'sonnet',
-  'tech-lead': 'sonnet',
+  'tech-lead': 'fable',
 }
 const CREW_AGENT = 'wizardingcode-developer-crew:'
 // The store's key: { <alias>: { since, probeAt } }, the models at their limits

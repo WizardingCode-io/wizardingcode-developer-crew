@@ -27,8 +27,173 @@ export interface EvalOptions {
   json?: string;
 }
 
-/** The suite's judge: never a weaker model than the agent under test (the owner's rule); Opus by the user's decision of 2026-10-30, since at Fable's limit every llm grader threw and counted as failed (finding 208). */
-export const JUDGE_MODEL = "claude-opus-5-5";
+/**
+ * The suite's judge: Fable, by the owner's rule of 2026-11-09 (every judge and coordinator runs on
+ * Fable), and never a weaker model than the agent under test. It left Fable on 2026-10-30 because
+ * at Fable's usage limit every llm grader threw and counted as failed (finding 208); the cause is
+ * answered where it lies (`unjudgedGraders`, `chooseJudge`), so the judge is Fable again.
+ */
+export const JUDGE_MODEL = "claude-fable-5-2";
+/** The judge of a whole run when `JUDGE_MODEL` cannot judge at its start (the user's decisions D-2 and D-3 of 2026-11-09-004): not weaker than `DEFAULT_AGENT_MODEL`. */
+export const JUDGE_FALLBACK = "claude-opus-5-5";
+
+/** The CLI's words for a model at its usage limit: the text finding 208 recorded ("You've reached your Fable limit") and the older wording. */
+export const USAGE_LIMIT = /reached your [\w .-]{0,40}limit|usage limit/i;
+/** A model that cannot answer now: at its usage limit, rate limited or overloaded. The one pattern the editor's ladder, the judge's probe and the loop's reading of an unjudged cause share. */
+export const LIMITED = new RegExp(`${USAGE_LIMIT.source}|rate.?limit|\\b429\\b|overloaded`, "i");
+
+/**
+ * A text of a model call or of a grader as one bounded line, before it is printed or recorded:
+ * whitespace runs become one space; the control characters (C0, DEL, C1), the zero-width
+ * characters and the direction marks go, the same set the engine's `quotedText` strips
+ * (`packages/engine/src/quote.ts`); the spaces they stood between become one; then the cut at
+ * `limit`. It is not `quotedText` itself: that one keeps a text's first line alone and ends a cut
+ * with an ellipsis, where a CLI's error is read whole and a cut is counted to the character.
+ */
+export function oneLine(text: string, limit: number): string {
+  return (
+    text
+      .replace(/\s+/g, " ")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are what is stripped
+      .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+      .replace(/ {2,}/g, " ")
+      .trim()
+      .slice(0, limit)
+  );
+}
+
+/** A model name as a flag's value: it starts with a letter or a digit, so it never reaches `claude` as a flag of its own. */
+export const MODEL_NAME = /^[A-Za-z0-9][\w.:/-]*$/;
+
+/**
+ * The models a run may be judged by, in order. The suite's judge gives way to the fallback only
+ * when the agent under test is the default one: the fallback is known not weaker than it, and
+ * nothing ranks a provider's own agent model. Any other judge is pinned, a gateway's prefixed id
+ * among them.
+ */
+export function judgeCandidates(judge?: string, agentModel?: string): string[] {
+  const suite = judge === undefined || judge === JUDGE_MODEL;
+  const ranked = agentModel === undefined || agentModel === DEFAULT_AGENT_MODEL;
+  return suite && ranked ? [JUDGE_MODEL, JUDGE_FALLBACK] : [judge ?? JUDGE_MODEL];
+}
+
+/** A judge probe's bound: a cold CLI start with a login, so an unattended tick never hangs on it. */
+export const PROBE_TIMEOUT_MS = 60_000;
+
+/** The judge probe's arguments: one question, no tool, one turn, no session, and no setting, plugin, hook or MCP server of the session. */
+export function probeArgs(model: string): string[] {
+  return [
+    "-p",
+    "Answer with the single word ok.",
+    "--model",
+    model,
+    "--tools",
+    "",
+    "--max-turns",
+    "1",
+    "--no-session-persistence",
+    "--setting-sources",
+    "",
+    "--strict-mcp-config",
+  ];
+}
+
+/** What a judge probe gave: the status, stdout and stderr joined (the CLI writes a limit to either), and whether its timeout ended it. */
+export interface ProbeAnswer {
+  status: number | null;
+  output: string;
+  timedOut: boolean;
+}
+
+/** One question to a model through the CLI the kit spawns, in the environment of the call it stands for, so it reads the limit of the account that will judge. */
+export function probeJudge(
+  model: string,
+  env: Record<string, string | undefined>,
+  cwd: string,
+  spawn: typeof spawnSync = spawnSync,
+): ProbeAnswer {
+  const r = spawn("claude", probeArgs(model), {
+    cwd,
+    env,
+    encoding: "utf8",
+    timeout: PROBE_TIMEOUT_MS,
+  });
+  return {
+    status: r.status,
+    output: `${r.stdout ?? ""}${r.stderr ?? ""}`,
+    timedOut: (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT",
+  };
+}
+
+export type ProbeOutcome = "answered" | "limited" | "overloaded" | "timed out" | "failed";
+
+/**
+ * How a judge probe reads. The usage limit's text decides at any status, since the status the CLI
+ * gives at a limit is recorded nowhere; a probe that exits 0 otherwise answered, whatever retry
+ * notice it printed on the way; a failed call that names a rate limit or an overload is a model
+ * that cannot judge now; anything else is a failure that is no limit.
+ */
+export function probeOutcome(answer: ProbeAnswer): ProbeOutcome {
+  if (answer.timedOut) return "timed out";
+  if (USAGE_LIMIT.test(answer.output)) return "limited";
+  if (answer.status === 0) return "answered";
+  return LIMITED.test(answer.output) ? "overloaded" : "failed";
+}
+
+/** Why a candidate was passed over for the next one. */
+export type SkipReason = "limited" | "overloaded" | "timed out";
+
+/** The judge of a run, chosen once at its start: the model, each one passed over, every one probed, and the lines to print. */
+export interface JudgeChoice {
+  judge: string | null;
+  skipped: { model: string; reason: SkipReason }[];
+  probed: { model: string; outcome: ProbeOutcome }[];
+  lines: string[];
+}
+
+/**
+ * The judge of a whole run (D-2): the first candidate that answers its probe. One that cannot
+ * judge now is passed over; a probe that fails for another reason (an expired login, an unknown
+ * model) ends the choice with no judge, since the fallback would fail the same way and passing to
+ * it on any error would judge with another model where the owner's rule says Fable. A failed
+ * probe's output goes to the lines alone, bounded, and never into a record.
+ */
+export function chooseJudge(
+  judge: string | undefined,
+  agentModel: string | undefined,
+  probe: (model: string) => ProbeAnswer,
+): JudgeChoice {
+  const choice: JudgeChoice = { judge: null, skipped: [], probed: [], lines: [] };
+  let failure = "";
+  for (const model of judgeCandidates(judge, agentModel)) {
+    const answer = probe(model);
+    const outcome = probeOutcome(answer);
+    choice.probed.push({ model, outcome });
+    if (outcome === "answered") {
+      choice.judge = model;
+      break;
+    }
+    if (outcome === "failed") {
+      failure = oneLine(answer.output, 200);
+      break;
+    }
+    choice.skipped.push({ model, reason: outcome });
+  }
+  if (choice.judge === null)
+    choice.lines = [
+      "judge: no judge answered; nothing runs",
+      ...choice.probed.map(
+        (p) => `judge: ${p.model}: ${p.outcome}${p.outcome === "failed" ? `: ${failure}` : ""}`,
+      ),
+    ];
+  else if (choice.skipped.length)
+    choice.lines = [
+      `judge: ${choice.judge} judges this run whole; ${choice.skipped
+        .map((s, i) => `${s.model}${i === 0 ? " passed over" : ""} (${s.reason})`)
+        .join(", ")}`,
+    ];
+  return choice;
+}
 
 /**
  * The tools the kit's session may use without asking (findings 64 and 95): Bash whole, since the
@@ -363,28 +528,57 @@ export function deniedReferenceReads(lines: readonly string[]): string[] {
   return readTrace(lines).denied;
 }
 
+/** A run of an aggregate as the scripts read it: its kept trace and its graders. */
+export interface KitRunEntry {
+  tracePath?: string;
+  graders?: unknown;
+}
+
+/** How the kit words a grader whose judge call failed (read in the loop's records of 2026-10-26 to 2026-10-30): the result has no error field, so the prefix is the one sign. */
+export const JUDGE_FAILED = "grader threw: judge call failed";
+
+/**
+ * The graders of a run that were not judged (finding 208): each scored grader whose explanation
+ * starts with `JUDGE_FAILED`, with the cause after the prefix as one bounded line. Such a grader
+ * says nothing about the case; a grader that threw for another reason is a defect of its case and
+ * stays a failed grader.
+ */
+export function unjudgedGraders(run: unknown): { grader: string; cause: string }[] {
+  const graders = (run as { graders?: unknown } | null)?.graders;
+  if (!Array.isArray(graders)) return [];
+  const out: { grader: string; cause: string }[] = [];
+  for (const g of graders as { name?: unknown; scored?: unknown; explanation?: unknown }[]) {
+    if (g?.scored === false || typeof g?.explanation !== "string") continue;
+    if (!g.explanation.startsWith(JUDGE_FAILED)) continue;
+    const cause = g.explanation.slice(JUDGE_FAILED.length).replace(/^[:\s]+/, "");
+    out.push({ grader: String(g.name), cause: oneLine(cause, 120) });
+  }
+  return out;
+}
+
 /**
  * The runs of a case's arms as the kit writes them: an object keyed by arm (`with`, `without`), each
  * a list of runs; an older shape (a list of arms with `runs`) is read too (SP8 Task 6: the first
  * shape crashed the scan after every `--case` run).
  */
-export function armRuns(arms: unknown): { tracePath?: string }[] {
+export function armRuns(arms: unknown): KitRunEntry[] {
   if (Array.isArray(arms))
     return arms.flatMap((a) =>
       Array.isArray((a as { runs?: unknown }).runs)
-        ? ((a as { runs: unknown[] }).runs as { tracePath?: string }[])
+        ? ((a as { runs: unknown[] }).runs as KitRunEntry[])
         : [],
     );
   if (typeof arms === "object" && arms !== null)
     return Object.values(arms as Record<string, unknown>).flatMap((runs) =>
-      Array.isArray(runs) ? (runs as { tracePath?: string }[]) : [],
+      Array.isArray(runs) ? (runs as KitRunEntry[]) : [],
     );
   return [];
 }
 
 /**
- * The `needs-rerun` lines of a results folder: one per run whose kept trace (the sandbox file the
- * aggregate names as `tracePath`) shows a denied reference read, or could not be read at all.
+ * The `needs-rerun` lines of a results folder: one per run with a grader that was not judged, and
+ * one per run whose kept trace (the sandbox file the aggregate names as `tracePath`) shows a denied
+ * reference read, or could not be read at all.
  */
 export function scanResults(dir: string): string[] {
   const aggregate = join(dir, "aggregate-result.json");
@@ -394,7 +588,14 @@ export function scanResults(dir: string): string[] {
   };
   const lines: string[] = [];
   for (const c of parsed.cases ?? []) {
-    for (const trace of armRuns(c.arms).map((r) => r.tracePath ?? "")) {
+    for (const run of armRuns(c.arms)) {
+      // A grader that was not judged, read before the trace is looked for: a run with no trace is still named.
+      const [first, ...more] = unjudgedGraders(run);
+      if (first)
+        lines.push(
+          `needs-rerun: ${c.name ?? "?"} (not judged: ${first.grader}: ${first.cause}${more.length ? `, +${more.length} more` : ""})`,
+        );
+      const trace = run.tracePath ?? "";
       if (!trace || !existsSync(trace)) continue;
       const reading = readTrace(readFileSync(trace, "utf8").split("\n"));
       if (!reading.readable)
@@ -457,21 +658,34 @@ export function createRunFolder(folder: string, results: string): void {
   }
 }
 
-/** What a run of the kit through a script leaves: its folder, the aggregate when the kit wrote one there, the status and the command line. */
-export interface KitRun {
-  folder: string;
-  /** The folder as the kit received it, relative to the repository root. */
-  relative: string;
-  aggregate: string | null;
-  status: number | null;
-  command: string;
-}
+/** What a run of the kit through a script leaves: its folder, the aggregate when the kit wrote one there, the status, the command line and the judge chosen for it. */
+export type KitRun =
+  | {
+      folder: string;
+      /** The folder as the kit received it, relative to the repository root. */
+      relative: string;
+      aggregate: string | null;
+      status: number | null;
+      command: string;
+      judge: JudgeChoice;
+    }
+  /** No judge answered (status 5): no folder was made and the kit was not called. */
+  | {
+      folder: null;
+      relative: null;
+      aggregate: null;
+      status: 5;
+      command: "";
+      judge: JudgeChoice;
+    };
 
 /**
  * Runs the kit into a folder of the run's own (finding 118): the folder is created first, so a kit
  * that refused it would refuse before any paid case; the kit receives it through `--output-dir`
  * and runs with cwd the repository root, wherever the script was run from; the aggregate is looked
- * for in that folder alone, never in the newest folder by name.
+ * for in that folder alone, never in the newest folder by name. The run's judge is chosen once,
+ * after the results directory is checked and before the folder and the estimate, by a probe in
+ * the kit call's own environment (2026-11-09-004): with no judge nothing is made and nothing runs.
  */
 export function runKit(options: {
   root: string;
@@ -480,30 +694,43 @@ export function runKit(options: {
   tags?: string[];
   maxCostUsd?: number;
   judgeModel?: string;
+  /** The judge probe, the real one unless a test gives another. */
+  probe?: (model: string, env: Record<string, string>, cwd: string) => ProbeAnswer;
 }): KitRun {
   const dir = resultsDir();
   const results = join(options.root, dir);
+  const invocation = (outputDir?: string, judgeModel?: string) =>
+    evalInvocation({
+      root: options.root,
+      platform: process.platform,
+      path: process.env.PATH ?? "",
+      realGitDir: realGitDir(process.platform),
+      caseName: options.caseName,
+      tags: options.tags,
+      outputDir,
+      maxCostUsd: options.maxCostUsd,
+      judgeModel,
+    });
+  const own = invocation();
+  const environment = kitEnvironment({ ...process.env, ...own.env, PATH: own.path });
+  const probe = options.probe ?? probeJudge;
+  const judge = chooseJudge(options.judgeModel, undefined, (model) =>
+    probe(model, environment, options.root),
+  );
+  for (const line of judge.lines) console.log(line);
+  if (judge.judge === null)
+    return { folder: null, relative: null, aggregate: null, status: 5, command: "", judge };
   const folder = runFolder(results, options.suffix, new Date());
   createRunFolder(folder, results);
   const relative = `${dir}/${basename(folder)}`;
-  const { path, args, env } = evalInvocation({
-    root: options.root,
-    platform: process.platform,
-    path: process.env.PATH ?? "",
-    realGitDir: realGitDir(process.platform),
-    caseName: options.caseName,
-    tags: options.tags,
-    outputDir: relative,
-    maxCostUsd: options.maxCostUsd,
-    judgeModel: options.judgeModel,
-  });
+  const { args } = invocation(relative, judge.judge);
   const command = `claude ${args.join(" ")}`;
   console.log(costEstimate(options));
   console.log(command);
   const run = spawnSync("claude", args, {
     cwd: options.root,
     stdio: "inherit",
-    env: kitEnvironment({ ...process.env, ...env, PATH: path }),
+    env: environment,
   });
   const aggregate = join(folder, "aggregate-result.json");
   return {
@@ -512,6 +739,7 @@ export function runKit(options: {
     aggregate: existsSync(aggregate) ? aggregate : null,
     status: run.status,
     command,
+    judge,
   };
 }
 
@@ -552,7 +780,7 @@ if (import.meta.main) {
     process.exit(1);
   }
   const judge = given["--judge-model"];
-  if (judge !== undefined && !/^[\w.-]+$/.test(judge)) {
+  if (judge !== undefined && !MODEL_NAME.test(judge)) {
     console.error(`eval: --judge-model takes a model name, not ${JSON.stringify(judge)}`);
     process.exit(1);
   }
@@ -563,6 +791,8 @@ if (import.meta.main) {
     maxCostUsd: cap === undefined ? undefined : Number(cap),
     judgeModel: judge,
   });
+  // No judge answered: the lines above say which model gave what; nothing ran.
+  if (run.folder === null) process.exit(5);
   if (!run.aggregate) {
     console.error(
       `eval: the kit exited ${String(run.status)} and wrote no aggregate in ${run.relative}`,

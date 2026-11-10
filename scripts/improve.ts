@@ -33,12 +33,20 @@ import { scanText } from "../packages/engine/src/secrets.ts";
 import {
   acceptedReadPaths,
   armRuns,
+  chooseJudge,
   createRunFolder,
   evalInvocation,
+  type JudgeChoice,
   kitEnvironment,
+  LIMITED,
+  MODEL_NAME,
+  oneLine,
+  type ProbeAnswer,
+  probeJudge,
   realGitDir,
   resultsDir,
   runFolder,
+  unjudgedGraders,
 } from "./eval.ts";
 
 /** The plugin's text an editor may change; anything else in its diff refuses the proposal. */
@@ -59,6 +67,8 @@ export interface RunFigures {
   failing: FailingGrader[];
   /** The plugin files the run read, repository-relative; null when its trace could not be read. */
   reads: string[] | null;
+  /** The cause of the run's first grader that was not judged (2026-11-09-004); absent when every grader was. */
+  unjudged?: string;
 }
 
 export interface CaseFigures {
@@ -70,6 +80,8 @@ export interface CaseFigures {
   /** Every file any run read; null when one run's reads are unknown. */
   reads: string[] | null;
   errored: boolean;
+  /** A run has a grader that was not judged: the mean and the spread are over the judged runs alone (2026-11-09-004); absent otherwise and in records before it. */
+  unjudged?: true;
   /** What the kit charged for the case's runs (2026-10-28-001 AC-8), for a probe's estimate; absent in records before it. */
   costUsd?: number;
 }
@@ -114,6 +126,10 @@ export interface ImproveRecord {
   /** The knowledge entries the run's lessons entered as. */
   lessons: string[];
   exit: number;
+  /** The model that judged every kit call of the run, chosen once at its start (2026-11-09-004); absent in records before it. */
+  judge?: string;
+  /** The models passed over for it, each with why. */
+  judgeSkipped?: JudgeChoice["skipped"];
   /** The suite's cases with no known reads (never measured by a run): never probed, named so a person sees what no probe covered. */
   unmeasured: string[];
 }
@@ -139,10 +155,22 @@ export function pluginRelative(paths: readonly string[], pluginRoots: readonly s
   return [...out].sort();
 }
 
+/** A not-judged cause as the record keeps it (2026-11-09-004 AC-30): withheld whole when it holds a secret's shape, as the editor's rationale is. */
+export function causeOf(cause: string): string {
+  const secret = scanText(cause, "cause")[0];
+  return secret ? `withheld: the cause held a secret (${secret.rule})` : cause;
+}
+
+/** The cause of a case's first run that was not judged, or null when every run was. */
+export function unjudgedCause(figures: Pick<CaseFigures, "runs">): string | null {
+  return figures.runs.find((r) => r.unjudged !== undefined)?.unjudged ?? null;
+}
+
 /**
  * One case's figures from the kit's result file: each run's score, its failing graders (those that
- * count toward the score), its plugin reads from the trace; the mean, the spread, the union of the
- * reads (unknown when one trace is), and whether a run errored. Null when the result has no such case.
+ * count toward the score and were judged), its plugin reads from the trace; the mean and the spread
+ * over the judged runs, the union of the reads (unknown when one trace is), whether a run errored
+ * and whether one was not judged. Null when the result has no such case.
  */
 export function caseFigures(
   result: unknown,
@@ -165,24 +193,32 @@ export function caseFigures(
     };
     const lines =
       typeof run.tracePath === "string" && run.tracePath ? readLines(run.tracePath) : null;
+    // A grader whose judge call failed says nothing about the case (finding 208): out of the failing ones.
+    const unjudged = unjudgedGraders(run);
+    const unjudgedNames = new Set(unjudged.map((u) => u.grader));
     return {
       score: typeof run.score === "number" ? run.score : 0,
       errored: run.error !== null && run.error !== undefined,
       failing: (Array.isArray(run.graders) ? run.graders : [])
-        .filter((g) => g.passed === false && g.scored !== false)
+        .filter(
+          (g) => g.passed === false && g.scored !== false && !unjudgedNames.has(String(g.name)),
+        )
         .map((g) => ({ grader: String(g.name), explanation: String(g.explanation ?? "") })),
       reads: lines === null ? null : pluginRelative(acceptedReadPaths(lines), pluginRoots),
+      ...(unjudged[0] ? { unjudged: causeOf(unjudged[0].cause) } : {}),
     };
   });
-  const scores = figures.map((f) => f.score);
+  const notJudged = figures.some((f) => f.unjudged !== undefined);
+  const scores = figures.filter((f) => f.unjudged === undefined).map((f) => f.score);
   const known = figures.every((f) => f.reads !== null);
   return {
     name,
     runs: figures,
-    mean: scores.reduce((a, b) => a + b, 0) / scores.length,
-    spread: Math.max(...scores) - Math.min(...scores),
+    mean: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0,
+    spread: scores.length ? Math.max(...scores) - Math.min(...scores) : 0,
     reads: known ? [...new Set(figures.flatMap((f) => f.reads ?? []))].sort() : null,
     errored: figures.some((f) => f.errored),
+    ...(notJudged ? { unjudged: true as const } : {}),
   };
 }
 
@@ -332,8 +368,8 @@ export function medianOf(figures: CaseFigures): number {
 
 /**
  * The verdict of a probe (D-4, D-6, AC-6, AC-27; the noise bound of 2026-10-27-006 D-1):
- * inconclusive when a case of the set has no probe figures (unfinished), a probe run errored, or a
- * case's baseline errored; a win when every target rose (its probe mean above the baseline's and
+ * inconclusive when a case of the set has no probe figures (unfinished), a probe run errored, a
+ * case's baseline errored, or either has a run that was not judged; a win when every target rose (its probe mean above the baseline's and
  * its lowest probe run at least the baseline's median, the typical run) and no case fell (its mean
  * below the baseline's with its highest run at most the median); otherwise a loss. The range of
  * three runs was the bound before: a bimodal baseline (1.00, 0.25, 1.00) left no headroom to rise
@@ -352,6 +388,11 @@ export function verdictOf(
     if (!before || !after) reasons.push(`${name} has no ${before ? "probe" : "baseline"} figures`);
     else if (before.errored) reasons.push(`${name}'s baseline errored`);
     else if (after.errored) reasons.push(`${name}'s probe errored`);
+    // A run not judged can never read as a win or a loss (2026-11-09-004).
+    else if (before.unjudged)
+      reasons.push(`${name}'s baseline was not judged (${unjudgedCause(before)})`);
+    else if (after.unjudged)
+      reasons.push(`${name}'s probe was not judged (${unjudgedCause(after)})`);
   }
   if (reasons.length) return { verdict: "inconclusive", reasons };
   let win = true;
@@ -498,7 +539,7 @@ function figuresTable(figures: Record<string, CaseFigures>): string[] {
     "| :- | :- | -: | -: |",
     ...Object.values(figures).map(
       (f) =>
-        `| ${f.name} | ${f.runs.map((r) => (r.errored ? "error" : two(r.score))).join(", ")} | ${two(f.mean)} | ${two(f.spread)} |`,
+        `| ${f.name} | ${f.runs.map((r) => (r.errored ? "error" : r.unjudged !== undefined ? "unjudged" : two(r.score))).join(", ")} | ${two(f.mean)} | ${two(f.spread)} |`,
     ),
   ];
 }
@@ -511,6 +552,11 @@ export function recordMarkdown(record: ImproveRecord): string {
     `- At: ${record.at}`,
     `- Targets: ${record.targets.join(", ")}`,
     `- Provider: ${record.provider ? `${record.provider.name} (agent ${record.provider.agentModel}, judge ${record.provider.judgeModel}${record.provider.claudeModels ? "" : "; not Claude models, never released"})` : "the kit's own"}`,
+    ...(record.judge
+      ? [
+          `- Judge: ${record.judge}${record.judgeSkipped?.length ? ` (passed over: ${record.judgeSkipped.map((s) => `${s.model} (${s.reason})`).join(", ")})` : ""}`,
+        ]
+      : []),
     "",
     "## Baseline",
     "",
@@ -582,7 +628,6 @@ export const EDITOR_LADDER = ["fable", "opus", "sonnet"];
 const RUN_USD = { low: 0.3, high: 2.3 };
 const IDENTITY = { name: "wizardingcode-improve", email: "noreply@wizardingcode.io" };
 const RATIONALE_LIMIT = 2000;
-const LIMITED = /usage limit|rate.?limit|\b429\b|overloaded/i;
 
 export interface KitCall {
   /** The tree the kit runs in: the repository for a baseline, a worktree for a probe. */
@@ -634,6 +679,8 @@ export interface ImproveDeps {
   ctoPlan: () => string | null;
   /** Removes the sandboxes the kit kept for a measurement's runs, once their traces were read (finding 175). */
   removeSandboxes: (paths: string[]) => void;
+  /** One question to a model in the run's environment, so the run's judge is one that can judge (2026-11-09-004). */
+  probeJudge: (call: { model: string; env: NodeJS.ProcessEnv }) => ProbeAnswer;
   /** Whether the user asked the run to stop (2026-10-28-001 AC-7): read before each measure, and after one whose child ended by a signal or a failure. */
   stopRequested?: () => boolean;
 }
@@ -706,7 +753,7 @@ function rawEntries(text: string): DiffEntry[] {
 }
 
 class Stop extends Error {
-  constructor(readonly exit: 2 | 3 | 4) {
+  constructor(readonly exit: 2 | 3 | 4 | 6) {
     super(`stop ${exit}`);
   }
 }
@@ -723,7 +770,9 @@ const hashOf = (path: string): string => {
  * One improvement run (ADR 0013): the refusals of step 0, the baseline, the proposals with their
  * checks and probes, the composition, the kept branch, the lessons and the record; every worktree
  * removed at the end. Returns the exit status (0 done, 1 refused before any spend, 2 the cost
- * ceiling, 3 a failure, 4 stopped by the user), the record written for 0, 2, 3 and 4.
+ * ceiling, 3 a failure, 4 stopped by the user, 5 no judge answered at the start, 6 a measurement
+ * was not judged and the run stopped there), the record written for 0, 2, 3, 4 and 6; a run that
+ * returns 5 makes no folder.
  */
 export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Promise<number> {
   const { root, log } = deps;
@@ -772,7 +821,18 @@ export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Pr
       return refuse(
         `the repository has uncommitted changes (${dirty.slice(0, 3).join(", ")}): commit or stash them first`,
       );
-    return await improve(startRun(options, deps, { env, git, must }));
+    // The judge of the whole run, chosen once (2026-11-09-004 D-2): the baseline and every proposal
+    // are judged by one model, so no verdict reads the difference between two judges.
+    const choice = chooseJudge(
+      options.judgeModel ?? options.provider?.judgeModel,
+      options.provider?.agentModel,
+      (model) => deps.probeJudge({ model, env }),
+    );
+    for (const line of choice.lines) log(line);
+    if (choice.judge === null) return 5;
+    return await improve(
+      startRun(options, deps, { env, git, must, judge: choice.judge }, choice.skipped),
+    );
   } catch (error) {
     if (error instanceof Stop) return error.exit;
     throw error;
@@ -791,6 +851,8 @@ interface Run {
   env: NodeJS.ProcessEnv;
   git: Git;
   must: (args: string[], cwd: string, input?: string) => string;
+  /** The model that judges every kit call of the run. */
+  judge: string;
   folder: string;
   record: ImproveRecord;
   trees: string[];
@@ -801,7 +863,8 @@ interface Run {
 function startRun(
   options: ImproveOptions,
   deps: ImproveDeps,
-  tools: Pick<Run, "env" | "git" | "must">,
+  tools: Pick<Run, "env" | "git" | "must" | "judge">,
+  judgeSkipped: JudgeChoice["skipped"],
 ): Run {
   const targets = [...new Set(options.cases)];
   const now = deps.now();
@@ -826,6 +889,8 @@ function startRun(
     costUsd: 0,
     lessons: [],
     exit: 0,
+    judge: tools.judge,
+    judgeSkipped,
     unmeasured: [],
   };
   return { ...tools, deps, options, targets, folder, record, trees: [], staged: new Map() };
@@ -855,7 +920,7 @@ function ceilingLeft(r: Run): number | undefined {
  * a failure), any other failure with 3.
  */
 function measure(r: Run, tree: string, name: string): CaseFigures {
-  const { judgeModel, provider } = r.options;
+  const { provider } = r.options;
   if (r.deps.stopRequested?.()) throw new Stop(4);
   const left = ceilingLeft(r);
   const out = r.deps.kit({
@@ -863,7 +928,7 @@ function measure(r: Run, tree: string, name: string): CaseFigures {
     caseName: name,
     runs: RUNS,
     maxCostUsd: left,
-    judgeModel: judgeModel ?? provider?.judgeModel,
+    judgeModel: r.judge,
     model: provider?.agentModel,
     env: provider?.env,
   });
@@ -901,7 +966,18 @@ function baselineOf(r: Run, name: string): CaseFigures {
   if (known) return known;
   const figures = measure(r, r.deps.root, name);
   r.record.baseline[name] = figures;
+  stopIfUnjudged(r, figures, "baseline");
   return figures;
+}
+
+/**
+ * A measurement with a run that was not judged ends the run (2026-11-09-004): the figures are on
+ * record, and no further kit call is paid for while the judge cannot judge.
+ */
+function stopIfUnjudged(r: Run, figures: CaseFigures, side: "baseline" | "probe"): void {
+  if (!figures.unjudged) return;
+  r.deps.log(`${figures.name}'s ${side} was not judged (${unjudgedCause(figures)}): the run stops`);
+  throw new Stop(6);
 }
 
 /** The staged diff of a tree, read from git alone (step 3). */
@@ -974,7 +1050,11 @@ function propose(r: Run, id: string, prompt: string): void {
     return;
   }
   for (const name of proposal.probeSet) baselineOf(r, name);
-  for (const name of proposal.probeSet) proposal.probe[name] = measure(r, tree, name);
+  for (const name of proposal.probeSet) {
+    const figures = measure(r, tree, name);
+    proposal.probe[name] = figures;
+    stopIfUnjudged(r, figures, "probe");
+  }
   const verdict = verdictOf(r.targets, proposal.probeSet, r.record.baseline, proposal.probe);
   proposal.verdict = verdict.verdict;
   proposal.status = verdict.verdict === "inconclusive" ? "inconclusive" : "probed";
@@ -996,7 +1076,11 @@ function compose(r: Run, ids: string[]): string | null {
   }
   const sets = r.record.proposals.filter((p) => ids.includes(p.id)).flatMap((p) => p.probeSet);
   composition.probeSet = [...new Set(sets)].sort();
-  for (const name of composition.probeSet) composition.probe[name] = measure(r, tree, name);
+  for (const name of composition.probeSet) {
+    const figures = measure(r, tree, name);
+    composition.probe[name] = figures;
+    stopIfUnjudged(r, figures, "probe");
+  }
   composition.verdict = verdictOf(
     r.targets,
     composition.probeSet,
@@ -1199,7 +1283,7 @@ function runEditor(r: Run, cwd: string, prompt: string): string {
       return answer.result.trim();
     }
     if (!LIMITED.test(out.output)) {
-      log(`the editor failed on ${model}: ${out.output.trim().slice(0, 200)}`);
+      log(`the editor failed on ${model}: ${oneLine(out.output, 200)}`);
       throw new Stop(3);
     }
     log(`${model} is at its limit; the editor moves to the next model`);
@@ -1302,6 +1386,16 @@ export function realDeps(root: string): RealImproveDeps {
     env: process.env,
     now: () => new Date(),
     log: (line) => console.log(line),
+    // The probe stands for a kit call: the runner's variables, the run's environment over them and the composed PATH, in `kit`'s order.
+    probeJudge: (call) => {
+      const { path, env } = evalInvocation({
+        root,
+        platform: process.platform,
+        path: process.env.PATH ?? "",
+        realGitDir: realGitDir(process.platform),
+      });
+      return probeJudge(call.model, kitEnvironment({ ...env, ...call.env, PATH: path }), root);
+    },
     git: realGit,
     kit: (call) => {
       const dir = resultsDir();
@@ -1355,7 +1449,7 @@ export function parseArgs(argv: readonly string[]): ImproveOptions | string {
     if (flag === "--case") options.cases.push(...value.split(",").filter(Boolean));
     else if (flag === "--proposals" && /^[1-9]\d*$/.test(value)) options.proposals = Number(value);
     else if (flag === "--max-cost-usd" && Number(value) > 0) options.maxCostUsd = Number(value);
-    else if (flag === "--judge-model") options.judgeModel = value;
+    else if (flag === "--judge-model" && MODEL_NAME.test(value)) options.judgeModel = value;
     else return `unknown or bad option ${flag} ${value}`;
   }
   return options;

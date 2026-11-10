@@ -20,7 +20,18 @@ import { readJson, writeTextNew } from "../packages/engine/src/fs.ts";
 import { userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
 import { singleQuoted } from "../packages/engine/src/shell-words.ts";
-import { DEFAULT_AGENT_MODEL, JUDGE_MODEL, kitEnvironment } from "./eval.ts";
+import {
+  chooseJudge,
+  DEFAULT_AGENT_MODEL,
+  JUDGE_MODEL,
+  judgeCandidates,
+  kitEnvironment,
+  LIMITED,
+  MODEL_NAME,
+  oneLine,
+  type ProbeAnswer,
+  probeJudge,
+} from "./eval.ts";
 import {
   allCases,
   type CaseFigures,
@@ -229,6 +240,13 @@ export function providerEnv(config: LoopConfig, readSecret: SecretReader): Resol
     env.ANTHROPIC_DEFAULT_HAIKU_MODEL = models.haiku;
     env.CLAUDE_CODE_SUBAGENT_MODEL = models.sonnet;
   }
+  // A model reaches `claude` as a flag's value: one that is no model name is refused here (2026-11-09-004).
+  for (const [role, model] of [
+    ["agent", models?.agent],
+    ["judge", models?.judge],
+  ] as const)
+    if (model !== undefined && !MODEL_NAME.test(model))
+      throw new Error(`the provider's ${role} model "${model}" is not a model name; nothing runs`);
   return {
     name: provider.name,
     env,
@@ -366,7 +384,10 @@ export function dailyReport(
   runs: readonly DayRun[],
   releases: readonly { version: string; run: string }[],
   failures: readonly { run: string; step: number; name: string }[],
-  skipped: { at: string; reason: string } | null = null,
+  skipped: {
+    budget: { at: string; reason: string } | null;
+    judge: { at: string } | null;
+  } | null = null,
   extras: { deadTicks?: readonly DeadTick[]; stoppedRuns?: readonly string[] } = {},
 ): string {
   const deadTicks = extras.deadTicks ?? [];
@@ -413,12 +434,20 @@ export function dailyReport(
       : ["- none"]),
     "",
   ];
-  if (skipped)
+  // One line per kind of skip, each with its own sentence: both can stand on the same day.
+  if (skipped?.budget || skipped?.judge)
     lines.push(
       "",
       "## Skipped ticks",
       "",
-      `- ${hhmm(skipped.at)} UTC: ${skipped.reason}; every later tick of the day skips the same way until the budget or the day changes`,
+      ...(skipped.budget
+        ? [
+            `- ${hhmm(skipped.budget.at)} UTC: ${skipped.budget.reason}; every later tick of the day skips the same way until the budget or the day changes`,
+          ]
+        : []),
+      ...(skipped.judge
+        ? [`- ${hhmm(skipped.judge.at)} UTC: no judge answered; a later due tick probes again`]
+        : []),
     );
   // The ticks that died before their run ended (2026-10-28-001 AC-9), each by what its lock said once checked.
   if (deadTicks.length)
@@ -707,8 +736,19 @@ export function parseRuling(output: string): { holds: boolean; text: string } {
   return { holds: parsed.is_error !== true && first === "holds", text };
 }
 
-/** The headless judge's arguments (AC-6): the prompt, the judge's own text with the rule appended, read-only tools, JSON, no session, no settings, a turn cap. */
-export function judgeArgs(prompt: string, systemPrompt: string): string[] {
+/** The text of a judge answer the CLI marks as an error (`is_error: true` in its JSON), or null for any other answer: such an answer is a failed call, never a ruling (2026-11-09-004). */
+function errorAnswerOf(output: string): string | null {
+  try {
+    const parsed = JSON.parse(output) as { is_error?: unknown; result?: unknown } | null;
+    if (parsed?.is_error !== true) return null;
+    return typeof parsed.result === "string" ? parsed.result : "";
+  } catch {
+    return null;
+  }
+}
+
+/** The headless judge's arguments (AC-6): the prompt, the judge's own text with the rule appended, read-only tools, JSON, no session, no settings and no MCP server of the session, the model chosen for the ruling (2026-11-09-004), a turn cap. */
+export function judgeArgs(prompt: string, systemPrompt: string, model: string): string[] {
   return [
     "-p",
     prompt,
@@ -721,6 +761,9 @@ export function judgeArgs(prompt: string, systemPrompt: string): string[] {
     "--no-session-persistence",
     "--setting-sources",
     "",
+    "--strict-mcp-config",
+    "--model",
+    model,
     "--max-turns",
     "40",
   ];
@@ -743,9 +786,13 @@ export function adoptionPrompt(run: string): string {
 
 export interface AdoptDeps {
   git: (args: string[], cwd: string) => { status: number; stdout: string; stderr: string };
+  /** One question to a model in the provider's environment, so the ruling is asked of one that can rule (2026-11-09-004). */
+  probeJudge: (call: { model: string; cwd: string; env: Record<string, string> }) => ProbeAnswer;
+  /** The judge's call: its status, its stdout (the JSON answer) and its stderr, where a limit can be written. */
   judge: (call: { cwd: string; args: string[]; env: Record<string, string> }) => {
     status: number | null;
     output: string;
+    stderr?: string;
   };
   release: (call: {
     reason: string;
@@ -767,7 +814,7 @@ function missingOf(text: string): string {
 
 /**
  * The adoption of a kept harness (AC-6, D-4, D-5, D-9): the gate in code, then the judge on the
- * diff, then the merge into main and the patch release, when every answer holds and the run was
+ * diff, chosen by a probe and named in the ruling (2026-11-09-004), then the merge into main and the patch release, when every answer holds and the run was
  * measured on Claude models; otherwise the branch stays and the reason is returned for the
  * notification. Every file written goes through the redaction.
  */
@@ -798,22 +845,69 @@ export async function adoptRun(
     return { released: null, reason: `the gate failed: ${gate.clause}` };
   }
   write("diff.patch", deps.git(["diff", `main...${branch}`], repo).stdout);
-  const answer = deps.judge({
-    cwd: repo,
-    args: judgeArgs(adoptionPrompt(record.run), adoptionSystemPrompt(input.judgeSystemPrompt)),
-    env: provider.env,
-  });
-  const ruling =
-    answer.status === 0
-      ? parseRuling(answer.output)
-      : { holds: false, text: `the judge exited ${answer.status}: ${answer.output.slice(0, 200)}` };
+  // The judge of the ruling, chosen as a run's is (2026-11-09-004 D-3): the first candidate that
+  // answers its probe in the provider's environment. No probe's output is written anywhere but the log.
+  const title = `# Ruling of ${record.run} (${ADOPTION_RULE})`;
+  const choice = chooseJudge(provider.judgeModel, provider.agentModel, (model) =>
+    deps.probeJudge({ model, cwd: repo, env: provider.env }),
+  );
+  for (const line of choice.lines) deps.log(`adoption of ${record.run}: ${line}`);
+  // Every model asked that did not rule, with why: a ruling and a not-ruled file both name them.
+  const passed = choice.skipped.map((s) => `${s.model} (${s.reason})`);
+  const asked = (judge: string): string =>
+    `- judge: ${judge}\n- passed over: ${passed.join(", ") || "none"}`;
+  /** Nothing is ruled and nothing is released: the file and the log say why, the branch stays. */
+  const notRuled = (sentence: string, reason = sentence): { released: null; reason: string } => {
+    write("ruling.md", `${title}\n\n${asked("none")}\n\n${sentence}\n`);
+    deps.log(`adoption of ${record.run}: ${sentence}`);
+    return { released: null, reason };
+  };
+  if (choice.judge === null) {
+    const reason = `no judge answered (${choice.probed.map((p) => `${p.model}: ${p.outcome}`).join(", ")})`;
+    return notRuled(`not ruled: ${reason}`, reason);
+  }
+  // A judge call that fails is not a ruling, whatever its exit status: a non-zero exit, or an
+  // answer the CLI marks as an error. At a limit the next candidate is asked once, whole; with
+  // none left, or for any other failure, nothing is ruled.
+  const candidates = judgeCandidates(provider.judgeModel, provider.agentModel);
+  let ruled: { judge: string; output: string } | null = null;
+  let failure = "not ruled: every judge was at its limit";
+  for (const candidate of candidates.slice(candidates.indexOf(choice.judge))) {
+    const answer = deps.judge({
+      cwd: repo,
+      args: judgeArgs(
+        adoptionPrompt(record.run),
+        adoptionSystemPrompt(input.judgeSystemPrompt),
+        candidate,
+      ),
+      env: provider.env,
+    });
+    const errorText = answer.status === 0 ? errorAnswerOf(answer.output) : null;
+    if (answer.status === 0 && errorText === null) {
+      ruled = { judge: candidate, output: answer.output };
+      break;
+    }
+    if (LIMITED.test(errorText ?? `${answer.output}${answer.stderr ?? ""}`)) {
+      passed.push(`${candidate} (limited)`);
+      continue;
+    }
+    passed.push(`${candidate} (failed)`);
+    failure =
+      answer.status === 0
+        ? "not ruled: the judge's answer was an error"
+        : `not ruled: the judge exited ${answer.status}`;
+    break;
+  }
+  if (ruled === null) return notRuled(failure);
+  const judge = ruled.judge;
+  const ruling = parseRuling(ruled.output);
   // The ruling is published with the record: bounded, and withheld when it carries a secret's shape.
   const leaked = scanText(ruling.text, "ruling")[0];
   if (leaked) ruling.text = `withheld: the judge's answer held a secret (${leaked.rule})`;
   else ruling.text = ruling.text.slice(0, RULING_LIMIT);
   write(
     "ruling.md",
-    `# Ruling of ${record.run} (${ADOPTION_RULE})\n\n${ruling.holds ? "holds" : "does not hold"}\n\n${ruling.text}\n`,
+    `${title}\n\n${asked(judge)}\n\n${ruling.holds ? "holds" : "does not hold"}\n\n${ruling.text}\n`,
   );
   if (!ruling.holds) {
     const reason = `the judge ruled "does not hold": ${missingOf(ruling.text)}`;
@@ -945,16 +1039,43 @@ function readRecords(repo: string): LoopRecord[] {
   return out;
 }
 
-/** Each case's last measurement across the records (AC-4): a baseline or a probe, by the run's time. */
+/**
+ * Whether a case's figures hold a run that was not judged because its judge was at a limit
+ * (2026-11-09-004): such a measurement is to be made again. A run not judged for another cause,
+ * as a refusal of the case's content, would meet the same cause again, and counts as measured.
+ */
+export function unjudgedAtLimit(figures: unknown): boolean {
+  const f = figures as { unjudged?: unknown; runs?: unknown } | null | undefined;
+  if (f?.unjudged !== true || !Array.isArray(f.runs)) return false;
+  const causes = (f.runs as { unjudged?: unknown }[])
+    .map((r) => r?.unjudged)
+    .filter((c): c is string => typeof c === "string");
+  return causes.length > 0 && causes.every((c) => LIMITED.test(c));
+}
+
+/** The figures of a record a run stopped on: every baseline's and probe's with a run not judged. */
+function unjudgedFigures(record: Pick<LoopRecord, "baseline" | "proposals" | "composition">) {
+  return [
+    ...Object.values(record.baseline ?? {}),
+    ...(record.proposals ?? []).flatMap((p) => Object.values(p.probe ?? {})),
+    ...Object.values(record.composition?.probe ?? {}),
+  ].filter((f) => (f as { unjudged?: unknown })?.unjudged === true);
+}
+
+/** Each case's last measurement across the records (AC-4): a baseline or a probe, by the run's time; a measurement not judged at a limit is none (2026-11-09-004). */
 export function lastMeasuredOf(
   records: readonly LoopRecord[],
   cases: readonly string[],
 ): Record<string, string | null> {
   const out: Record<string, string | null> = Object.fromEntries(cases.map((c) => [c, null]));
   for (const record of records) {
+    const judged = (figures: Record<string, unknown> | undefined): string[] =>
+      Object.entries(figures ?? {})
+        .filter(([, f]) => !unjudgedAtLimit(f))
+        .map(([name]) => name);
     const names = new Set([
-      ...Object.keys(record.baseline ?? {}),
-      ...(record.proposals ?? []).flatMap((p) => Object.keys(p.probe ?? {})),
+      ...judged(record.baseline),
+      ...(record.proposals ?? []).flatMap((p) => judged(p.probe)),
     ]);
     for (const name of names)
       if (name in out && (out[name] === null || (out[name] as string) < record.at))
@@ -987,6 +1108,7 @@ export function verdictText(record: LoopRecord): string {
   if (record.exit === 2) return `stopped at the ceiling (${usd(record.costUsd)})`;
   if (record.exit === 3) return "failed (exit 3)";
   if (record.exit === 4) return STOPPED_BY_USER;
+  if (record.exit === 6) return "stopped: a run was not judged";
   if (record.exit !== 0) return `ended with exit ${record.exit}`;
   if (!record.kept) return "nothing kept";
   return `kept ${keptLabel(record)} (${gainTexts(record).join(", ")})`;
@@ -1031,6 +1153,7 @@ export interface TickDeps {
   onSignal: (signal: "SIGTERM", handler: () => void) => () => void;
   /** The tick run again on the code the sync brought (2026-10-28-001 AC-2): its status. */
   relaunch: (args: string[]) => number;
+  probeJudge: AdoptDeps["probeJudge"];
   judge: AdoptDeps["judge"];
   release: (options: ReleaseOptions) => Promise<ReleaseOutcome>;
   readSecret: SecretReader;
@@ -1286,7 +1409,10 @@ export async function tick(
         dayRunsOf(readRecords(repo), date),
         day.releases,
         day.failures,
-        day.budgetSkip ? { at: day.budgetSkip.at, reason: day.budgetSkip.reason } : null,
+        {
+          budget: day.budgetSkip ? { at: day.budgetSkip.at, reason: day.budgetSkip.reason } : null,
+          judge: day.judgeSkip ?? null,
+        },
         { deadTicks: day.deadTicks ?? [], stoppedRuns: day.stoppedRuns ?? [] },
       ),
       secrets,
@@ -1302,24 +1428,38 @@ export async function tick(
     }
   }
   /**
-   * A due tick over the day's budget runs nothing (D-2, AC-5): the first skip of the day is kept in
-   * the state before anything that can fail, written into the report's Skipped ticks section,
-   * committed and pushed through the run's own path and notified once; a later skip of the day logs
-   * alone (the tick's finally saves the state). No record folder, no lastRun: the staleness that
+   * A due tick that runs nothing, for one of two reasons: the day's budget is spent (2026-10-27-006
+   * D-2, AC-5) or no judge answered the run's probes (2026-11-09-004). The first skip of the day of
+   * its kind is kept in the state before anything that can fail, written into the report's Skipped
+   * ticks section, committed and pushed through the run's own path and notified once; a later skip
+   * of the kind logs alone (the tick's finally saves the state). No record folder, no lastRun: what
    * made the tick due is unchanged.
    */
-  const skipForBudget = (reason: string, costUsd: number): void => {
-    if (day.budgetSkip) {
-      log(`skipped: ${reason}; reported at ${hhmm(day.budgetSkip.at)} UTC`);
+  const skipTick = (kind: "budget" | "judge", reason: string, costUsd = 0): void => {
+    const earlier = kind === "budget" ? day.budgetSkip : day.judgeSkip;
+    if (earlier) {
+      log(`skipped: ${reason}; reported at ${hhmm(earlier.at)} UTC`);
       return;
     }
-    day.budgetSkip = { at: now.toISOString(), costUsd, reason };
+    const after =
+      kind === "budget"
+        ? "every later tick of the day skips the same way"
+        : "a later due tick probes again";
+    if (kind === "budget") day.budgetSkip = { at: now.toISOString(), costUsd, reason };
+    else day.judgeSkip = { at: now.toISOString() };
     saveState();
-    log(`skipped: ${reason}; every later tick of the day skips the same way`);
+    log(`skipped: ${reason}; ${after}`);
     writeDayReport();
-    commitDocs(`Improvement tick ${date}: the day's budget is spent`);
+    commitDocs(
+      `Improvement tick ${date}: ${kind === "budget" ? "the day's budget is spent" : reason}`,
+    );
     pushMain([]);
-    notify("crew improve", `skipped: ${reason}. Every later tick of the day skips the same way.`);
+    notify(
+      "crew improve",
+      kind === "budget"
+        ? `skipped: ${reason}. Every later tick of the day skips the same way.`
+        : `skipped: ${reason}. The tick's log has each model's answer.`,
+    );
   };
 
   try {
@@ -1491,7 +1631,7 @@ export async function tick(
     if (dayCeiling.value > 0) {
       const cost = dayCostOf(dayRunsOf(readRecords(repo), date));
       if (cost.priced >= dayCeiling.value) {
-        skipForBudget(budgetReason(dayCeiling.value, cost), cost.priced);
+        skipTick("budget", budgetReason(dayCeiling.value, cost), cost.priced);
         return 0;
       }
     }
@@ -1512,6 +1652,12 @@ export async function tick(
       },
       repo,
     );
+    // No judge answered the run's probes (2026-11-09-004): nothing ran and no record was written,
+    // so the newest record on file is an earlier run's and must not be read as this one's.
+    if (code === 5) {
+      skipTick("judge", "no judge answered");
+      return 0;
+    }
     const latest = readRecords(repo).sort((a, b) => (a.at < b.at ? 1 : -1))[0] ?? null;
     if (!latest) throw new Error(`the improvement exited ${code} and left no record`);
     // The user stopped the run (2026-10-28-001 AC-7): exit 4, or the marker present at its end. The
@@ -1523,14 +1669,20 @@ export async function tick(
       rmSync(stopMarkerOf(home), { force: true });
       latest.kept = null;
     }
-    state.lastRun = {
-      at: now.toISOString(),
-      head: facts.pluginHead,
-      plan: facts.plan,
-      // The base read again now the run ended (finding 174): see lessonsAfterRun.
-      lessons: lessonsAfterRun(facts.lessons, latest, deps.lessons(repo)),
-      run: latest.run,
-    };
+    // A run stopped because its judge was at a limit measured nothing it can stand on
+    // (2026-11-09-004): the last run stays what it was, so what made this tick due makes the next
+    // one due, and that one probes first. A stop for another cause would repeat on the same case.
+    const notJudged = unjudgedFigures(latest);
+    const stoppedAtLimit = code === 6 && notJudged.length > 0 && notJudged.every(unjudgedAtLimit);
+    if (!stoppedAtLimit)
+      state.lastRun = {
+        at: now.toISOString(),
+        head: facts.pluginHead,
+        plan: facts.plan,
+        // The base read again now the run ended (finding 174): see lessonsAfterRun.
+        lessons: lessonsAfterRun(facts.lessons, latest, deps.lessons(repo)),
+        run: latest.run,
+      };
     state.failures = 0;
     state.backoffUntil = null;
     saveState();
@@ -1575,6 +1727,7 @@ export async function tick(
         { repo, folder, record: latest, provider, judgeSystemPrompt: judgeText },
         {
           git: deps.git,
+          probeJudge: deps.probeJudge,
           judge: deps.judge,
           log,
           release: async ({ reason: why, notes }) => {
@@ -1974,8 +2127,8 @@ function agentStderrSize(home: string): number {
  * the only place a launch that never reached the loop lands (finding 169). The lines are those
  * beyond the size the last tick recorded as it ended (finding 171): a log rotated or shorter than
  * that size is read from its start, as is one no tick has measured. The line shown is the file's
- * text, not the loop's logger's, so it is redacted of URL userinfo, stripped of control
- * characters and cut at 200 characters, in that order.
+ * text, not the loop's logger's, so it is redacted of URL userinfo and then made one bounded
+ * line (`oneLine`: no control character, cut at 200 characters).
  */
 export function agentStderrNote(home: string, state: ImproveState): string | null {
   const path = join(home, "log", LOG_NAMES[1]);
@@ -1989,10 +2142,7 @@ export function agentStderrNote(home: string, state: ImproveState): string | nul
     .filter((l) => l.trim() !== "");
   const last = lines[lines.length - 1];
   if (last === undefined) return null;
-  const printable = Array.from(redact(last, []))
-    .filter((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0x7f)
-    .join("")
-    .slice(0, 200);
+  const printable = oneLine(redact(last, []), 200);
   const since = state.lastTick ? "after the last tick" : "with no tick yet";
   return `agent stderr: ${lines.length} line(s) ${since} (log/${LOG_NAMES[1]}); last: ${printable}`;
 }
@@ -2108,8 +2258,10 @@ function realTickDeps(home: string, config: LoopConfig): TickDeps {
         env: kitEnvironment({ ...process.env, ...call.env }),
         encoding: "utf8",
       });
-      return { status: r.status, output: r.stdout ?? "" };
+      return { status: r.status, output: r.stdout ?? "", stderr: r.stderr ?? "" };
     },
+    probeJudge: (call) =>
+      probeJudge(call.model, kitEnvironment({ ...process.env, ...call.env }), call.cwd),
     release: async (options) => {
       let outcome: ReleaseOutcome = {
         version: options.resume ?? "",

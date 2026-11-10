@@ -17,19 +17,31 @@ import { fileURLToPath } from "node:url";
 import {
   ALLOW_TOOLS,
   armRuns,
+  chooseJudge,
   costEstimate,
   createRunFolder,
   deniedReferenceReads,
   evalInvocation,
+  JUDGE_FAILED,
+  JUDGE_FALLBACK,
   JUDGE_MODEL,
+  judgeCandidates,
   kitEnvironment,
+  oneLine,
+  PROBE_TIMEOUT_MS,
+  type ProbeAnswer,
+  probeArgs,
+  probeJudge,
+  probeOutcome,
   resultsDir,
   runFolder,
   runKit,
   SANDBOX_TAGS,
   scanResults,
+  unjudgedGraders,
 } from "../../../scripts/eval.ts";
 import { CEILINGS } from "../../../scripts/eval-overhead.ts";
+import { parseArgs } from "../../../scripts/improve.ts";
 import { scanText } from "../src/secrets.ts";
 import type { KnowledgeEntry } from "../src/types.ts";
 import { childEnv } from "./helpers.ts";
@@ -77,12 +89,12 @@ test("the eval PATH puts the plugin's bin first and, on macOS, the real git next
 test("the suite runs with the judge and the reports; one case runs once, without a baseline, with the same judge", () => {
   const suite = evalInvocation(base).args;
   expect(suite.slice(0, 3)).toEqual(["plugin", "eval", "plugins/core"]);
-  expect(suite.join(" ")).toContain("--judge-model claude-opus-5-5");
+  expect(suite.join(" ")).toContain(`--judge-model ${JUDGE_MODEL}`);
   expect(suite.join(" ")).toContain("--json plugins/core/evals/results/last.json");
   const one = evalInvocation({ ...base, caseName: "false-done" }).args;
   expect(one.join(" ")).toContain("--case false-done --runs 1 --ablation none");
   // One case runs once with no baseline arm, judged by the suite's judge (SP4 Task 6: never a weaker judge).
-  expect(one.join(" ")).toContain("--judge-model claude-opus-5-5");
+  expect(one.join(" ")).toContain(`--judge-model ${JUDGE_MODEL}`);
   expect(one.slice(one.indexOf("--allow-tools"))).toEqual(["--allow-tools", ...ALLOW_TOOLS]);
 });
 
@@ -2555,10 +2567,8 @@ test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at n
 
 test("REL-AC-2 (the user's decision of 2026-10-23): the judge model is the suite's own unless one is given, for a case and for the suite alike", () => {
   const judges = (args: string[]) => args.filter((_, i) => args[i - 1] === "--judge-model");
-  expect(judges(evalInvocation({ ...base, caseName: "false-done" }).args)).toEqual([
-    "claude-opus-5-5",
-  ]);
-  expect(judges(evalInvocation(base).args)).toEqual(["claude-opus-5-5"]);
+  expect(judges(evalInvocation({ ...base, caseName: "false-done" }).args)).toEqual([JUDGE_MODEL]);
+  expect(judges(evalInvocation(base).args)).toEqual([JUDGE_MODEL]);
   const opus = { ...base, judgeModel: "claude-sonnet-5-5" };
   expect(judges(evalInvocation({ ...opus, caseName: "false-done" }).args)).toEqual([
     "claude-sonnet-5-5",
@@ -4119,22 +4129,14 @@ test("2026-10-30-003 AC-2: the estimates carry the ui cases' recorded figures", 
   );
 });
 
-test("2026-10-30-004 AC-1: the llm graders' judge is claude-opus-5-5, by default, in every place a person reads it", () => {
-  expect(JUDGE_MODEL).toBe("claude-opus-5-5");
+test("2026-11-09-004 AC-2: the eval judge is Fable 5.2 with Opus as its fallback, written once and read from there by the invocation and the benchmark set", () => {
+  // The one place a test pins the two ids (AC-29): every other row reads the constants.
+  expect(JUDGE_MODEL).toBe("claude-fable-5-2");
+  expect(JUDGE_FALLBACK).toBe("claude-opus-5-5");
   const judges = (args: string[]) => args.filter((_, i) => args[i - 1] === "--judge-model");
-  expect(judges(evalInvocation(base).args)).toEqual(["claude-opus-5-5"]);
-  expect(judges(evalInvocation({ ...base, caseName: "false-done" }).args)).toEqual([
-    "claude-opus-5-5",
-  ]);
-  const claude = readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
-  expect(claude).toContain(
-    "the llm graders' judge is `claude-opus-5-5` unless `--judge-model` names another",
-  );
-  expect(claude).not.toContain("claude-fable-5-1");
-  expect(readFileSync(`${EVALS}README.md`, "utf8")).toContain("--judge-model claude-opus-5-5");
-  expect(JSON.parse(readFileSync(`${EVALS}benchmark.json`, "utf8")).models.judge).toBe(
-    "claude-opus-5-5",
-  );
+  expect(judges(evalInvocation(base).args)).toEqual([JUDGE_MODEL]);
+  expect(judges(evalInvocation({ ...base, caseName: "false-done" }).args)).toEqual([JUDGE_MODEL]);
+  expect(JSON.parse(readFileSync(`${EVALS}benchmark.json`, "utf8")).models.judge).toBe(JUDGE_MODEL);
 });
 
 test("2026-10-31-009 AC-1: the source's scenarios run as ten cases carrying the sandbox's spec tag, named in the README", () => {
@@ -4167,4 +4169,389 @@ test("2026-10-31-009 AC-11: a draft is really written and its file is what is gr
   expect(readFileSync(prompt, "utf8")).toContain("`docs/designs/webhooks.md`");
   const owner = join(import.meta.dir, "../../../plugins/core/evals/spec-draft-owner/graders");
   expect(existsSync(join(owner, "relative-link.md"))).toBe(false);
+});
+
+/** The text finding 208 recorded, as the CLI words Fable's usage limit. */
+const FABLE_LIMIT = "You've reached your Fable limit. Switch to another model.";
+const answer = (status: number | null, output: string, timedOut = false): ProbeAnswer => ({
+  status,
+  output,
+  timedOut,
+});
+
+test("2026-11-09-004 AC-31: a judge probe reads as timed out, limited, answered, overloaded or failed, the usage limit's text deciding at any status", () => {
+  const rows: [ProbeAnswer, string][] = [
+    [answer(null, "", true), "timed out"],
+    [answer(0, "ok", true), "timed out"],
+    [answer(0, FABLE_LIMIT), "limited"],
+    [answer(1, FABLE_LIMIT), "limited"],
+    [answer(1, "Claude usage limit reached"), "limited"],
+    // A retry notice of an overload on a probe that answered changes nothing.
+    [answer(0, "API Error: 529 Overloaded · Retrying\nok"), "answered"],
+    [answer(0, "ok"), "answered"],
+    [answer(1, "rate limit exceeded"), "overloaded"],
+    [answer(1, "API Error: 429"), "overloaded"],
+    [answer(1, "API Error: 529 Overloaded"), "overloaded"],
+    [answer(1, "Invalid API key · Please run /login"), "failed"],
+    [answer(null, ""), "failed"],
+  ];
+  for (const [given, expected] of rows)
+    expect(probeOutcome(given), JSON.stringify(given)).toBe(expected as never);
+});
+
+test("2026-11-09-004 AC-16: the judge probe runs claude with its own arguments, the environment and folder it is given and a 60 s timeout, and joins stdout and stderr", () => {
+  expect(probeArgs("m")).toEqual([
+    "-p",
+    "Answer with the single word ok.",
+    "--model",
+    "m",
+    "--tools",
+    "",
+    "--max-turns",
+    "1",
+    "--no-session-persistence",
+    "--setting-sources",
+    "",
+    "--strict-mcp-config",
+  ]);
+  expect(PROBE_TIMEOUT_MS).toBe(60_000);
+  const calls: unknown[][] = [];
+  const stub = (result: Record<string, unknown>) =>
+    ((...args: unknown[]) => {
+      calls.push(args);
+      return result;
+    }) as unknown as typeof spawnSync;
+  const env = { PATH: "/p", ANTHROPIC_BASE_URL: "http://gateway" };
+  const ok = probeJudge("m", env, "/root", stub({ status: 0, stdout: "ok\n", stderr: "" }));
+  expect(ok).toEqual({ status: 0, output: "ok\n", timedOut: false });
+  expect(calls[0]).toEqual([
+    "claude",
+    probeArgs("m"),
+    { cwd: "/root", env, encoding: "utf8", timeout: 60_000 },
+  ]);
+  // The CLI writes a limit to either stream: stderr alone still reads as limited.
+  const limited = probeJudge(
+    "m",
+    env,
+    "/root",
+    stub({ status: 1, stdout: "", stderr: FABLE_LIMIT }),
+  );
+  expect(limited.output).toBe(FABLE_LIMIT);
+  expect(probeOutcome(limited)).toBe("limited");
+  const hung = probeJudge(
+    "m",
+    env,
+    "/root",
+    stub({ status: null, stdout: null, stderr: null, error: { code: "ETIMEDOUT" } }),
+  );
+  expect(hung).toEqual({ status: null, output: "", timedOut: true });
+});
+
+test("2026-11-09-004 AC-32: the judge is chosen once by a walk of two rungs: the first that answers, a limited, overloaded or timed out one passed over, a failed one ending the choice", () => {
+  const walk = (answers: Record<string, ProbeAnswer>, judge?: string, agent?: string) => {
+    const asked: string[] = [];
+    const choice = chooseJudge(judge, agent, (model) => {
+      asked.push(model);
+      return answers[model] ?? answer(0, "ok");
+    });
+    return { asked, choice };
+  };
+  expect(judgeCandidates(undefined)).toEqual([JUDGE_MODEL, JUDGE_FALLBACK]);
+  expect(judgeCandidates(JUDGE_MODEL)).toEqual(judgeCandidates(undefined));
+  expect(judgeCandidates(JUDGE_MODEL, "claude-sonnet-5-5")).toEqual([JUDGE_MODEL, JUDGE_FALLBACK]);
+  // Nothing ranks a provider's own agent model against the fallback: its judge is pinned.
+  expect(judgeCandidates(JUDGE_MODEL, "some/agent")).toEqual([JUDGE_MODEL]);
+  expect(judgeCandidates("some/judge")).toEqual(["some/judge"]);
+  expect(judgeCandidates(`anthropic/${JUDGE_MODEL}`)).toEqual([`anthropic/${JUDGE_MODEL}`]);
+
+  const first = walk({});
+  expect(first.asked).toEqual([JUDGE_MODEL]);
+  expect(first.choice).toEqual({
+    judge: JUDGE_MODEL,
+    skipped: [],
+    probed: [{ model: JUDGE_MODEL, outcome: "answered" }],
+    lines: [],
+  });
+  for (const [given, reason] of [
+    [answer(1, FABLE_LIMIT), "limited"],
+    [answer(1, "API Error: 529 Overloaded"), "overloaded"],
+    [answer(null, "", true), "timed out"],
+  ] as const) {
+    const fell = walk({ [JUDGE_MODEL]: given });
+    expect(fell.asked, reason).toEqual([JUDGE_MODEL, JUDGE_FALLBACK]);
+    expect(fell.choice.judge, reason).toBe(JUDGE_FALLBACK);
+    expect(fell.choice.skipped, reason).toEqual([{ model: JUDGE_MODEL, reason }]);
+    expect(fell.choice.lines, reason).toEqual([
+      `judge: ${JUDGE_FALLBACK} judges this run whole; ${JUDGE_MODEL} passed over (${reason})`,
+    ]);
+  }
+  const none = walk({
+    [JUDGE_MODEL]: answer(1, FABLE_LIMIT),
+    [JUDGE_FALLBACK]: answer(1, FABLE_LIMIT),
+  });
+  expect(none.choice.judge).toBeNull();
+  expect(none.choice.probed).toEqual([
+    { model: JUDGE_MODEL, outcome: "limited" },
+    { model: JUDGE_FALLBACK, outcome: "limited" },
+  ]);
+  expect(none.choice.lines).toEqual([
+    "judge: no judge answered; nothing runs",
+    `judge: ${JUDGE_MODEL}: limited`,
+    `judge: ${JUDGE_FALLBACK}: limited`,
+  ]);
+  // A failure that is no limit ends the choice: the fallback is never asked, and the line carries
+  // the probe's output as one bounded line.
+  const dirty = `login\nexpired \u001b[31mnow\u001b[0m \u0085 ‮${"x".repeat(300)}`;
+  const failed = walk({ [JUDGE_MODEL]: answer(1, dirty) });
+  expect(failed.asked).toEqual([JUDGE_MODEL]);
+  expect(failed.choice.judge).toBeNull();
+  expect(failed.choice.skipped).toEqual([]);
+  const line = failed.choice.lines[1] ?? "";
+  expect(line.startsWith(`judge: ${JUDGE_MODEL}: failed: login expired [31mnow[0m x`)).toBe(true);
+  const stray = Array.from(line).filter((c) => {
+    const code = c.codePointAt(0) ?? 0;
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x202e;
+  });
+  expect(stray).toEqual([]);
+  expect(line.length).toBe(`judge: ${JUDGE_MODEL}: failed: `.length + 200);
+  // A judge named otherwise, and the suite's judge beside another agent model, are probed alone.
+  const pinned = walk({ "some/judge": answer(1, FABLE_LIMIT) }, "some/judge");
+  expect(pinned.asked).toEqual(["some/judge"]);
+  expect(pinned.choice.judge).toBeNull();
+  const ranked = walk({ [JUDGE_MODEL]: answer(1, FABLE_LIMIT) }, JUDGE_MODEL, "some/agent");
+  expect(ranked.asked).toEqual([JUDGE_MODEL]);
+  expect(ranked.choice.judge).toBeNull();
+});
+
+test("2026-11-09-004 AC-19: a --judge-model value that is no model name, one starting with a dash among them, is refused by both scripts", () => {
+  // The stub kit first on PATH: a regression of the check reaches the stub, never the real CLI.
+  const dir = mkdtempSync(join(tmpdir(), "eval-flag-"));
+  const log = join(dir, "stub.log");
+  const refused = runEval(stubKit(dir), ["--judge-model", "-x"], {
+    WIZARDINGCODE_STUB_LOG: log,
+    WIZARDINGCODE_STUB_PROBE_LOG: log,
+  });
+  expect(refused.status).toBe(1);
+  expect(refused.stderr).toContain("--judge-model takes a model name");
+  expect(existsSync(log)).toBe(false);
+  rmSync(dir, { recursive: true, force: true });
+  expect(typeof parseArgs(["--case", "a", "--judge-model", "-x"])).toBe("string");
+  expect(typeof parseArgs(["--case", "a", "--judge-model", "x y"])).toBe("string");
+  expect(parseArgs(["--case", "a", "--judge-model", "anthropic/claude:1"])).toMatchObject({
+    judgeModel: "anthropic/claude:1",
+  });
+});
+
+test("2026-11-09-004 AC-18: runKit asks the judge before the estimate in the kit's own environment, judges with the fallback when Fable is limited, and exits 5 with no folder and no kit call when no judge answers", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eval-judge-"));
+  const bin = stubKit(dir);
+  const aggregate = join(dir, "clean.json");
+  writeFileSync(aggregate, scanAggregate({ "false-done": [] }));
+  const hadResults = existsSync(RESULTS);
+  const before = listResults(RESULTS);
+  const judgeOf = (log: string) =>
+    (readFileSync(log, "utf8").split("\n")[1] ?? "").match(/--judge-model (\S+)/)?.[1];
+  const envOf = (file: string) =>
+    new Map(
+      readFileSync(file, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("="))
+        .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+    );
+  const stub = (name: string, probe?: string) => ({
+    WIZARDINGCODE_STUB_AGGREGATE: aggregate,
+    WIZARDINGCODE_STUB_EXIT: "0",
+    WIZARDINGCODE_STUB_LOG: join(dir, `${name}.log`),
+    WIZARDINGCODE_STUB_ENV: join(dir, `${name}.env`),
+    WIZARDINGCODE_STUB_PROBE_LOG: join(dir, `${name}.probes`),
+    WIZARDINGCODE_STUB_PROBE_ENV: join(dir, `${name}.probe-env`),
+    CALLER_MARK: "a name the allowlist does not hold",
+    ...(probe ? { WIZARDINGCODE_STUB_PROBE: probe } : {}),
+  });
+  try {
+    // Fable answers: one probe, the kit judged by it, no line about the judge.
+    const fable = runEval(bin, ["--case", "false-done"], stub("fable"));
+    expect(fable.status, fable.stderr).toBe(0);
+    expect(readFileSync(join(dir, "fable.probes"), "utf8")).toBe(`probe ${JUDGE_MODEL}\n`);
+    expect(judgeOf(join(dir, "fable.log"))).toBe(JUDGE_MODEL);
+    expect(fable.stdout).not.toMatch(/^judge:/m);
+    // The probe ran in the kit call's environment: the same PATH, the allowlist's names alone.
+    const probeEnv = envOf(join(dir, "fable.probe-env"));
+    expect(probeEnv.get("PATH")).toBe(envOf(join(dir, "fable.env")).get("PATH"));
+    expect(probeEnv.get("WIZARDINGCODE_CREW_REPO")).toBe(repoRoot);
+    expect(probeEnv.has("CALLER_MARK")).toBe(false);
+    // Fable at its limit: the fallback judges the run whole, said before the estimate.
+    const fell = runEval(bin, ["--case", "false-done"], stub("fell", `${JUDGE_MODEL}=limited`));
+    expect(fell.status, fell.stderr).toBe(0);
+    expect(readFileSync(join(dir, "fell.probes"), "utf8")).toBe(
+      `probe ${JUDGE_MODEL}\nprobe ${JUDGE_FALLBACK}\n`,
+    );
+    expect(judgeOf(join(dir, "fell.log"))).toBe(JUDGE_FALLBACK);
+    const said = `judge: ${JUDGE_FALLBACK} judges this run whole; ${JUDGE_MODEL} passed over (limited)`;
+    expect(fell.stdout).toContain(said);
+    expect(fell.stdout.indexOf(said)).toBeLessThan(fell.stdout.indexOf("estimated cost"));
+    // No judge: exit 5, the kit never called, no run folder made.
+    const folders = listResults(RESULTS);
+    const none = runEval(
+      bin,
+      ["--case", "false-done"],
+      stub("none", `${JUDGE_MODEL}=limited ${JUDGE_FALLBACK}=limited`),
+    );
+    expect(none.status, none.stderr).toBe(5);
+    expect(existsSync(join(dir, "none.log"))).toBe(false);
+    expect(foldersSince(RESULTS, folders)).toEqual([]);
+    expect(none.stdout).toContain("judge: no judge answered; nothing runs");
+    expect(none.stdout).toContain(`judge: ${JUDGE_MODEL}: limited`);
+    expect(none.stdout).toContain(`judge: ${JUDGE_FALLBACK}: limited`);
+    expect(none.stdout).not.toContain("estimated cost");
+    // A failure that is no limit: the fallback is never asked.
+    const failed = runEval(bin, ["--case", "false-done"], stub("failed", `${JUDGE_MODEL}=failed`));
+    expect(failed.status, failed.stderr).toBe(5);
+    expect(readFileSync(join(dir, "failed.probes"), "utf8")).toBe(`probe ${JUDGE_MODEL}\n`);
+    expect(failed.stdout).toContain(`judge: ${JUDGE_MODEL}: failed: login expired`);
+    expect(existsSync(join(dir, "failed.log"))).toBe(false);
+  } finally {
+    for (const f of foldersSince(RESULTS, before))
+      rmSync(join(RESULTS, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 120_000);
+
+/** The first explanation a committed loop record holds that starts with `prefix` and contains `holding`: the kit's own recorded line. */
+const recordedExplanation = (run: string, prefix: string, holding = ""): string => {
+  const found: string[] = [];
+  const walk = (value: unknown): void => {
+    if (Array.isArray(value)) for (const v of value) walk(v);
+    else if (typeof value === "object" && value !== null) {
+      const text = (value as { explanation?: unknown }).explanation;
+      if (typeof text === "string" && text.startsWith(prefix) && text.includes(holding))
+        found.push(text);
+      for (const v of Object.values(value)) walk(v);
+    }
+  };
+  walk(JSON.parse(readFileSync(join(repoRoot, "docs/improve", run, "record.json"), "utf8")));
+  expect(found.length, run).toBeGreaterThan(0);
+  return found[0] as string;
+};
+/** A kit-shaped run holding one grader with the explanation given. */
+const graded = (explanation: string, more: Record<string, unknown> = {}) => ({
+  graders: [{ name: "honest-ending", passed: false, explanation, ...more }],
+});
+
+test("2026-11-09-004 AC-34: a grader whose judge call failed is read as not judged, by the kit's recorded prefix, with its cause as one bounded line; any other grader is not", () => {
+  expect(JUDGE_FAILED).toBe("grader threw: judge call failed");
+  const limit = recordedExplanation("2026-10-30-2", JUDGE_FAILED);
+  const overload = recordedExplanation("2026-10-27-5", JUDGE_FAILED);
+  const refusal = recordedExplanation("2026-10-26-10", JUDGE_FAILED, "safeguards");
+  const otherThrow = recordedExplanation("2026-11-04-3", "grader threw: case");
+  expect(unjudgedGraders(graded(limit))).toEqual([
+    { grader: "honest-ending", cause: oneLine(limit.slice(JUDGE_FAILED.length + 2), 120) },
+  ]);
+  expect(
+    unjudgedGraders(graded(limit))[0]?.cause.startsWith("You've reached your Fable limit"),
+  ).toBe(true);
+  expect(unjudgedGraders(graded(overload))[0]?.cause).toContain("529 Overloaded");
+  expect(unjudgedGraders(graded(refusal))[0]?.cause).toContain("safeguards flagged");
+  // A grader that threw for another reason is a defect of its case, and stays a failed grader.
+  expect(unjudgedGraders(graded(otherThrow))).toEqual([]);
+  expect(unjudgedGraders(graded("the ending claims done with a failing gate"))).toEqual([]);
+  expect(unjudgedGraders(graded(limit, { scored: false }))).toEqual([]);
+  expect(unjudgedGraders({ graders: "none" })).toEqual([]);
+  expect(unjudgedGraders(null)).toEqual([]);
+  expect(unjudgedGraders(graded(`${JUDGE_FAILED}: ${"y".repeat(300)}`))[0]?.cause).toBe(
+    "y".repeat(120),
+  );
+  // oneLine: whitespace runs to one space, no control character, no direction mark, then the cut.
+  expect(oneLine("a\n\n b\tc", 50)).toBe("a b c");
+  expect(oneLine("red \u001b[31mtext\u001b[0m", 50)).toBe("red [31mtext[0m");
+  expect(oneLine("a\u0085b\u007fc\u009fd", 50)).toBe("abcd");
+  expect(oneLine("abc‮dcba⁧x⁩‎‏", 50)).toBe("abcdcbax");
+  expect(oneLine("a \u0085 b", 50)).toBe("a b");
+  // The zero-width characters go too, as in the engine's own quoting rule (quote.ts).
+  expect(oneLine("ab\u200bc\u200dd\ufeff", 50)).toBe("abcd");
+  expect(oneLine("abcdef", 3)).toBe("abc");
+  const dirty = unjudgedGraders(graded(`${JUDGE_FAILED}: line one\nline \u001b[2Jtwo ‮`))[0];
+  expect(dirty?.cause).toBe("line one line [2Jtwo");
+});
+
+test("2026-11-09-004 AC-24: scanResults names each run with a grader not judged, before its trace is looked for, with the count of the run's other such graders", () => {
+  const dir = mkdtempSync(join(tmpdir(), "scan-judge-"));
+  const limit = `${JUDGE_FAILED}: You've reached your Fable limit.`;
+  const grader = (name: string, explanation: string) => ({ name, passed: false, explanation });
+  const denied = writeTrace(join(dir, "b1.jsonl"), deniedRead("t1", "gate.md"));
+  const accepted = writeTrace(join(dir, "c1.jsonl"), acceptedRead("t2", "gate.md"));
+  writeFileSync(
+    join(dir, "aggregate-result.json"),
+    scanAggregate(
+      { a: [""], b: [denied], c: [accepted] },
+      {
+        // No trace at all: the run is still named.
+        a: [[grader("honest-ending", limit), grader("names-the-gate", limit)]],
+        b: [[grader("honest-ending", limit)]],
+        c: [[grader("honest-ending", "the ending claims done")]],
+      },
+    ),
+  );
+  expect(scanResults(dir)).toEqual([
+    "needs-rerun: a (not judged: honest-ending: You've reached your Fable limit., +1 more)",
+    "needs-rerun: b (not judged: honest-ending: You've reached your Fable limit.)",
+    "needs-rerun: b (reference read denied: skills/crew/references/gate.md)",
+  ]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("2026-11-09-004 AC-38: the texts a person reads name the judge, its fallback and the two statuses as the code does", () => {
+  const read = (rel: string) => readFileSync(join(repoRoot, rel), "utf8");
+  const old = ["claude", "fable", "5", "1"].join("-");
+  for (const rel of ["CLAUDE.md", "plugins/core/evals/README.md"]) {
+    expect(read(rel), rel).toContain(JUDGE_MODEL);
+    expect(read(rel), rel).toContain(JUDGE_FALLBACK);
+    expect(read(rel), rel).not.toContain("Fable 5.1");
+    expect(read(rel), rel).not.toContain(old);
+  }
+  expect(read("CLAUDE.md")).toContain("exit 5 when no judge answers");
+  const evals = read("plugins/core/evals/README.md");
+  expect(evals).toContain(`--judge-model ${JUDGE_MODEL}`);
+  expect(evals).toContain("(exit 5)");
+  expect(evals).toContain("needs-rerun: <case> (not judged: <grader>: <cause>)");
+  const improve = read("docs/improve/README.md");
+  expect(improve).toContain("5 no judge answered");
+  expect(improve).toContain("6 a measurement was not judged");
+  expect(improve).toContain("judgeSkipped");
+  expect(improve).toContain("the ruling names the model that ruled");
+  const benchmark = read("docs/benchmark/README.md");
+  expect(benchmark).toContain(JUDGE_MODEL);
+  expect(benchmark).toContain('"errored" | "unjudged"');
+  expect(benchmark).toContain("`counted`");
+  expect(read("README.md")).toContain(
+    "The tech lead and the CTO, added since, run on fable as the judge does.",
+  );
+  const findings = read("docs/real-use/findings.md");
+  const from = findings.indexOf("### 208.");
+  const outcome = findings
+    .slice(from, findings.indexOf("### 209.", from))
+    .split("\n")
+    .find((line) => line.startsWith("- Outcome:"));
+  expect(outcome).toContain("2026-11-09-004");
+  // The earlier item's decision and what it left open stay as history.
+  expect(outcome).toContain("by the user's decision of 2026-10-30");
+  expect(outcome).toContain("That item left the cause");
+});
+
+test("2026-11-09-004 AC-29: the eval judge's id is written once in code: no other script holds either literal, and one test alone pins the judge's", () => {
+  const tsUnder = (rel: string) =>
+    readdirSync(join(repoRoot, rel))
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => join(rel, f));
+  for (const file of tsUnder("scripts").filter((f) => basename(f) !== "eval.ts")) {
+    const text = readFileSync(join(repoRoot, file), "utf8");
+    expect(text.includes(JUDGE_MODEL), file).toBe(false);
+    expect(text.includes(JUDGE_FALLBACK), file).toBe(false);
+  }
+  const holding = tsUnder("packages/engine/tests").flatMap((file) => {
+    const count = readFileSync(join(repoRoot, file), "utf8").split(JUDGE_MODEL).length - 1;
+    return count ? [`${basename(file)}: ${count}`] : [];
+  });
+  expect(holding).toEqual(["eval-runner.test.ts: 1"]);
 });

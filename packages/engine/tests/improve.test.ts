@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { acceptedReadPaths, evalInvocation } from "../../../scripts/eval.ts";
+import { acceptedReadPaths, evalInvocation, JUDGE_FAILED } from "../../../scripts/eval.ts";
 import {
   type CaseFigures,
   caseFigures,
@@ -22,6 +22,7 @@ import {
   recordMarkdown,
   verdictOf,
 } from "../../../scripts/improve.ts";
+import { scanText } from "../src/secrets.ts";
 import { acceptedRead, deniedRead, PLUGIN_ROOT, toolResult, toolUse } from "./kit-stub.ts";
 
 const base = { root: "/r", path: "/usr/bin", realGitDir: null, platform: "linux" as const };
@@ -517,4 +518,109 @@ test("2026-10-28-001 AC-8: probeEstimate reads a case's cost from this run's bas
   expect(probeEstimate(["w"], { ...baseline, w: {} }, {})).toBe(2);
   expect(probeEstimate([], baseline, earlier)).toBe(0);
   expect(probeEstimate(["u"], {}, {})).toBe(0);
+});
+
+/** A kit-shaped result of one case whose runs hold the scores and graders given, with no trace. */
+const judgedResult = (runs: { score: number; graders: Record<string, unknown>[] }[]) => ({
+  cases: [
+    {
+      name: "t",
+      arms: { with: runs.map((r) => ({ ...r, error: null, tracePath: "" })) },
+    },
+  ],
+});
+const LIMIT_CAUSE = "You've reached your Fable limit. Switch to another model.";
+const notJudged = (name: string, cause = LIMIT_CAUSE) => ({
+  name,
+  passed: false,
+  explanation: `${JUDGE_FAILED}: ${cause}`,
+});
+
+test("2026-11-09-004 AC-22: a run with a grader not judged is marked unjudged with its cause, out of the mean, the spread and the failing graders; the verdict on such figures is inconclusive and the record's table says unjudged", () => {
+  const failed = { name: "ended-proven", passed: false, explanation: "pattern not found in trace" };
+  const got = caseFigures(
+    judgedResult([
+      { score: 1, graders: [] },
+      { score: 0.25, graders: [notJudged("honest-ending"), failed, notJudged("names-the-gate")] },
+      { score: 0.5, graders: [failed] },
+    ]),
+    "t",
+    () => null,
+    [],
+  );
+  expect(got?.runs.map((r) => r.unjudged)).toEqual([undefined, LIMIT_CAUSE, undefined]);
+  // The unjudged graders say nothing about the case: only the grader that failed is failing.
+  expect(got?.runs[1]?.failing).toEqual([
+    { grader: "ended-proven", explanation: "pattern not found in trace" },
+  ]);
+  expect(got?.unjudged).toBe(true);
+  expect(got?.mean).toBe(0.75);
+  expect(got?.spread).toBe(0.5);
+  expect(got?.errored).toBe(false);
+  const none = caseFigures(
+    judgedResult([0.25, 0.25, 0.25].map((score) => ({ score, graders: [notJudged("g")] }))),
+    "t",
+    () => null,
+    [],
+  );
+  expect(none).toMatchObject({ unjudged: true, mean: 0, spread: 0 });
+  // Figures with no grader not judged carry no field at all: records written before read the same.
+  const plain = caseFigures(judgedResult([{ score: 1, graders: [] }]), "t", () => null, []);
+  expect(plain && "unjudged" in plain).toBe(false);
+  expect(plain?.runs[0] && "unjudged" in plain.runs[0]).toBe(false);
+
+  const judged = figures("t", [0.5, 0.5, 0.5]);
+  const marked = (scores: number[]): CaseFigures => {
+    const f = figures("t", scores);
+    return {
+      ...f,
+      unjudged: true,
+      runs: f.runs.map((r, i) => (i ? r : { ...r, unjudged: LIMIT_CAUSE })),
+    };
+  };
+  // A probe that would read as a win, and a baseline, each with a run not judged: never a verdict.
+  expect(verdictOf(["t"], ["t"], { t: judged }, { t: marked([1, 1, 1]) })).toEqual({
+    verdict: "inconclusive",
+    reasons: [`t's probe was not judged (${LIMIT_CAUSE})`],
+  });
+  expect(
+    verdictOf(["t"], ["t"], { t: marked([0.5, 0.5, 0.5]) }, { t: figures("t", [1, 1, 1]) }),
+  ).toEqual({
+    verdict: "inconclusive",
+    reasons: [`t's baseline was not judged (${LIMIT_CAUSE})`],
+  });
+  const md = recordMarkdown({
+    run: "2026-11-10-1",
+    at: "2026-11-10T10:00:00.000Z",
+    targets: ["t"],
+    baseline: { t: marked([0.5, 1, 1]) },
+    proposals: [],
+    composition: null,
+    kept: null,
+    branch: null,
+    provider: null,
+    costUsd: 0.6,
+    lessons: [],
+    exit: 6,
+    unmeasured: [],
+  });
+  expect(md).toContain("| t | unjudged, 1.00, 1.00 |");
+});
+
+test("2026-11-09-004 AC-30: a cause that holds a secret's shape is withheld whole from the figures and the verdict's reason", () => {
+  // Built here, never committed: the secrets gate scans the tree.
+  const token = `${["sk", "ant", "api03"].join("-")}-${"Q".repeat(40)}`;
+  const got = caseFigures(
+    judgedResult([{ score: 0, graders: [notJudged("g", `denied for key ${token}`)] }]),
+    "t",
+    () => null,
+    [],
+  ) as CaseFigures;
+  const rule = scanText(`denied for key ${token}`, "cause")[0]?.rule;
+  expect(rule).toBeDefined();
+  expect(got.runs[0]?.unjudged).toBe(`withheld: the cause held a secret (${rule})`);
+  expect(JSON.stringify(got)).not.toContain(token);
+  const verdict = verdictOf(["t"], ["t"], { t: got }, { t: figures("t", [1]) });
+  expect(verdict.verdict).toBe("inconclusive");
+  expect(JSON.stringify(verdict)).not.toContain(token);
 });

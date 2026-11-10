@@ -16,7 +16,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
+  JUDGE_FAILED,
+  JUDGE_FALLBACK,
+  JUDGE_MODEL,
+  type ProbeAnswer,
+} from "../../../scripts/eval.ts";
+import {
   diffRefusal,
+  EDITOR_LADDER,
   EDITOR_TOOLS,
   type EditorCall,
   type ImproveDeps,
@@ -115,6 +122,8 @@ interface Seen {
   git: { args: string[]; cwd: string; env: NodeJS.ProcessEnv }[];
   lessons: string[][];
   log: string[];
+  /** Each judge probe asked, with the environment it was given. */
+  probes: { model: string; env: NodeJS.ProcessEnv }[];
   /** The sandboxes each kit call made (finding 175), in call order. */
   boxes: string[][];
   /** The paths each removal asked for, in call order. */
@@ -129,6 +138,10 @@ function deps(
     kit?: (call: KitCall, n: number) => { status: number | null; result: unknown };
     editor?: (call: EditorCall, n: number) => void;
     output?: (n: number) => string;
+    /** The judge probe's answer for a model, in place of `ok` (2026-11-09-004). */
+    probe?: (model: string) => ProbeAnswer;
+    /** The editor's own answer for its nth call, in place of the helper's status 0 (2026-11-09-004 AC-13). */
+    editorAnswer?: (n: number) => { status: number; output: string } | undefined;
     env?: NodeJS.ProcessEnv;
     /** In place of the removal that deletes what it is given (finding 175). */
     removeSandboxes?: (paths: string[]) => void;
@@ -140,6 +153,7 @@ function deps(
     git: [],
     lessons: [],
     log: [],
+    probes: [],
     boxes: [],
     sandboxes: [],
   };
@@ -155,6 +169,11 @@ function deps(
       git: (args, cwd, env, input) => {
         seen.git.push({ args, cwd, env });
         return realGit(args, cwd, env, input);
+      },
+      probeJudge: (call) => {
+        seen.probes.push(call);
+        seen.log.push(`probe ${call.model}`);
+        return options.probe?.(call.model) ?? { status: 0, output: "ok", timedOut: false };
       },
       kit: (call) => {
         seen.kit.push(call);
@@ -179,6 +198,8 @@ function deps(
           seen.editor.length,
         );
         const n = seen.editor.length;
+        const own = options.editorAnswer?.(n);
+        if (own) return own;
         return {
           status: 0,
           output: options.output ? options.output(n) : `P-${n}: name the gate first`,
@@ -987,4 +1008,140 @@ test("2026-10-28-001 AC-8: a proposal whose probe set's estimate is above what t
   );
   expect(probeEstimate(["u"], {}, {})).toBe(0);
   expect(probeEstimate(["t"], { t: { costUsd: 2 } }, { t: { costUsd: 9 } })).toBe(2);
+});
+
+test("2026-11-09-004 AC-13: an editor that answers with Fable's usage limit moves to the ladder's next model, by the one pattern the judge's probe reads", async () => {
+  const { root, tmp } = fixture();
+  const run = deps(root, tmp, {
+    editorAnswer: (n) =>
+      n === 1
+        ? { status: 1, output: "You've reached your Fable limit. Switch models." }
+        : undefined,
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, run.deps)).toBe(0);
+  const models = run.seen.editor.map((call) => call.args[call.args.indexOf("--model") + 1]);
+  expect(models).toEqual(EDITOR_LADDER.slice(0, 2));
+  expect(run.seen.log).toContain(
+    `${EDITOR_LADDER[0]} is at its limit; the editor moves to the next model`,
+  );
+});
+
+const LIMITED_PROBE: ProbeAnswer = {
+  status: 1,
+  output: "You've reached your Fable limit. Switch to another model.",
+  timedOut: false,
+};
+/** The kit's result with the first run's graders holding one whose judge call failed. */
+const unjudgedResult = (call: KitCall) => {
+  const r = kitResult(call);
+  const first = r.result.cases[0]?.arms.with[0] as { graders: unknown[] };
+  first.graders = [
+    {
+      name: "honest-ending",
+      passed: false,
+      explanation: `${JUDGE_FAILED}: You've reached your Fable limit.`,
+    },
+  ];
+  return r;
+};
+
+test("2026-11-09-004 AC-33: a run chooses its judge once, before its folder and its first kit call, in its own environment; every kit call carries it and the record names it; with no judge nothing is made and the run returns 5", async () => {
+  const { root, tmp } = fixture();
+  const run = deps(root, tmp, {
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      ANTHROPIC_BASE_URL: "http://gateway",
+      CALLER_MARK: "a name the kit's allowlist does not hold",
+    },
+    probe: (model) =>
+      model === JUDGE_MODEL ? LIMITED_PROBE : { status: 0, output: "ok", timedOut: false },
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, run.deps)).toBe(0);
+  expect(run.seen.probes.map((p) => p.model)).toEqual([JUDGE_MODEL, JUDGE_FALLBACK]);
+  // The run's environment: the kit's allowlist over the session's, never the raw one.
+  expect(run.seen.probes[0]?.env.ANTHROPIC_BASE_URL).toBe("http://gateway");
+  expect(run.seen.probes[0]?.env.CALLER_MARK).toBeUndefined();
+  // Both probes before the first kit call, and none after.
+  expect(run.seen.log.indexOf(`probe ${JUDGE_FALLBACK}`)).toBeLessThan(
+    run.seen.log.indexOf("kit t"),
+  );
+  expect(run.seen.kit.length).toBeGreaterThan(1);
+  expect(run.seen.kit.map((call) => call.judgeModel)).toEqual(
+    run.seen.kit.map(() => JUDGE_FALLBACK),
+  );
+  expect(run.seen.log).toContain(
+    `judge: ${JUDGE_FALLBACK} judges this run whole; ${JUDGE_MODEL} passed over (limited)`,
+  );
+  const record = recordOf(root);
+  expect(record.judge).toBe(JUDGE_FALLBACK);
+  expect(record.judgeSkipped).toEqual([{ model: JUDGE_MODEL, reason: "limited" }]);
+  const dir = join(root, "docs/improve");
+  expect(readFileSync(join(dir, readdirSync(dir)[0] as string, "record.md"), "utf8")).toContain(
+    `- Judge: ${JUDGE_FALLBACK} (passed over: ${JUDGE_MODEL} (limited))`,
+  );
+  // With Fable answering: one probe, the record's judge with nobody passed over.
+  const plain = fixture();
+  const fable = deps(plain.root, plain.tmp);
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, fable.deps)).toBe(0);
+  expect(fable.seen.probes.map((p) => p.model)).toEqual([JUDGE_MODEL]);
+  expect(recordOf(plain.root)).toMatchObject({ judge: JUDGE_MODEL, judgeSkipped: [] });
+  // No judge: 5, no kit call, no folder, no worktree.
+  const bare = fixture();
+  const none = deps(bare.root, bare.tmp, { probe: () => LIMITED_PROBE });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, none.deps)).toBe(5);
+  expect(none.seen.kit).toEqual([]);
+  expect(existsSync(join(bare.root, "docs"))).toBe(false);
+  expect(none.seen.log).toContain("judge: no judge answered; nothing runs");
+  expect(worktrees(bare.root)).toBe(1);
+  // A provider's own variables are in the probe's environment, over the session's.
+  const provided = fixture();
+  const gateway = deps(provided.root, provided.tmp, { probe: () => LIMITED_PROBE });
+  const provider = {
+    name: "openrouter",
+    env: { ANTHROPIC_BASE_URL: "https://openrouter.ai/api", ANTHROPIC_AUTH_TOKEN: "sk-or-SECRET" },
+    agentModel: "anthropic/claude-sonnet-5.5",
+    judgeModel: "anthropic/claude-fable-5.1",
+    claudeModels: true,
+  };
+  expect(await runImprove({ cases: ["t"], proposals: 1, provider }, gateway.deps)).toBe(5);
+  // A provider's judge is pinned: probed alone, in the provider's environment.
+  expect(gateway.seen.probes.map((p) => p.model)).toEqual([provider.judgeModel]);
+  expect(gateway.seen.probes[0]?.env).toMatchObject(provider.env);
+});
+
+test("2026-11-09-004 AC-35: a run stops at its first measurement with a run not judged, a baseline or a proposal's probe, with its record written and nothing kept, and returns 6", async () => {
+  const { root, tmp } = fixture();
+  const baseline = deps(root, tmp, { kit: (call) => unjudgedResult(call) });
+  expect(await runImprove({ cases: ["t"], proposals: 2 }, baseline.deps)).toBe(6);
+  expect(baseline.seen.kit).toHaveLength(1);
+  expect(baseline.seen.editor).toEqual([]);
+  const first = recordOf(root);
+  expect(first).toMatchObject({
+    exit: 6,
+    judge: JUDGE_MODEL,
+    costUsd: 0.6,
+    proposals: [],
+    kept: null,
+  });
+  expect(first.baseline.t.unjudged).toBe(true);
+  expect(first.baseline.t.runs[0].unjudged).toBe("You've reached your Fable limit.");
+  expect(baseline.seen.log).toContain(
+    "t's baseline was not judged (You've reached your Fable limit.): the run stops",
+  );
+  expect(worktrees(root)).toBe(1);
+  // The limit met at a proposal's probe: the baseline is judged, the probe is not, nothing follows.
+  const second = fixture();
+  const probe = deps(second.root, second.tmp, {
+    kit: (call, n) => (n === 2 ? unjudgedResult(call) : kitResult(call)),
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 2 }, probe.deps)).toBe(6);
+  expect(probe.seen.kit).toHaveLength(2);
+  expect(probe.seen.editor).toHaveLength(1);
+  const stopped = recordOf(second.root);
+  expect(stopped).toMatchObject({ exit: 6, kept: null, branch: null });
+  expect(stopped.baseline.t.unjudged).toBeUndefined();
+  expect(stopped.proposals).toHaveLength(1);
+  expect(stopped.proposals[0]).toMatchObject({ status: "inconclusive", verdict: "inconclusive" });
+  expect(stopped.proposals[0].probe.t.unjudged).toBe(true);
 });

@@ -6,15 +6,16 @@
  * `bun scripts/benchmark.ts` runs the kit and writes `docs/benchmark/<date>-<version>.md` and
  * `.json`; `--from <aggregate.json>` writes the report alone; `--out <dir>` names another folder.
  * The record reads a fixed list of the aggregate's fields (`readAggregate`): a trace path, the
- * suite's root, a plugin's path, a grader's explanation or an error's text is never read, so it
- * never enters the record; `<version>` is the plugin version the aggregate names and `<date>` the
- * UTC day of the run's start, so a record can never name a version that did not run.
+ * suite's root, a plugin's path or an error's text is never read, and a grader's explanation is
+ * tested for one prefix (`JUDGE_FAILED`) and never copied, so none of them enters the record;
+ * `<version>` is the plugin version the aggregate names and `<date>` the UTC day of the run's
+ * start, so a record can never name a version that did not run.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { scanText } from "../packages/engine/src/secrets.ts";
-import { runKit, scanResults } from "./eval.ts";
+import { runKit, scanResults, unjudgedGraders } from "./eval.ts";
 
 export type Category = "functional" | "security" | "cost";
 export const CATEGORIES: Category[] = ["functional", "security", "cost"];
@@ -31,6 +32,8 @@ const ROOT = join(import.meta.dir, "..");
 /** A run as the record reads it: the figures of a run that finished, or `errored` with nothing else read. */
 export interface Run {
   errored: boolean;
+  /** A grader's judge call failed: the run finished and was paid for, and its score says nothing (2026-11-09-004). */
+  unjudged: boolean;
   turns: number;
   costUsd: number;
   judgeCostUsd: number;
@@ -91,6 +94,7 @@ function readRun(raw: unknown, path: string): Run {
   if (run.error !== null && run.error !== undefined)
     return {
       errored: true,
+      unjudged: false,
       turns: 0,
       costUsd: 0,
       judgeCostUsd: 0,
@@ -101,6 +105,7 @@ function readRun(raw: unknown, path: string): Run {
   field(run.score, `${path}.score`, "number");
   return {
     errored: false,
+    unjudged: unjudgedGraders(run).length > 0,
     turns: field(run.turns, `${path}.turns`, "number"),
     costUsd: field(run.costUsd, `${path}.costUsd`, "number"),
     judgeCostUsd: field(run.judgeCostUsd, `${path}.judgeCostUsd`, "number"),
@@ -187,6 +192,8 @@ export function readAggregate(text: string): Aggregate {
 export interface ArmFigures {
   runs: number;
   errored: number;
+  /** The runs, among those that finished, with a grader not judged. */
+  unjudged: number;
   passRate: number;
   costUsd: number | null;
   judgeCostUsd: number | null;
@@ -203,6 +210,8 @@ export interface CaseRecord {
 export interface CategoryRecord {
   cases: string[];
   ran: number;
+  /** The cases of `ran` left in the totals: the rates are means over these. */
+  counted: number;
   passRateWith: number | null;
   passRateWithout: number | null;
 }
@@ -240,7 +249,7 @@ export interface BenchmarkRecord {
   cases: CaseRecord[];
   totals: Totals;
   /** The cases left out of the totals: an arm whose every run errored, named with that arm (finding 116). */
-  excluded: { case: string; arm: "with" | "without" }[];
+  excluded: { case: string; arm: "with" | "without"; reason: "errored" | "unjudged" }[];
   notRun: string[];
 }
 export interface RecordMeta {
@@ -282,12 +291,13 @@ export function readSet(text: string): BenchmarkSet {
 const mean = (xs: number[]): number | null =>
   xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 const sum = (xs: (number | null)[]): number => xs.reduce<number>((a, b) => a + (b ?? 0), 0);
-/** One arm of a case: the kit's pass rate, the means over the runs that finished, the errored ones counted. */
+/** One arm of a case: the kit's pass rate, the means over the runs that finished, the errored and the unjudged ones counted. */
 function armFigures(runs: Run[], passRate: number): ArmFigures {
   const done = runs.filter((r) => !r.errored);
   return {
     runs: done.length,
     errored: runs.length - done.length,
+    unjudged: done.filter((r) => r.unjudged).length,
     passRate,
     costUsd: mean(done.map((r) => r.costUsd)),
     judgeCostUsd: mean(done.map((r) => r.judgeCostUsd)),
@@ -298,13 +308,14 @@ function armFigures(runs: Run[], passRate: number): ArmFigures {
 
 /**
  * The record of a run: one formula per field. A case's pass rate per arm is the kit's; its cost,
- * judge cost, time and turns per arm are means over the runs that finished; a category's rates
- * are means over its run cases (null when none ran); the totals are the sums of the case means
- * (one run of the set per arm) and the cost ratio with over without (null on a zero without),
- * leaving out of both arms a case with an arm whose every run errored, named in `excluded`; a
- * case of the set the run did not cover is `notRun`, a case outside the set counts nowhere; the
- * models and the runs per case are the aggregate's, and `drift` names where they differ from the
- * set's.
+ * judge cost, time and turns per arm are means over the runs that finished; a case with an arm
+ * whose every run errored, or with a run whose judge call failed, is named in `excluded` with its
+ * arm and its reason and left out of the category rates and the totals; a category's rates are
+ * means over its cases left in (`counted`; null when none), beside `ran`, every case of it that
+ * ran; the totals are the sums of the case means (one run of the set per arm) and the cost ratio
+ * with over without (null on a zero without), over the cases left in; a case of the set the run
+ * did not cover is `notRun`, a case outside the set counts nowhere; the models and the runs per
+ * case are the aggregate's, and `drift` names where they differ from the set's.
  */
 export function benchmarkRecord(
   aggregate: Aggregate,
@@ -329,27 +340,33 @@ export function benchmarkRecord(
       delta: c.delta,
     });
   }
+  // A case leaves the totals and the category rates when an arm has no run that finished, or a
+  // run whose judge call failed: the kit's pass rate of such an arm measures no behaviour.
+  const reasonOf = (a: ArmFigures): "errored" | "unjudged" | null =>
+    a.runs === 0 && a.errored > 0 ? "errored" : a.unjudged > 0 ? "unjudged" : null;
+  const excluded = cases.flatMap((c) =>
+    (["with", "without"] as const).flatMap((arm) => {
+      const reason = reasonOf(c[arm]);
+      return reason ? [{ case: c.name, arm, reason }] : [];
+    }),
+  );
+  const counted = cases.filter((c) => !reasonOf(c.with) && !reasonOf(c.without));
   const categories = Object.fromEntries(
     CATEGORIES.map((category) => {
       const ran = cases.filter((c) => c.category === category);
+      const left = counted.filter((c) => c.category === category);
       return [
         category,
         {
           cases: names.filter((n) => set.cases[n] === category),
           ran: ran.length,
-          passRateWith: mean(ran.map((c) => c.with.passRate)),
-          passRateWithout: mean(ran.map((c) => c.without.passRate)),
+          counted: left.length,
+          passRateWith: mean(left.map((c) => c.with.passRate)),
+          passRateWithout: mean(left.map((c) => c.without.passRate)),
         },
       ];
     }),
   ) as Record<Category, CategoryRecord>;
-  const allErrored = (a: ArmFigures) => a.runs === 0 && a.errored > 0;
-  const excluded = cases.flatMap((c) =>
-    (["with", "without"] as const)
-      .filter((arm) => allErrored(c[arm]))
-      .map((arm) => ({ case: c.name, arm })),
-  );
-  const counted = cases.filter((c) => !allErrored(c.with) && !allErrored(c.without));
   const costWith = sum(counted.map((c) => c.with.costUsd));
   const costWithout = sum(counted.map((c) => c.without.costUsd));
   const totals: Totals = {
@@ -481,7 +498,7 @@ export function renderMarkdown(record: BenchmarkRecord): string {
   );
   if (record.excluded.length)
     lines.push(
-      `Left out of the totals, an arm whose every run errored: ${record.excluded.map((e) => `${e.case} (${e.arm})`).join(", ")}.`,
+      `Left out of the totals and the category rates: ${record.excluded.map((e) => `${e.case} (${e.arm}, ${e.reason})`).join(", ")}.`,
       "",
     );
   lines.push(
@@ -556,6 +573,8 @@ if (import.meta.main) {
     // whatever the kit's status: 1 says a case scored below the threshold and 2 a partial run,
     // both figures the record carries.
     const run = runKit({ root: ROOT, suffix: "benchmark", tags: ["benchmark"] });
+    // No judge answered (2026-11-09-004): the kit was not called and no folder was made.
+    if (run.folder === null) process.exit(5);
     command = run.command;
     if (!run.aggregate) {
       console.error(

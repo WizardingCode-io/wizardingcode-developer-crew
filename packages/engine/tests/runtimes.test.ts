@@ -1002,7 +1002,7 @@ test("SP6-T4 AC-3: the agent file per format, from the tech lead's page", () => 
   const page = readAgentPage(pageText);
   expect(page.name).toBe("tech-lead");
   expect(page.tools).toEqual(["Read", "Grep", "Glob"]);
-  expect(page.model).toBe("sonnet");
+  expect(page.model).toBe("fable");
   expect(page.description.startsWith("A team's tech lead, read-only.")).toBe(true);
   expect(page.body.startsWith("# ")).toBe(true);
   expect(pageText.endsWith(page.body)).toBe(true);
