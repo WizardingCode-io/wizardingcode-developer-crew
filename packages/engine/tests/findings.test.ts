@@ -79,8 +79,10 @@ function openFindings(text: string): number[] {
 // 220 (a child's end lost under the whole suite) fixed by 2026-11-10-001, which recorded 233 (the
 // advisories the judgement left on 2026-11-09-004) and 234 (the lock row's 20 seconds of its 30).
 // 234 (the fixtures the tests left in the temporary folder) fixed by 2026-11-10-002.
+// 228 (a commit's detached maintenance repacking a fixture under the next git command) fixed by 2026-11-10-003,
+// which recorded 235 (a test-first run of the suite is cut at the target's ten minutes).
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 228, 233,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 233, 235,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -169,4 +171,24 @@ test("2026-11-10-002 AC-6: finding 234 reads fixed by the item, with the fixture
   expect(outcome).toContain("by inference alone");
   expect(outcome).toContain("shared");
   expect(openFindings(text)).not.toContain(234);
+});
+
+test("2026-11-10-003 AC-7: finding 228 reads fixed by the item, with the maintenance a commit starts as its cause and the note that ruled it out corrected, and 235 is recorded open", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const sectionOf = (n: number) =>
+    text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+  const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionOf(n))?.[1]?.trim() ?? "";
+  expect(outcomeOf(228)).toStartWith("fixed in 2026-11-10-003");
+  // The cause and the measures it rests on.
+  expect(outcomeOf(228)).toContain("git maintenance run --auto");
+  expect(outcomeOf(228)).toContain("objects/17");
+  expect(outcomeOf(228)).toContain("one commit in 256");
+  expect(outcomeOf(228)).toContain("GIT_CONFIG_PARAMETERS");
+  expect(sectionOf(228)).toContain("46 `git repack -d -l` among 11172");
+  // The note of 2026-11-10 measured the 255 cases: the record says so where the note stands.
+  expect(sectionOf(228)).toContain("Corrected on 2026-11-11");
+  expect(openFindings(text)).not.toContain(228);
+  expect(sectionOf(235)).toContain("2026-11-10-003");
+  expect(sectionOf(235)).toContain("tdd.ts");
+  expect(openFindings(text)).toContain(235);
 });

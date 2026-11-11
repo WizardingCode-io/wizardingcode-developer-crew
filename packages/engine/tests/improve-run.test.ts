@@ -35,6 +35,7 @@ import {
   removeKeptSandboxes,
   runImprove,
 } from "../../../scripts/improve.ts";
+import { gitRunEnv } from "./helpers.ts";
 import { toolResult, toolUse } from "./kit-stub.ts";
 
 const PLUGIN = "/private/tmp/e-run/plugins/wizardingcode-developer-crew";
@@ -120,6 +121,8 @@ interface Seen {
   kit: KitCall[];
   editor: EditorCall[];
   git: { args: string[]; cwd: string; env: NodeJS.ProcessEnv }[];
+  /** The environment real git got for each call: the script's own and what the fixture adds beside it. */
+  handed: NodeJS.ProcessEnv[];
   lessons: string[][];
   log: string[];
   /** Each judge probe asked, with the environment it was given. */
@@ -143,6 +146,8 @@ function deps(
     /** The editor's own answer for its nth call, in place of the helper's status 0 (2026-11-09-004 AC-13). */
     editorAnswer?: (n: number) => { status: number; output: string } | undefined;
     env?: NodeJS.ProcessEnv;
+    /** Variables for real git alone, beside the environment the script built (a trace's target). */
+    gitEnv?: NodeJS.ProcessEnv;
     /** In place of the removal that deletes what it is given (finding 175). */
     removeSandboxes?: (paths: string[]) => void;
   } = {},
@@ -151,6 +156,7 @@ function deps(
     kit: [],
     editor: [],
     git: [],
+    handed: [],
     lessons: [],
     log: [],
     probes: [],
@@ -168,7 +174,11 @@ function deps(
       log: (line) => seen.log.push(line),
       git: (args, cwd, env, input) => {
         seen.git.push({ args, cwd, env });
-        return realGit(args, cwd, env, input);
+        // The script's environment comes from a list of allowed names, which drops git's own
+        // variable: the run's value is put back here, or this commit starts a maintenance (finding 228).
+        const handed = { ...env, ...gitRunEnv(), ...options.gitEnv };
+        seen.handed.push(handed);
+        return realGit(args, cwd, handed, input);
       },
       probeJudge: (call) => {
         seen.probes.push(call);
@@ -215,6 +225,34 @@ function deps(
     },
   };
 }
+
+test("2026-11-10-003 AC-6 (finding 228): a commit runImprove makes through this fixture starts no git maintenance: real git gets the run's GIT_CONFIG_PARAMETERS beside the environment the script built, and the record of what the script handed stays the script's own", async () => {
+  const { root, tmp } = fixture();
+  const trace = join(mkdtempSync(join(tmpdir(), "improve-trace-")), "events");
+  const run = deps(root, tmp, { gitEnv: { GIT_TRACE2_EVENT: trace } });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, run.deps)).toBe(0);
+  const events = readFileSync(trace, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string; argv?: string[] });
+  // The run did commit, and the trace is that commit's: without it a count of zero would prove nothing.
+  expect(events.some((e) => e.event === "start" && e.argv?.includes("commit"))).toBe(true);
+  expect(
+    events.filter((e) => e.event === "child_start" && e.argv?.includes("maintenance")),
+  ).toEqual([]);
+  // What real git got is what the script built plus the run's variable and this row's trace, nothing else.
+  const parameters = process.env.GIT_CONFIG_PARAMETERS;
+  expect(parameters).toContain("'maintenance.auto=false'");
+  expect(run.seen.handed.length).toBe(run.seen.git.length);
+  run.seen.git.forEach((call, i) => {
+    expect(call.env.GIT_CONFIG_PARAMETERS, call.args.join(" ")).toBeUndefined();
+    expect(run.seen.handed[i], call.args.join(" ")).toEqual({
+      ...call.env,
+      GIT_CONFIG_PARAMETERS: parameters,
+      GIT_TRACE2_EVENT: trace,
+    });
+  });
+});
 
 const worktrees = (root: string): number =>
   sh(root, "worktree", "list", "--porcelain")

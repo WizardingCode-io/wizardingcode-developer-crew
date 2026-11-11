@@ -114,10 +114,28 @@ export function runsHome(tmp: string, owner: number = currentUser()): string {
   }
 }
 
+/**
+ * What a run adds to `GIT_CONFIG_PARAMETERS`, the variable git keeps a command's `-c` options in
+ * for its children: a value there outranks the repository's, the user's and the system's
+ * configuration, so a developer's own settings cannot turn the maintenance back on. git's manual
+ * does not describe the variable's format; the row of finding 228 in helpers.test.ts fails the day
+ * git stops reading it.
+ */
+const NO_GIT_MAINTENANCE = "'maintenance.auto=false'";
+
+/**
+ * The run's `GIT_CONFIG_PARAMETERS`, for a test that hands git an environment built from a list of
+ * allowed names, where the process's own variable does not arrive; empty outside a run.
+ */
+export function gitRunEnv(): NodeJS.ProcessEnv {
+  const parameters = process.env.GIT_CONFIG_PARAMETERS;
+  return parameters === undefined ? {} : { GIT_CONFIG_PARAMETERS: parameters };
+}
+
 /** A run's temporary folder and the one way out of it. */
 export interface RunFolder {
   folder: string;
-  /** Puts `TMPDIR` back as the entry found it, then removes the folder the entry made; once. */
+  /** Puts `TMPDIR` and git's variable back as the entry found them, then removes the folder the entry made; once. */
   leave(): void;
 }
 
@@ -128,12 +146,22 @@ export interface RunFolder {
  * folder and takes no path; with `WIZARDINGCODE_CREW_KEEP_FIXTURES=1` it removes nothing and marks
  * the folder with `.keep`, which `sweepDeadRuns` then skips. A removal that fails is swallowed: the
  * next run's sweep takes what is left.
+ *
+ * The entry also turns git's automatic maintenance off for the run, and the leave puts git's
+ * variable back as it was (finding 228). A commit ends by starting `git maintenance run --auto`
+ * detached; with git 2.54.0 that maintenance repacks a repository as soon as two loose objects lie
+ * under `objects/17`, one fixture commit in 256, and removes the loose objects while the fixture's
+ * next git command reads them.
  */
 export function enterRunFolder(home: string): RunFolder {
   const env = process.env;
   const folder = mkdtempSync(join(home, `crew-run-${process.pid}-`));
   const previous = env.TMPDIR;
   env.TMPDIR = folder;
+  const parameters = env.GIT_CONFIG_PARAMETERS;
+  env.GIT_CONFIG_PARAMETERS = parameters
+    ? `${parameters} ${NO_GIT_MAINTENANCE}`
+    : NO_GIT_MAINTENANCE;
   let left = false;
   return {
     folder,
@@ -142,6 +170,8 @@ export function enterRunFolder(home: string): RunFolder {
       left = true;
       if (previous === undefined) delete env.TMPDIR;
       else env.TMPDIR = previous;
+      if (parameters === undefined) delete env.GIT_CONFIG_PARAMETERS;
+      else env.GIT_CONFIG_PARAMETERS = parameters;
       try {
         if (env.WIZARDINGCODE_CREW_KEEP_FIXTURES === "1") writeFileSync(join(folder, ".keep"), "");
         else rmSync(folder, { recursive: true, force: true });

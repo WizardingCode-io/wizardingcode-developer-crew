@@ -195,6 +195,103 @@ test("2026-11-10-002 AC-2: a run's leave puts TMPDIR back and removes the folder
   }
 });
 
+const PARAMETERS = "GIT_CONFIG_PARAMETERS";
+const NO_MAINTENANCE = "'maintenance.auto=false'";
+
+/**
+ * How many `git maintenance` children a commit in a fresh repository starts under `env`, by git's
+ * own trace of that commit. The repository is left alone afterwards and leaves with the run: a
+ * maintenance the commit did start may still be writing in it.
+ */
+function maintenanceStarted(env: NodeJS.ProcessEnv): number {
+  const repo = tempDir();
+  const trace = join(tempDir(), "trace");
+  const git = (...args: string[]) => {
+    const r = spawnSync("git", args, {
+      cwd: repo,
+      encoding: "utf8",
+      env: {
+        ...env,
+        GIT_TRACE2_EVENT: trace,
+        GIT_AUTHOR_NAME: "t",
+        GIT_AUTHOR_EMAIL: "t@t.invalid",
+        GIT_COMMITTER_NAME: "t",
+        GIT_COMMITTER_EMAIL: "t@t.invalid",
+      },
+    });
+    if (r.status !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr}`);
+  };
+  git("init", "-q", "-b", "main");
+  writeFileSync(join(repo, "f"), "x\n");
+  git("add", "f");
+  git("commit", "-q", "-m", "m");
+  const events = readFileSync(trace, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string; argv?: string[] });
+  // The trace is the commit's own: without its start line a count of zero would prove nothing.
+  expect(events.some((e) => e.event === "start" && e.argv?.includes("commit"))).toBe(true);
+  return events.filter((e) => e.event === "child_start" && e.argv?.includes("maintenance")).length;
+}
+
+test("2026-11-10-003 AC-4 (finding 228): in the tests' run a git commit starts no git maintenance, also under a global configuration that turns it on and with the system configuration skipped; with the run's variable taken away and git's defaults alone it starts one", () => {
+  expect(process.env[PARAMETERS]).toContain(NO_MAINTENANCE);
+  expect(maintenanceStarted(childEnv())).toBe(0);
+  const global = join(tempDir(), "gitconfig");
+  writeFileSync(global, "[maintenance]\n\tauto = true\n");
+  expect(
+    maintenanceStarted(childEnv({ GIT_CONFIG_GLOBAL: global, GIT_CONFIG_NOSYSTEM: "1" })),
+  ).toBe(0);
+  // The control: what git does by default, the developer's and the machine's configuration out of the way.
+  const bare = childEnv({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" });
+  delete bare[PARAMETERS];
+  delete bare.GIT_CONFIG_COUNT;
+  delete bare.GIT_CONFIG_NOSYSTEM;
+  expect(maintenanceStarted(bare)).toBe(1);
+});
+
+test("2026-11-10-003 AC-5: a run's entry adds maintenance.auto=false to GIT_CONFIG_PARAMETERS after what the variable held, and its leave puts the variable back as found, unset or set; an inner run's leave gives back the outer run's value", () => {
+  const home = tempDir();
+  const found = process.env[PARAMETERS];
+  try {
+    delete process.env[PARAMETERS];
+    const fromUnset = enterRunFolder(home);
+    try {
+      expect(process.env[PARAMETERS]).toBe(NO_MAINTENANCE);
+    } finally {
+      fromUnset.leave();
+    }
+    expect(process.env[PARAMETERS]).toBeUndefined();
+    const own = "'alias.zz=status'";
+    process.env[PARAMETERS] = own;
+    const outer = enterRunFolder(home);
+    let inner: ReturnType<typeof enterRunFolder> | undefined;
+    try {
+      const outerValue = `${own} ${NO_MAINTENANCE}`;
+      expect(process.env[PARAMETERS]).toBe(outerValue);
+      // git reads both: the value that was there and the run's.
+      const read = (key: string) =>
+        spawnSync("git", ["config", "--get", key], { encoding: "utf8", env: childEnv() }).stdout;
+      expect(read("alias.zz").trim()).toBe("status");
+      expect(read("maintenance.auto").trim()).toBe("false");
+      inner = enterRunFolder(home);
+      expect(process.env[PARAMETERS]).toBe(`${outerValue} ${NO_MAINTENANCE}`);
+      inner.leave();
+      expect(process.env[PARAMETERS]).toBe(outerValue);
+      // Once: a second leave of the inner run does not move the outer run's value.
+      inner.leave();
+      expect(process.env[PARAMETERS]).toBe(outerValue);
+    } finally {
+      inner?.leave();
+      outer.leave();
+    }
+    expect(process.env[PARAMETERS]).toBe(own);
+  } finally {
+    if (found === undefined) delete process.env[PARAMETERS];
+    else process.env[PARAMETERS] = found;
+  }
+});
+
 test("2026-11-10-002 AC-3: sweepDeadRuns removes the user's own run folders of dead pids and counts them; a live pid's, a kept one, another owner's, a link and its target, any other name and a folder it cannot remove all stay, and nothing is thrown", () => {
   const home = tempDir();
   const make = (name: string): string => {
