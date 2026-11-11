@@ -488,7 +488,11 @@ function boxFile(dir: string, name: "inbox" | "outbox" | "integrity"): string {
   return join(dir, `${name}.json`);
 }
 
-export function readBox(
+/**
+ * One read of a box and of its hash, for a caller that holds the mailbox's lock: under it no writer
+ * is between its two writes, so the two belong together. With no lock held, `readBox`.
+ */
+export function readBoxHeld(
   dir: string,
   which: "inbox" | "outbox",
 ): { box: Mailbox; tampered: boolean } {
@@ -500,6 +504,30 @@ export function readBox(
   const box: Mailbox =
     read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
   return { box, tampered: read.tampered };
+}
+
+/**
+ * A box read by a caller that holds no lock (finding 238). A box is two files, the box and its
+ * hash, and a writer holds the mailbox's lock over both writes: a read with no lock can meet the
+ * two apart and take a writer's moment for a hand's change. So a read that says `tampered` is made
+ * again under the mailbox's lock, where no writer is between its two writes and `tampered` means
+ * a hand. When the lock stays held past `waitMs` the first answer is kept and nothing is thrown:
+ * the callers are hooks and status lines as well as commands. A caller that holds the mailbox's
+ * lock reads with `readBoxHeld`: the lock is not re-entrant.
+ */
+export function readBox(
+  dir: string,
+  which: "inbox" | "outbox",
+  waitMs?: number,
+): { box: Mailbox; tampered: boolean } {
+  const first = readBoxHeld(dir, which);
+  if (!first.tampered) return first;
+  try {
+    return withMailLock(dir, () => readBoxHeld(dir, which), { waitMs });
+  } catch (error) {
+    if (!(error instanceof LockBusy)) throw error;
+    return first;
+  }
 }
 
 export function writeBox(dir: string, which: "inbox" | "outbox", box: Mailbox): void {
@@ -721,7 +749,7 @@ function appendToBox(
   return withMailLock(
     dir,
     (): Message | { refused: string } => {
-      const { box, tampered } = readBox(dir, which);
+      const { box, tampered } = readBoxHeld(dir, which);
       if (tampered) return { refused: tamperedBox(owner, which) };
       const message = build(box);
       box.messages.push(message);
@@ -910,7 +938,8 @@ export function send(
   // A destination inbox a hand changed takes nothing: refused before the message exists, and
   // before its sessions are counted from that inbox.
   const dest = mailbox(ctx.paths.userDir, entry.workspace, entry.name);
-  if (readBox(dest.dir, "inbox").tampered) return refuse(tamperedBox(entry.name, "inbox"), to);
+  if (readBox(dest.dir, "inbox", COMMAND_LOCK_WAIT_MS).tampered)
+    return refuse(tamperedBox(entry.name, "inbox"), to);
   // Where the message goes next.
   let delivery: Delivery;
   if (toSelf) delivery = { kind: "self" };
@@ -1097,9 +1126,9 @@ function recordInBox(
   skipped: (what: string) => void,
 ): Message | null {
   return withMailLock(dir, () => {
-    let read: ReturnType<typeof readBox>;
+    let read: ReturnType<typeof readBoxHeld>;
     try {
-      read = readBox(dir, which);
+      read = readBoxHeld(dir, which);
     } catch (error) {
       skipped(`${boxFile(dir, which)} (${(error as Error).message.split("\n")[0]})`);
       return null;
@@ -1122,8 +1151,12 @@ function recordInBox(
 // Receiving
 
 /** The messages addressed to this project and this agent (`session` reads what names no agent). */
-export function ownInbox(ctx: MailContext): { messages: Message[]; tampered: boolean } {
-  const { box, tampered } = readBox(
+export function ownInbox(
+  ctx: MailContext,
+  lock?: "held",
+): { messages: Message[]; tampered: boolean } {
+  // `held`: the caller holds this mailbox's lock (the sync), so the read takes none.
+  const { box, tampered } = (lock === "held" ? readBoxHeld : readBox)(
     mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir,
     "inbox",
   );
@@ -1416,6 +1449,7 @@ export function reply(
   const from: MailParty = options.as
     ? { ...party(ctx.self, original.to.item ?? original.from.item), agent: options.as }
     : party(ctx.self, original.to.item);
+  // The lock's own wait, the one this reply's writes take: a hook may be the caller.
   if (readBox(dest.dir, "inbox").tampered)
     return { refused: tamperedBox(original.from.project, "inbox") };
   const replyMessage = appendToBox(own.dir, "outbox", ctx.self.project, (outbox) => {
@@ -1496,9 +1530,12 @@ export function syncMail(
   // marker of what this agent was told about is written under it too (risk review, rounds 13 and 14).
   return withMailLock(own.dir, () => {
     let updated = 0;
-    const { box: outbox, tampered } = readBox(own.dir, "outbox");
+    // Every read of this pass is a held read: this lock is held throughout, and no second lock is
+    // taken inside it. A receiver's inbox read while its writer is between its two writes says
+    // `tampered` and is skipped until the next sync.
+    const { box: outbox, tampered } = readBoxHeld(own.dir, "outbox");
     // Each receiver's inbox read once for the pass, however many messages went to it.
-    const inboxes = new Map<string, ReturnType<typeof readBox>>();
+    const inboxes = new Map<string, ReturnType<typeof readBoxHeld>>();
     if (!tampered) {
       for (const sent of outbox.messages) {
         if (sent.status === "refused") continue;
@@ -1507,7 +1544,7 @@ export function syncMail(
         const theirsDir = entry
           ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir
           : own.dir;
-        const inbox = inboxes.get(theirsDir) ?? readBox(theirsDir, "inbox");
+        const inbox = inboxes.get(theirsDir) ?? readBoxHeld(theirsDir, "inbox");
         inboxes.set(theirsDir, inbox);
         if (inbox.tampered) continue;
         const theirs = inbox.box.messages.find((m) => m.id === sent.id);
@@ -1519,7 +1556,7 @@ export function syncMail(
       }
       if (updated) writeBox(own.dir, "outbox", outbox);
     }
-    const inbox = ownInbox(ctx);
+    const inbox = ownInbox(ctx, "held");
     if (inbox.tampered) return { newMail: [], updated, tampered: true };
     // What this agent has already been told about, so a hook names each arrival once.
     const marker = join(own.dir, `synced-${ctx.self.agent}.json`);

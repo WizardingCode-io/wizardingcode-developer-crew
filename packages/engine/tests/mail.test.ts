@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
+import { sleep } from "../src/lock.ts";
 import {
   acceptMail,
   checkContracts,
@@ -35,6 +36,7 @@ import {
   priorityOf,
   pruneRegistry,
   readBox,
+  readBoxHeld,
   readEvidence,
   refuseMail,
   registerProject,
@@ -42,6 +44,7 @@ import {
   resolveProject,
   send,
   syncMail,
+  tamperedBox,
   threadOf,
   threadParties,
   transition,
@@ -1656,3 +1659,133 @@ test("DEBT-AC-10-own-busy: a record pass that cannot write this project's own co
   ).toBe("done");
   expect(copy()?.status).toBe("sent");
 }, 20_000);
+
+test("2026-11-11-004 AC-1: a send that meets a writer between its write of the inbox and its write of the hash waits for the mailbox's lock and is delivered", async () => {
+  const w = workspace();
+  // One message first: a box with no recorded hash is trusted on first use, and would hide the window.
+  const first = send(w.a.ctx, { to: "crm", type: "notice", text: "first" }, null);
+  if ("refused" in first) throw new Error(first.refused);
+  const box = mailbox(w.b.paths.userDir, "shop", "crm");
+  const lock = join(box.dir, ".lock");
+  const dir = tempDir("crew-window-");
+  const marker = join(dir, "about-to-send");
+  const script = join(dir, "sender.ts");
+  // The child's own environment, in its source: named from parts, as the two-writer row names it.
+  const PE = ["process", "env"].join(".");
+  writeFileSync(
+    script,
+    `import { writeFileSync } from "node:fs";
+import { mailContext, send } from "${join(import.meta.dir, "../src/mail.ts")}";
+import { loadPolicy } from "${join(import.meta.dir, "../src/policy.ts")}";
+import { resolvePaths } from "${join(import.meta.dir, "../src/paths.ts")}";
+const paths = resolvePaths(process.argv[2]!, ${PE})!;
+const ctx = mailContext(paths, loadPolicy(paths).policy, ${PE});
+writeFileSync(process.argv[3]!, "");
+const started = Date.now();
+const out = send(ctx, { to: "crm", type: "notice", text: "through the window" }, null);
+console.log(JSON.stringify({ refused: "refused" in out ? out.refused : null, ms: Date.now() - started }));
+`,
+  );
+  const env = { ...childEnv(), WIZARDINGCODE_HOME: w.env.WIZARDINGCODE_HOME ?? "" };
+  let child: ReturnType<typeof Bun.spawn> | null = null;
+  withMailLock(box.dir, () => {
+    // What a writer leaves between its two writes: the inbox with one more message, the hash of the one before.
+    // Read as a holder of the lock reads: `readBox` would ask for the lock this row holds.
+    const widened = readBoxHeld(box.dir, "inbox").box;
+    widened.messages.push({
+      ...(widened.messages[0] as Message),
+      id: "M-2026-11-11-998-storefront",
+    });
+    writeFileSync(join(box.dir, "inbox.json"), `${JSON.stringify(widened, null, 2)}\n`);
+    expect(readBoxHeld(box.dir, "inbox").tampered).toBe(true);
+    child = Bun.spawn(["bun", "run", script, w.a.root, marker], {
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // The child says when its send is the next line; the lock is kept fresh so the stale rule never takes it.
+    const waited = Date.now();
+    while (!existsSync(marker)) {
+      if (Date.now() - waited > 8_000) throw new Error("the child never reached its send");
+      utimesSync(lock, new Date(), new Date());
+      sleep(20);
+    }
+    // Held while the child's send reads the two files apart, then the writer's second write. A
+    // second and a half: the child's read is a few lines after its marker, and under the suite's
+    // load those lines can take most of a second; its own wait for the lock is ten.
+    utimesSync(lock, new Date(), new Date());
+    sleep(1_500);
+    writeBox(box.dir, "inbox", widened);
+  });
+  const sender = child as unknown as {
+    exited: Promise<number>;
+    stdout: ReadableStream;
+    stderr: ReadableStream;
+  };
+  const [code, stdout, stderr] = await Promise.all([
+    sender.exited,
+    new Response(sender.stdout).text(),
+    new Response(sender.stderr).text(),
+  ]);
+  expect(code === 0 ? 0 : `exit ${code}: ${stderr}`).toBe(0);
+  const said = JSON.parse(stdout.trim()) as { refused: string | null; ms: number };
+  expect(said.refused).toBeNull();
+  // It waited for the lock: a child that read after the second write would have answered at once.
+  expect(said.ms).toBeGreaterThanOrEqual(400);
+  const inbox = readBox(box.dir, "inbox");
+  expect(inbox.tampered).toBe(false);
+  expect(inbox.box.messages).toHaveLength(3);
+  expect(JSON.stringify(inbox.box.messages)).toContain("through the window");
+}, 60_000);
+
+test("2026-11-11-004 AC-5: a box a hand changed is still refused and left as it is, with no wait for a lock, in a send, in a send from a changed outbox and in a sync; a lock held past the wait leaves the read's first answer", () => {
+  const w = workspace();
+  const crmDir = mailbox(w.b.paths.userDir, "shop", "crm").dir;
+  const ownDir = mailbox(w.a.paths.userDir, "shop", "storefront").dir;
+  // Each box holds a message of the engine's, so each has a recorded hash.
+  for (const out of [
+    send(w.a.ctx, { to: "crm", type: "notice", text: "one" }, null),
+    send(w.b.ctx, { to: "storefront", type: "notice", text: "two" }, null),
+  ])
+    if ("refused" in out) throw new Error(out.refused);
+  // Under the two seconds a hook waits for a lock: a read that waited for one fails the bound.
+  const bound = 1500;
+  const timed = <T>(fn: () => T): { out: T; ms: number } => {
+    const started = Date.now();
+    const out = fn();
+    return { out, ms: Date.now() - started };
+  };
+  const byHand = (file: string): string => {
+    const forged = `${readFileSync(file, "utf8")} `;
+    writeFileSync(file, forged);
+    return forged;
+  };
+  // The receiver's inbox, a byte appended with no lock held.
+  const inboxFile = join(crmDir, "inbox.json");
+  const forgedInbox = byHand(inboxFile);
+  const toForged = timed(() => send(w.a.ctx, { to: "crm", type: "notice", text: "three" }, null));
+  expect(toForged.out).toMatchObject({ refused: tamperedBox("crm", "inbox") });
+  expect(toForged.ms).toBeLessThan(bound);
+  expect(readFileSync(inboxFile, "utf8")).toBe(forgedInbox);
+  // The mailbox's lock held by another, fresh, past the wait: the first answer, after the wait, nothing thrown.
+  const lock = join(crmDir, ".lock");
+  mkdirSync(lock);
+  const busy = timed(() => readBox(crmDir, "inbox", 300));
+  rmdirSync(lock);
+  expect(busy.out.tampered).toBe(true);
+  expect(busy.ms).toBeGreaterThanOrEqual(300);
+  expect(busy.ms).toBeLessThan(bound);
+  // The sync of a project whose own inbox a hand changed: it holds its own lock and waits for none.
+  const forgedOwn = byHand(join(ownDir, "inbox.json"));
+  const synced = timed(() => syncMail(w.a.ctx, w.a.paths));
+  expect(synced.out.tampered).toBe(true);
+  expect(synced.out.newMail).toEqual([]);
+  expect(synced.ms).toBeLessThan(bound);
+  expect(readFileSync(join(ownDir, "inbox.json"), "utf8")).toBe(forgedOwn);
+  // The sender's own outbox, changed by hand: refused under its own lock, nothing recorded.
+  const forgedOutbox = byHand(join(ownDir, "outbox.json"));
+  const fromForged = timed(() => send(w.a.ctx, { to: "crm", type: "notice", text: "four" }, null));
+  expect(fromForged.out).toEqual({ refused: tamperedBox("storefront", "outbox"), message: null });
+  expect(fromForged.ms).toBeLessThan(bound);
+  expect(readFileSync(join(ownDir, "outbox.json"), "utf8")).toBe(forgedOutbox);
+});

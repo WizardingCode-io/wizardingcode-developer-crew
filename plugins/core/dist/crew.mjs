@@ -10365,13 +10365,25 @@ function mailbox(userDir, workspace, project) {
 function boxFile(dir, name) {
   return join26(dir, `${name}.json`);
 }
-function readBox(dir, which) {
+function readBoxHeld(dir, which) {
   const file = boxFile(dir, which);
   if (existsSync14(file))
     accessSync(file, constants2.R_OK);
   const read = readProtectedJsonAt(boxFile(dir, "integrity"), file);
   const box = read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
   return { box, tampered: read.tampered };
+}
+function readBox(dir, which, waitMs) {
+  const first = readBoxHeld(dir, which);
+  if (!first.tampered)
+    return first;
+  try {
+    return withMailLock(dir, () => readBoxHeld(dir, which), { waitMs });
+  } catch (error) {
+    if (!(error instanceof LockBusy))
+      throw error;
+    return first;
+  }
 }
 function writeBox(dir, which, box) {
   writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
@@ -10496,7 +10508,7 @@ function tamperedBox(owner, which) {
 }
 function appendToBox(dir, which, owner, build, waitMs) {
   return withMailLock(dir, () => {
-    const { box, tampered } = readBox(dir, which);
+    const { box, tampered } = readBoxHeld(dir, which);
     if (tampered)
       return { refused: tamperedBox(owner, which) };
     const message = build(box);
@@ -10628,7 +10640,7 @@ function send(ctx, request, work) {
   if (!request.replyTo && self.hops >= rules.maxHops && self.openedBy)
     return refuse(`this session is ${self.hops} hops from the first message and ${entry.name} allows ${rules.maxHops} (mail.maxHops); only a reply may go out`, to);
   const dest = mailbox(ctx.paths.userDir, entry.workspace, entry.name);
-  if (readBox(dest.dir, "inbox").tampered)
+  if (readBox(dest.dir, "inbox", COMMAND_LOCK_WAIT_MS).tampered)
     return refuse(tamperedBox(entry.name, "inbox"), to);
   let delivery;
   if (toSelf)
@@ -10744,7 +10756,7 @@ function recordInBox(dir, which, id, change, skipped) {
   return withMailLock(dir, () => {
     let read;
     try {
-      read = readBox(dir, which);
+      read = readBoxHeld(dir, which);
     } catch (error) {
       skipped(`${boxFile(dir, which)} (${error.message.split(`
 `)[0]})`);
@@ -10764,8 +10776,8 @@ function recordInBox(dir, which, id, change, skipped) {
     return changed;
   });
 }
-function ownInbox(ctx) {
-  const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox");
+function ownInbox(ctx, lock) {
+  const { box, tampered } = (lock === "held" ? readBoxHeld : readBox)(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox");
   const mine = box.messages.filter((m) => (m.to.agent ?? "session") === ctx.self.agent);
   return {
     messages: mine.sort((a, b) => priorityRank(decidedPriority(a)) - priorityRank(decidedPriority(b)) || a.at.localeCompare(b.at)),
@@ -10993,7 +11005,7 @@ function syncMail(ctx, paths) {
   const registry = loadRegistry(ctx.paths.userDir);
   return withMailLock(own.dir, () => {
     let updated = 0;
-    const { box: outbox, tampered } = readBox(own.dir, "outbox");
+    const { box: outbox, tampered } = readBoxHeld(own.dir, "outbox");
     const inboxes = new Map;
     if (!tampered) {
       for (const sent of outbox.messages) {
@@ -11001,7 +11013,7 @@ function syncMail(ctx, paths) {
           continue;
         const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
         const theirsDir = entry ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir : own.dir;
-        const inbox = inboxes.get(theirsDir) ?? readBox(theirsDir, "inbox");
+        const inbox = inboxes.get(theirsDir) ?? readBoxHeld(theirsDir, "inbox");
         inboxes.set(theirsDir, inbox);
         if (inbox.tampered)
           continue;
@@ -11015,7 +11027,7 @@ function syncMail(ctx, paths) {
       if (updated)
         writeBox(own.dir, "outbox", outbox);
     }
-    const inbox = ownInbox(ctx);
+    const inbox = ownInbox(ctx, "held");
     if (inbox.tampered)
       return { newMail: [], updated, tampered: true };
     const marker = join26(own.dir, `synced-${ctx.self.agent}.json`);

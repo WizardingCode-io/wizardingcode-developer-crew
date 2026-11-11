@@ -84,10 +84,11 @@ function openFindings(text: string): number[] {
 // 235 fixed by 2026-11-11-001, which settled eight of 233's ten advisories.
 // 233 fixed by 2026-11-11-002 with the user's two decisions (the class of a not-judged cause; a run not ruled named for a person).
 // 236 (a document reviewer's whole answer refused for one off-shape line) and 237 (what 2026-11-11-002's delivery left) recorded by 2026-11-11-003,
-// with 238 (the mail lock row's one failure in a whole-suite run, not traced).
+// with 238 (the mail lock row's one failure in a whole-suite run).
+// 238 fixed by 2026-11-11-004 (a read of a box with no lock between a writer's two writes), which recorded 239 (the same window in the repository's own store).
 const OPEN = [
   77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 236, 237,
-  238,
+  239,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -304,7 +305,7 @@ test("2026-11-11-003 AC-1: findings 236 and 237 are recorded with their date, wh
   expect(sectionIn(text, 237)).toContain("docs/improve/README.md");
 });
 
-test("2026-11-11-003 AC-2: finding 238 records the one failure of the mail lock row with its words, the run it failed in and the runs it passed in, and reads open", () => {
+test("2026-11-11-003 AC-2: finding 238 records the one failure of the mail lock row with its words, the run it failed in and the runs it passed in", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const section = sectionIn(text, 238);
   for (const said of [
@@ -316,8 +317,36 @@ test("2026-11-11-003 AC-2: finding 238 records the one failure of the mail lock 
     "passed in the four gate runs",
     "Finding 168",
     "- Expected:",
-    "not traced",
   ])
     expect(section, said).toContain(said);
-  expect(openFindings(text)).toContain(238);
+  // Whether 238 reads open or fixed is not this row's to say: the row of the item that fixed it asserts the outcome.
+});
+
+test("2026-11-11-004 AC-4: finding 238 reads fixed with its cause and the measure, and finding 239 records the same window in the repository's own store, open", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionIn(text, n))?.[1]?.trim() ?? "";
+  expect(outcomeOf(238)).toStartWith("fixed in 2026-11-11-004");
+  for (const said of [
+    "no lock",
+    "its hash",
+    "readBoxHeld",
+    "five",
+    "10 800",
+    "probes/window.md",
+    "probes/after.md",
+  ])
+    expect(outcomeOf(238), said).toContain(said);
+  expect(openFindings(text)).not.toContain(238);
+  const store = sectionIn(text, 239);
+  for (const said of [
+    "- Date: 2026-11-11.",
+    "2026-11-11-004",
+    "state changed outside the engine",
+    "writeProtectedText",
+    "packages/engine/src/store.ts",
+    "- Expected:",
+  ])
+    expect(store, said).toContain(said);
+  expect(store).toMatch(/\n- What happened: \S.{20,}/);
+  expect(openFindings(text)).toContain(239);
 });
