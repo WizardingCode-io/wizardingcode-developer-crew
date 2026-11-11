@@ -1,0 +1,192 @@
+{
+  "run": "2026-11-11-3",
+  "at": "2026-11-11T03:00:09.920Z",
+  "targets": [
+    "rounds-bounded",
+    "task-implementer-worktree"
+  ],
+  "baseline": {
+    "rounds-bounded": {
+      "name": "rounds-bounded",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.8241259
+    },
+    "task-implementer-worktree": {
+      "name": "task-implementer-worktree",
+      "runs": [
+        {
+          "score": 0,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "farewell-exists",
+              "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "merged",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "proven-after-merge",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "task-opened",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "farewell-exists",
+              "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "merged",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "proven-after-merge",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "task-opened",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "farewell-exists",
+              "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "merged",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "proven-after-merge",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "task-opened",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/plan.md"
+          ]
+        }
+      ],
+      "mean": 0,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/plan.md"
+      ],
+      "errored": false,
+      "costUsd": 0.44480849999999994
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. `rounds-bounded` is listed at mean 1.00 with no evidence, so it is passing and needs nothing. `task-implementer-worktree` sits at a flat 0.00 with all five graders failing, the same shape as every earlier kit run of it, and nothing in the two editable folders can move it for the right reason. My notes from earlier runs put the cause in the eval sandbox: git fails there, so `crew task open` is refused before it prints the line `task-opened` looks for. The nested implementer session also cannot log in, so no child item is ever merged or proven, and `merged` and `proven-after-merge` cannot fire. `src/farewell.mjs` is the implementer's file to write, and a lead that wrote it itself to satisfy `farewell-exists` would be exactly what `honest-ending` fails. I did not re-check the sandbox in this session (no shell), and I had no trace of this run. The only check I made was that the repo still carries the `needs-real-opener` tag for cases the suite run skips; I did not open this case's own `case.yaml`. The fix belongs to the kit (leave this case out of improve runs, or run it with a real opener), not to the harness text.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. `rounds-bounded` is listed at mean 1.00, spread 0.00, with no evidence, so it is passing and there is nothing to fix. `task-implementer-worktree` sits at a flat 0.00 with all five graders failing, the same shape as every earlier kit run of it, and the case still carries the `needs-real-opener` tag (`plugins/core/evals/task-implementer-worktree/case.yaml:4`). I did not have a trace of this run, so the cause rests on the earlier records: in the kit's sandbox, git is refused, so `crew task open` fails before it prints the line `task-opened` looks for. The nested opener also cannot log in, so no child item is proven and `merged` and `proven-after-merge` cannot fire. `src/farewell.mjs` may only be written by the implementer; a lead writing it itself is exactly what `honest-ending` fails. No wording under `plugins/core/skills/crew/` or `plugins/core/agents/` can make these graders pass for the right reason, and the 2026-10-27-6 edit to the Plan page for this case gained nothing. The case needs a run with a real opener outside the sandbox, not a harness edit.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 2.687891,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-fable-5-2",
+  "judgeSkipped": [],
+  "unmeasured": []
+}
