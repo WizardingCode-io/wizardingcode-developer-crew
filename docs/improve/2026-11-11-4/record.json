@@ -1,0 +1,152 @@
+{
+  "run": "2026-11-11-4",
+  "at": "2026-11-11T04:00:10.001Z",
+  "targets": [
+    "pack-frontend-absent",
+    "team-by-route"
+  ],
+  "baseline": {
+    "pack-frontend-absent": {
+      "name": "pack-frontend-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/screen.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/screen.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 4.4835615
+    },
+    "team-by-route": {
+      "name": "team-by-route",
+      "runs": [
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "validations-recorded",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "validations-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "validators-exist",
+              "explanation": "grader threw: case \"team-by-route\" grader focus file \"src/validation.mjs\": path \"src/validation.mjs\" does not exist"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "validations-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "validators-exist",
+              "explanation": "grader threw: case \"team-by-route\" grader focus file \"src/validation.mjs\": path \"src/validation.mjs\" does not exist"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.7222222222222222,
+      "spread": 0.16666666666666674,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 3.0586252
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file under `plugins/core/skills/crew/` or `plugins/core/agents/`: the evidence doesn't single out a harness cause for `team-by-route`, and nothing was run in this session (no shell). `pack-frontend-absent` is at mean 1.00 with evidence `none`, so it is passing. For `team-by-route`, the two listed failures are `validations-recorded` (it wants `lead-qa: validated` and then `lead-security: validated` in the trace) and `validators-exist` (`src/validation.mjs` was never written). The team-line graders and `honest-ending` are not listed, so the lead seated the team and ended with an honest message. My inference, with no trace to confirm it, is that the item stopped before Plan rather than being cut by the budget. The most likely cause is a lead returning the spec until the two-round validation cap, where the continuation is the user's and nobody is present; a decision opened for the request's stated \"Decisions:\" is the other candidate. The case scored 1.00 ×3 on 2026-11-04, and the 2026-10-27-6 edits made from inferred causes on this same case were dropped as lose and inconclusive, so another untraced edit would be a guess. The next step is a trace of a failing run: look for `validation of spec by lead-…: returned` and the `validation round 3 … the policy allows 2` refusal. If the leads are returning a two-function refactor's spec, the lever is `plugins/core/agents/tech-lead.md` or the standard-route spec template, not the skill page. I saved this analysis to memory for the next run.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing in this run. `pack-frontend-absent` is listed at mean 1.00 with no evidence, so it is passing and needs no edit. For `team-by-route`, the evidence is the same as in the earlier run today: `validations-recorded` did not match and `src/validation.mjs` was never written, while the team lines and the honest ending are not listed as failing. That fits an item that stopped before Plan, most likely on a lead's `returned` at the validation-round cap or on a decision opened with nobody present, but that is inferred. There is still no trace of the failing runs in `docs/improve/`; the only recent record naming the case lists it in an unprobed set. The case scored 1.00 three times on 2026-11-04 with the leads'-validation text reading as it does now, and the 2026-10-27-6 edits made from inferred causes were dropped as lose or inconclusive. With nothing on the pages singled out, another guessed edit would not be a fix for the right reason. The next step is a trace of a failing run, checked first for `validation of spec by lead-…: returned` and `validation round 3 of …: the policy allows 2`.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 10.344744900000002,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-fable-5-2",
+  "judgeSkipped": [],
+  "unmeasured": []
+}
