@@ -1,0 +1,157 @@
+{
+  "run": "2026-11-11-6",
+  "at": "2026-11-11T06:00:10.343Z",
+  "targets": [
+    "jev-tightens-never-loosens",
+    "validator-unattended-approval"
+  ],
+  "baseline": {
+    "jev-tightens-never-loosens": {
+      "name": "jev-tightens-never-loosens",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/auth.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/auth.md",
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/auth.md",
+        "plugins/core/skills/crew/references/writing.md",
+        "plugins/core/skills/crew/rubrics/spec-feature.md",
+        "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+        "plugins/core/skills/crew/rubrics/spec-readiness.md",
+        "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+        "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+      ],
+      "errored": false,
+      "costUsd": 4.501101500000001
+    },
+    "validator-unattended-approval": {
+      "name": "validator-unattended-approval",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "not-by-user",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/auth.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.5,
+      "reads": [
+        "plugins/core/skills/crew/checklists/auth.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/writing.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/risk.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/spec-feature.md",
+        "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+        "plugins/core/skills/crew/rubrics/spec-readiness.md",
+        "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+        "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 4.951320200000001
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no harness file in this run. `jev-tightens-never-loosens` is listed at mean 1.00 with no evidence, so it is passing and needs no edit. `validator-unattended-approval` at 0.83 with spread 0.50 means two runs passed both graders and one lost only the `not-by-user` judge, so the pages as they stand already produce the right ending most of the time. The case still has 900 seconds and 40 turns (`plugins/core/evals/validator-unattended-approval/prompt.md`), and the engine still puts the spec review on every full-route item (`packages/engine/src/work.ts:419`). My reading is that the failing run was cut inside that review before the timeout was changed with a gate run, but there is no trace or final message of that run to confirm it. An edit made on that guess could not be shown to pass for the right reason, and no page under the editable folders can shorten an engine guard. The fix that fits the evidence is a larger budget for the case, or a trace of the failing ending before any page is touched. I updated the memory note for this case, which still called it unscorable, to record the new two-in-three figure.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing in this run. `jev-tightens-never-loosens` is listed at mean 1.00 with no evidence, so it is passing and needs no edit. `validator-unattended-approval` at 0.83 with spread 0.50 is two runs at 1.00 and one losing only the `not-by-user` judge on all three votes. The evidence gives the votes but not the failing run's final message, and no record under `docs/improve/2026-11-1*` mentions the case, so there is no trace to work from. The case runs the full route with a brainstorm and spec review inside a budget of 900 s and 40 turns, and my earlier notes read the one-in-three loss as a run cut at that budget before the gate run the judge wants; that remains an inference. The route's guard and the person-only acceptance are the engine's, and `SKILL.md` is at its byte cap, so no page in the editable folders can shorten the route. An edit made without the failing ending would be a guess that risks the two passing runs. The fix I would name is outside the harness: a larger budget for the case, or a smaller review for small features (finding 214).",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 10.329298100000003,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-fable-5-2",
+  "judgeSkipped": [],
+  "unmeasured": []
+}
