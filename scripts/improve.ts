@@ -33,6 +33,7 @@ import { scanText } from "../packages/engine/src/secrets.ts";
 import {
   acceptedReadPaths,
   armRuns,
+  type CauseClass,
   chooseJudge,
   createRunFolder,
   evalInvocation,
@@ -68,8 +69,8 @@ export interface RunFigures {
   failing: FailingGrader[];
   /** The plugin files the run read, repository-relative; null when its trace could not be read. */
   reads: string[] | null;
-  /** The cause of the run's first grader that was not judged (2026-11-09-004); absent when every grader was. */
-  unjudged?: string;
+  /** The class of the cause of the run's first grader that was not judged (2026-11-09-004; the class alone since 2026-11-11-002); absent when every grader was. */
+  unjudged?: CauseClass;
 }
 
 export interface CaseFigures {
@@ -156,15 +157,42 @@ export function pluginRelative(paths: readonly string[], pluginRoots: readonly s
   return [...out].sort();
 }
 
-/** A not-judged cause as the record keeps it (2026-11-09-004 AC-30): withheld whole when it holds a secret's shape, as the editor's rationale is. */
-export function causeOf(cause: string): string {
-  const secret = scanText(cause, "cause")[0];
+/**
+ * A not-judged cause as the log keeps it (2026-11-09-004 AC-30, 2026-11-11-002): withheld whole
+ * when it holds a secret's shape, as the editor's rationale is. The scan reads `whole`, the text
+ * before its cut, so a secret the cut divides is still seen. No published file holds the cause.
+ */
+export function causeOf(cause: string, whole: string): string {
+  const secret = scanText(whole, "cause")[0];
   return secret ? `withheld: the cause held a secret (${secret.rule})` : cause;
 }
 
-/** The cause of a case's first run that was not judged, or null when every run was. */
-export function unjudgedCause(figures: Pick<CaseFigures, "runs">): string | null {
+/** The class of the cause of a case's first run that was not judged, or null when every run was. */
+export function unjudgedClass(figures: Pick<CaseFigures, "runs">): CauseClass | null {
   return figures.runs.find((r) => r.unjudged !== undefined)?.unjudged ?? null;
+}
+
+/** The runs of a case's `with` arm in the kit's result; none when the case or the arm is missing. */
+function caseRuns(result: unknown, name: string): unknown[] {
+  const cases = (result as { cases?: unknown } | null)?.cases;
+  const found = Array.isArray(cases)
+    ? (cases as { name?: unknown; arms?: { with?: unknown } }[]).find((c) => c?.name === name)
+    : undefined;
+  const runs = found?.arms?.with;
+  return Array.isArray(runs) ? runs : [];
+}
+
+/**
+ * One line per run of a case that was not judged, for the log alone (2026-11-11-002, D-1): the
+ * first grader not judged and its bounded cause, which the published figures no longer hold.
+ */
+export function unjudgedLogLines(result: unknown, name: string): string[] {
+  return caseRuns(result, name).flatMap((run, i) => {
+    const [first] = unjudgedGraders(run);
+    if (!first) return [];
+    const cause = causeOf(first.cause, first.whole);
+    return [`${name} run ${i + 1} was not judged: ${first.grader}: ${cause}`];
+  });
 }
 
 /**
@@ -179,12 +207,8 @@ export function caseFigures(
   readLines: (tracePath: string) => string[] | null,
   pluginRoots: readonly string[],
 ): CaseFigures | null {
-  const cases = (result as { cases?: unknown } | null)?.cases;
-  const found = Array.isArray(cases)
-    ? (cases as { name?: unknown; arms?: { with?: unknown } }[]).find((c) => c?.name === name)
-    : undefined;
-  const runs = found?.arms?.with;
-  if (!Array.isArray(runs) || !runs.length) return null;
+  const runs = caseRuns(result, name);
+  if (!runs.length) return null;
   const figures: RunFigures[] = runs.map((r) => {
     const run = r as {
       score?: unknown;
@@ -206,7 +230,7 @@ export function caseFigures(
         )
         .map((g) => ({ grader: String(g.name), explanation: String(g.explanation ?? "") })),
       reads: lines === null ? null : pluginRelative(acceptedReadPaths(lines), pluginRoots),
-      ...(unjudged[0] ? { unjudged: causeOf(unjudged[0].cause) } : {}),
+      ...(unjudged[0] ? { unjudged: unjudged[0].class } : {}),
     };
   });
   const notJudged = figures.some((f) => f.unjudged !== undefined);
@@ -391,9 +415,9 @@ export function verdictOf(
     else if (after.errored) reasons.push(`${name}'s probe errored`);
     // A run not judged can never read as a win or a loss (2026-11-09-004).
     else if (before.unjudged)
-      reasons.push(`${name}'s baseline was not judged (${unjudgedCause(before)})`);
+      reasons.push(`${name}'s baseline was not judged (${unjudgedClass(before)})`);
     else if (after.unjudged)
-      reasons.push(`${name}'s probe was not judged (${unjudgedCause(after)})`);
+      reasons.push(`${name}'s probe was not judged (${unjudgedClass(after)})`);
   }
   if (reasons.length) return { verdict: "inconclusive", reasons };
   let win = true;
@@ -944,6 +968,7 @@ function measure(r: Run, tree: string, name: string): CaseFigures {
       join(tree, "plugins/core"),
       ...plugins.map((p) => p?.path).filter((p): p is string => typeof p === "string"),
     ];
+    for (const line of unjudgedLogLines(out.result, name)) r.deps.log(line);
     const figures = caseFigures(out.result, name, readLines, roots);
     if (!figures) throw new Stop(3);
     if (typeof cost === "number") figures.costUsd = cost;
@@ -977,7 +1002,7 @@ function baselineOf(r: Run, name: string): CaseFigures {
  */
 function stopIfUnjudged(r: Run, figures: CaseFigures, side: "baseline" | "probe"): void {
   if (!figures.unjudged) return;
-  r.deps.log(`${figures.name}'s ${side} was not judged (${unjudgedCause(figures)}): the run stops`);
+  r.deps.log(`${figures.name}'s ${side} was not judged (${unjudgedClass(figures)}): the run stops`);
   throw new Stop(6);
 }
 
@@ -1360,6 +1385,19 @@ export function lessonAdder(
   };
 }
 
+/** The environment of a call the script makes for the kit, its judge probe included: one way to build both. */
+function callEnvironment(
+  invocation: { env: Record<string, string>; path: string },
+  call: Record<string, string | undefined> | undefined,
+): Record<string, string> {
+  return kitCallEnvironment({
+    process: process.env,
+    call,
+    runner: invocation.env,
+    path: invocation.path,
+  });
+}
+
 /** The deps of a real run in a checkout: the kit and the editor through `claude`, git, the crew command, the base and the last CTO plan; exported for the loop (2026-10-25-005). */
 export function realDeps(root: string): RealImproveDeps {
   const userDir = userDirOf(process.env);
@@ -1395,11 +1433,7 @@ export function realDeps(root: string): RealImproveDeps {
         path: process.env.PATH ?? "",
         realGitDir: realGitDir(process.platform),
       });
-      return probeJudge(
-        call.model,
-        kitCallEnvironment({ process: process.env, call: call.env, runner: env, path }),
-        root,
-      );
+      return probeJudge(call.model, callEnvironment({ env, path }, call.env), root);
     },
     git: realGit,
     kit: (call) => {
@@ -1424,7 +1458,7 @@ export function realDeps(root: string): RealImproveDeps {
       const r = spawnSync("claude", args, {
         cwd: call.tree,
         stdio: "inherit",
-        env: kitCallEnvironment({ process: process.env, call: call.env, runner: env, path }),
+        env: callEnvironment({ env, path }, call.env),
       });
       return { status: r.status, result: readJson<unknown>(join(folder, "result.json")) };
     },

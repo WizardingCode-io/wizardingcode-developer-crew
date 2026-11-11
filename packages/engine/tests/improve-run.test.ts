@@ -1156,10 +1156,8 @@ test("2026-11-09-004 AC-35: a run stops at its first measurement with a run not 
     kept: null,
   });
   expect(first.baseline.t.unjudged).toBe(true);
-  expect(first.baseline.t.runs[0].unjudged).toBe("You've reached your Fable limit.");
-  expect(baseline.seen.log).toContain(
-    "t's baseline was not judged (You've reached your Fable limit.): the run stops",
-  );
+  expect(first.baseline.t.runs[0].unjudged).toBe("limited");
+  expect(baseline.seen.log).toContain("t's baseline was not judged (limited): the run stops");
   expect(worktrees(root)).toBe(1);
   // The limit met at a proposal's probe: the baseline is judged, the probe is not, nothing follows.
   const second = fixture();
@@ -1175,4 +1173,22 @@ test("2026-11-09-004 AC-35: a run stops at its first measurement with a run not 
   expect(stopped.proposals).toHaveLength(1);
   expect(stopped.proposals[0]).toMatchObject({ status: "inconclusive", verdict: "inconclusive" });
   expect(stopped.proposals[0].probe.t.unjudged).toBe(true);
+});
+
+test("2026-11-11-002 AC-13: a run whose grader was not judged publishes the class alone: no file of its folder holds the cause's text, and the log holds one line with it", async () => {
+  const { root, tmp } = fixture();
+  const run = deps(root, tmp, { kit: (call) => unjudgedResult(call) });
+  expect(await runImprove({ cases: ["t"], proposals: 2 }, run.deps)).toBe(6);
+  const folder = join(root, "docs/improve");
+  const files = (readdirSync(folder, { recursive: true }) as string[])
+    .map((name) => join(folder, name))
+    .filter((path) => statSync(path).isFile());
+  expect(files.some((path) => path.endsWith("record.json"))).toBe(true);
+  expect(files.some((path) => path.endsWith("record.md"))).toBe(true);
+  for (const path of files) expect(readFileSync(path, "utf8"), path).not.toContain("reached your");
+  const json = files.find((path) => path.endsWith("record.json")) as string;
+  expect(readFileSync(json, "utf8")).toContain('"unjudged": "limited"');
+  expect(run.seen.log.filter((line) => line.includes("reached your"))).toEqual([
+    "t run 1 was not judged: honest-ending: You've reached your Fable limit.",
+  ]);
 });

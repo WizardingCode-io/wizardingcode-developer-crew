@@ -22,6 +22,7 @@ import {
   type ProbeAnswer,
 } from "../../../scripts/eval.ts";
 import {
+  ADOPT_BY_HAND,
   adoptionGate,
   adoptRun,
   backoffHours,
@@ -39,6 +40,7 @@ import {
   lastMeasuredOf,
   launchdPlist,
   launcherScript,
+  notRuledReason,
   parseRuling,
   pauseLoop,
   pickTargets,
@@ -58,6 +60,7 @@ import {
   tick,
   tickNotification,
   uninstall,
+  unjudgedAtLimit,
   validLock,
   verdictText,
   writeRedacted,
@@ -803,6 +806,8 @@ function tickDeps(
     unjudged?: string;
     /** The adoption's judge probe answers this for a model, in place of `ok` (2026-11-09-004 AC-36). */
     probe?: (model: string) => ProbeAnswer;
+    /** A path the run's kept commit also writes (2026-11-11-002 AC-32): one outside the harness fails the adoption gate. */
+    keptAlso?: string;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
   const seen: Seen = {
@@ -931,6 +936,12 @@ function tickDeps(
       if (options.kept) {
         git(repo, "checkout", "-q", "-b", record.branch as string);
         writeFileSync(join(repo, "plugins/core/skills/crew/SKILL.md"), "# Crew\n\nBetter.\n");
+        if (options.keptAlso) {
+          mkdirSync(join(repo, dirname(options.keptAlso)), { recursive: true });
+          writeFileSync(join(repo, options.keptAlso), "export {};\n");
+          // That path alone: the run's record folder is not the branch's to carry.
+          git(repo, "add", options.keptAlso);
+        }
         git(repo, "commit", "-q", "-am", `Improvement run ${record.run}: P-1`);
         git(repo, "checkout", "-q", "main");
       }
@@ -2803,7 +2814,12 @@ test("2026-11-09-004 AC-36: the adoption judge is chosen by a probe in the provi
   const none = adoptDeps(holdsJson, { probe: () => limitedProbe });
   const unruled = await adopt(third, none.deps);
   const words = `no judge answered (${JUDGE_MODEL}: limited, ${JUDGE_FALLBACK}: limited)`;
-  expect(unruled).toEqual({ released: null, reason: words });
+  expect(unruled).toEqual({
+    released: null,
+    reason: words,
+    notRuled: true,
+    branch: "improve/2026-10-25-1",
+  });
   expect(none.seen.judge).toEqual([]);
   expect(none.seen.release).toEqual([]);
   expect(rulingOf(third)).toContain(
@@ -2832,6 +2848,8 @@ test("2026-11-09-004 AC-36: the adoption judge is chosen by a probe in the provi
   expect(exhausted).toEqual({
     released: null,
     reason: "not ruled: every judge was at its limit",
+    notRuled: true,
+    branch: "improve/2026-10-25-1",
   });
   expect(spent.seen.judge).toHaveLength(2);
   expect(rulingOf(fifth)).toContain(
@@ -2844,7 +2862,12 @@ test("2026-11-09-004 AC-36: the adoption judge is chosen by a probe in the provi
     judgeAnswer: () => ({ status: 1, output: "Invalid API key" }),
   });
   const failed = await adopt(sixth, broken.deps);
-  expect(failed).toEqual({ released: null, reason: "not ruled: the judge exited 1" });
+  expect(failed).toEqual({
+    released: null,
+    reason: "not ruled: the judge exited 1",
+    notRuled: true,
+    branch: "improve/2026-10-25-1",
+  });
   expect(broken.seen.judge).toHaveLength(1);
   expect(rulingOf(sixth)).toContain(
     `- judge: none\n- passed over: ${JUDGE_MODEL} (failed)\n\nnot ruled: the judge exited 1`,
@@ -2882,7 +2905,12 @@ test("2026-11-09-004 AC-40: an answer of the adoption judge marked as an error i
     }),
   });
   const out = await adopt(second, errored.deps);
-  expect(out).toEqual({ released: null, reason: "not ruled: the judge's answer was an error" });
+  expect(out).toEqual({
+    released: null,
+    reason: "not ruled: the judge's answer was an error",
+    notRuled: true,
+    branch: "improve/2026-10-25-1",
+  });
   expect(errored.seen.judge).toHaveLength(1);
   expect(rulingOf(second)).toContain(
     `- judge: none\n- passed over: ${JUDGE_MODEL} (failed)\n\nnot ruled: the judge's answer was an error`,
@@ -2912,6 +2940,10 @@ test("2026-11-09-004 AC-36 (through the tick): the adoption probes through the t
   expect(seen.release).toEqual([]);
   const notices = seen.sh.filter((c) => c[0] === "osascript");
   expect(notices.at(-1)?.join(" ")).toContain("no judge answered");
+  // The person is told what to do with the kept branch (2026-11-11-002 AC-32).
+  expect(notices.at(-1)?.join(" ")).toMatch(
+    /no judge answered \(.*\); the run was not ruled and its branch improve\/2026-10-25-1 is kept: adopt it by hand \(docs\/improve\/README\.md\)/,
+  );
 });
 
 test("2026-11-09-004 AC-41: a provider whose agent or judge model is no model name is refused before anything runs", () => {
@@ -3058,4 +3090,178 @@ test("2026-11-09-004 AC-41 (through the tick): a tick whose provider names no mo
   expect(seen.log.join("\n")).toContain(
     'the provider\'s judge model "--print" is not a model name; nothing runs',
   );
+});
+
+test("2026-11-11-002 AC-14: unjudgedAtLimit reads a cause as its class, limited and overloaded at a limit and failed not, and a text of an older record by the pattern", () => {
+  const withCauses = (...causes: (string | undefined)[]) => ({
+    unjudged: true,
+    runs: causes.map((unjudged) => ({ score: 0, ...(unjudged === undefined ? {} : { unjudged }) })),
+  });
+  expect(unjudgedAtLimit(withCauses("limited", "limited"))).toBe(true);
+  expect(unjudgedAtLimit(withCauses("overloaded"))).toBe(true);
+  expect(unjudgedAtLimit(withCauses("limited", undefined, "overloaded"))).toBe(true);
+  expect(unjudgedAtLimit(withCauses("limited", "failed"))).toBe(false);
+  expect(unjudgedAtLimit(withCauses("failed"))).toBe(false);
+  // A record written before the class: the CLI's text, read by the pattern.
+  expect(unjudgedAtLimit(withCauses(FABLE_LIMIT_TEXT))).toBe(true);
+  expect(unjudgedAtLimit(withCauses("529 Overloaded"))).toBe(true);
+  expect(unjudgedAtLimit(withCauses("The model's safeguards flagged this request."))).toBe(false);
+  // A class word inside a longer text is a text: "failed" in a limit's sentence is still a limit.
+  expect(unjudgedAtLimit(withCauses("the call failed: rate limit exceeded"))).toBe(true);
+  expect(unjudgedAtLimit(withCauses())).toBe(false);
+  expect(unjudgedAtLimit({ runs: [{ unjudged: "limited" }] })).toBe(false);
+});
+
+test("2026-11-11-002 AC-26: adoptRun says notRuled on its not-ruled endings alone: a failed gate, a ruling of either kind, another provider, a failed merge and an unfinished release carry no such field", async () => {
+  const input = (
+    fixture: { repo: string; folder: string },
+    more: Record<string, unknown> = {},
+  ) => ({
+    ...fixture,
+    record: keptRecord("2026-10-25-1"),
+    provider: claude,
+    judgeSystemPrompt: "# Judge",
+    ...more,
+  });
+  // The gate fails: the probe's figures are no win.
+  const gate = await adoptRun(
+    input(adoptionFixture(), { record: keptRecord("2026-10-25-1", 0.5) }),
+    adoptDeps(holdsJson).deps,
+  );
+  expect(gate.reason).toStartWith("the gate failed");
+  expect("notRuled" in gate).toBe(false);
+  // The judge rules "does not hold".
+  const refused = await adoptRun(
+    input(adoptionFixture()),
+    adoptDeps(JSON.stringify({ result: "does not hold\n\nMissing: rule 1." })).deps,
+  );
+  expect(refused.reason).toStartWith('the judge ruled "does not hold"');
+  expect("notRuled" in refused).toBe(false);
+  // Another provider's models.
+  const other = await adoptRun(
+    input(adoptionFixture(), { provider: { ...claude, name: "ollama", claudeModels: false } }),
+    adoptDeps(holdsJson).deps,
+  );
+  expect(other.reason).toStartWith("measured on ollama, not Claude models");
+  expect("notRuled" in other).toBe(false);
+  // The merge fails.
+  const real = adoptDeps(holdsJson).deps;
+  const conflict = await adoptRun(input(adoptionFixture()), {
+    ...real,
+    git: (args: string[], cwd: string) =>
+      args[0] === "merge" && args[1] !== "--abort"
+        ? { status: 1, stdout: "", stderr: "CONFLICT (content): SKILL.md\n" }
+        : real.git(args, cwd),
+  });
+  expect(conflict.reason).toStartWith("the merge of improve/2026-10-25-1 failed: CONFLICT");
+  expect("notRuled" in conflict).toBe(false);
+  // The release does not finish.
+  const unfinished = await adoptRun(input(adoptionFixture()), {
+    ...adoptDeps(holdsJson).deps,
+    release: async () => ({ code: 1, version: null }),
+  });
+  expect(unfinished.reason).toStartWith("the release did not finish");
+  expect("notRuled" in unfinished).toBe(false);
+  // The ruling holds and the run is released.
+  const released = await adoptRun(input(adoptionFixture()), adoptDeps(holdsJson).deps);
+  expect(released).toEqual({ released: "0.15.1", reason: null });
+  // The three not-ruled endings, each with the field.
+  const none = await adopt(
+    adoptionFixture(),
+    adoptDeps(holdsJson, { probe: () => limitedProbe }).deps,
+  );
+  const limited = await adopt(
+    adoptionFixture(),
+    adoptDeps(holdsJson, { judgeAnswer: () => ({ status: 1, output: FABLE_LIMIT_TEXT }) }).deps,
+  );
+  const failed = await adopt(
+    adoptionFixture(),
+    adoptDeps(holdsJson, { judgeAnswer: () => ({ status: 1, output: "boom" }) }).deps,
+  );
+  expect([none.notRuled, limited.notRuled, failed.notRuled]).toEqual([true, true, true]);
+  // Each names the branch the adoption read, for the tick to hand to a person.
+  expect([none, limited, failed].map((a) => (a.notRuled ? a.branch : null))).toEqual(
+    Array(3).fill("improve/2026-10-25-1"),
+  );
+  expect([none.released, limited.released, failed.released]).toEqual([null, null, null]);
+});
+
+test("2026-11-11-002 AC-32: a tick whose adoption was not ruled on Claude models names the kept branch for a person in its notification; another provider, a ruling of does not hold and a failed gate say no such words; the state and status gain nothing", async () => {
+  const sentence =
+    "the run was not ruled and its branch improve/2026-10-25-1 is kept: adopt it by hand (docs/improve/README.md)";
+  expect(ADOPT_BY_HAND).toBe("adopt it by hand (docs/improve/README.md)");
+  expect(notRuledReason("no judge answered (x: limited)", "improve/2026-10-25-1", true)).toBe(
+    `no judge answered (x: limited); ${sentence}`,
+  );
+  expect(notRuledReason("no judge answered (x: limited)", "improve/2026-10-25-1", false)).toBe(
+    "no judge answered (x: limited)",
+  );
+  const lastNotice = (seen: { sh: string[][] }) =>
+    seen.sh
+      .filter((c) => c[0] === "osascript")
+      .at(-1)
+      ?.join(" ") ?? "";
+  const keysOf = (home: string) =>
+    Object.keys(JSON.parse(readFileSync(join(home, "state.json"), "utf8"))).sort();
+  // Not ruled, on Claude models: the reason, then the sentence, in the notification and the log.
+  const world = loopWorld();
+  const unruled = tickDeps(world, { kept: true, probe: () => limitedProbe });
+  expect(await tick({}, unruled.deps)).toBe(0);
+  expect(lastNotice(unruled.seen)).toContain(
+    `no judge answered (${JUDGE_MODEL}: limited, ${JUDGE_FALLBACK}: limited); ${sentence}`,
+  );
+  // The adoption logs why nothing was ruled; the tick logs the sentence for a person once, without the reason again.
+  expect(unruled.seen.log.join("\n")).toContain(
+    "adoption of 2026-10-25-1: not ruled: no judge answered",
+  );
+  const told = unruled.seen.log.filter((line) => line.includes(sentence));
+  expect(told).toHaveLength(1);
+  expect(told[0]).toEndWith(`adoption of 2026-10-25-1: ${sentence}`);
+  expect(unruled.seen.release).toEqual([]);
+  // A tick that ruled and released says no such words.
+  const ruledWorld = loopWorld();
+  const ruled = tickDeps(ruledWorld, { kept: true });
+  expect(await tick({}, ruled.deps)).toBe(0);
+  expect(ruled.seen.release).toHaveLength(1);
+  expect(lastNotice(ruled.seen)).not.toContain("adopt it by hand");
+  // In the home of the tick that was not ruled, status says nothing of the run.
+  const status = statusText(installDeps(world.home, null).deps);
+  expect(status).not.toContain("not ruled");
+  expect(status).not.toContain("adopt it by hand");
+  // Not ruled, on a provider that is not Claude models: the loop's rule never releases it, so no person is asked to.
+  const localWorld = loopWorld();
+  writeFileSync(
+    join(localWorld.home, "config.json"),
+    JSON.stringify({
+      provider: {
+        name: "ollama",
+        baseUrl: "http://localhost:11434",
+        authToken: { placeholder: "ollama" },
+        models: { ...models, agent: "qwen3-coder" },
+      },
+    }),
+  );
+  const local = tickDeps(localWorld, { kept: true, probe: () => limitedProbe });
+  expect(await tick({}, local.deps)).toBe(0);
+  expect(lastNotice(local.seen)).toContain("no judge answered");
+  expect(lastNotice(local.seen)).not.toContain("adopt it by hand");
+  expect(local.seen.log.join("\n")).not.toContain("adopt it by hand");
+  // The judge rules "does not hold": decided, so nothing is handed to a person.
+  const refusedWorld = loopWorld();
+  const refused = tickDeps(refusedWorld, {
+    kept: true,
+    judge: JSON.stringify({ result: "does not hold\n\nMissing: rule 1." }),
+  });
+  expect(await tick({}, refused.deps)).toBe(0);
+  expect(lastNotice(refused.seen)).toContain("does not hold");
+  expect(lastNotice(refused.seen)).not.toContain("adopt it by hand");
+  // The state of the tick not ruled holds the keys of this one, which released nothing either: none more, none less.
+  expect(keysOf(world.home)).toEqual(keysOf(refusedWorld.home));
+  expect(keysOf(world.home)).not.toContain("unruled");
+  // The gate fails on a path outside the harness: the same.
+  const gateWorld = loopWorld();
+  const gate = tickDeps(gateWorld, { kept: true, keptAlso: "scripts/x.ts" });
+  expect(await tick({}, gate.deps)).toBe(0);
+  expect(lastNotice(gate.seen)).toContain("the gate failed");
+  expect(lastNotice(gate.seen)).not.toContain("adopt it by hand");
 });

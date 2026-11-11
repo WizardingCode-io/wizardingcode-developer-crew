@@ -42,6 +42,18 @@ export const USAGE_LIMIT = /reached your [\w .-]{0,40}limit|usage limit/i;
 /** A model that cannot answer now: at its usage limit, rate limited or overloaded. The one pattern the editor's ladder, the judge's probe and the loop's reading of an unjudged cause share. */
 export const LIMITED = new RegExp(`${USAGE_LIMIT.source}|rate.?limit|\\b429\\b|overloaded`, "i");
 
+/** What a failed model call was, as the loop's published files name it (2026-11-11-002, D-1). */
+export type CauseClass = "limited" | "overloaded" | "failed";
+
+/**
+ * The class of a failed model call's text, the one classifier the judge probe and a not-judged
+ * cause share: a usage limit, then a rate limit, a 429 or an overload, then anything else.
+ */
+export function causeClass(text: string): CauseClass {
+  if (USAGE_LIMIT.test(text)) return "limited";
+  return LIMITED.test(text) ? "overloaded" : "failed";
+}
+
 /**
  * A text of a model call or of a grader as one bounded line, before it is printed or recorded:
  * whitespace runs become one space; the control characters (C0, DEL, C1), the zero-width
@@ -135,9 +147,9 @@ export type ProbeOutcome = "answered" | "limited" | "overloaded" | "timed out" |
  */
 export function probeOutcome(answer: ProbeAnswer): ProbeOutcome {
   if (answer.timedOut) return "timed out";
-  if (USAGE_LIMIT.test(answer.output)) return "limited";
-  if (answer.status === 0) return "answered";
-  return LIMITED.test(answer.output) ? "overloaded" : "failed";
+  const cause = causeClass(answer.output);
+  if (cause === "limited") return "limited";
+  return answer.status === 0 ? "answered" : cause;
 }
 
 /** Why a candidate was passed over for the next one. */
@@ -559,15 +571,25 @@ export const JUDGE_FAILED = "grader threw: judge call failed";
  * says nothing about the case; a grader that threw for another reason is a defect of its case and
  * stays a failed grader.
  */
-export function unjudgedGraders(run: unknown): { grader: string; cause: string }[] {
+export function unjudgedGraders(
+  run: unknown,
+): { grader: string; cause: string; class: CauseClass; whole: string }[] {
   const graders = (run as { graders?: unknown } | null)?.graders;
   if (!Array.isArray(graders)) return [];
-  const out: { grader: string; cause: string }[] = [];
+  const out: { grader: string; cause: string; class: CauseClass; whole: string }[] = [];
   for (const g of graders as { name?: unknown; scored?: unknown; explanation?: unknown }[]) {
     if (g?.scored === false || typeof g?.explanation !== "string") continue;
     if (!g.explanation.startsWith(JUDGE_FAILED)) continue;
     const cause = g.explanation.slice(JUDGE_FAILED.length).replace(/^[:\s]+/, "");
-    out.push({ grader: String(g.name), cause: oneLine(cause, 120) });
+    // The whole cause as one line: the class is read from it, so a limit named after the cut or
+    // split by a line break is still a limit, and a caller scans it for a secret the cut divides.
+    const whole = oneLine(cause, Number.POSITIVE_INFINITY);
+    out.push({
+      grader: String(g.name),
+      cause: oneLine(cause, 120),
+      class: causeClass(whole),
+      whole,
+    });
   }
   return out;
 }
@@ -728,7 +750,12 @@ export function runKit(options: {
       judgeModel,
     });
   const own = invocation();
-  const environment = kitEnvironment({ ...process.env, ...own.env, PATH: own.path });
+  const environment = kitCallEnvironment({
+    process: process.env,
+    call: undefined,
+    runner: own.env,
+    path: own.path,
+  });
   const probe = options.probe ?? probeJudge;
   const judge = chooseJudge(options.judgeModel, undefined, (model) =>
     probe(model, environment, options.root),

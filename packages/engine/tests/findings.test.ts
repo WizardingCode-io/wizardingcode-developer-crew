@@ -81,9 +81,10 @@ function openFindings(text: string): number[] {
 // 234 (the fixtures the tests left in the temporary folder) fixed by 2026-11-10-002.
 // 228 (a commit's detached maintenance repacking a fixture under the next git command) fixed by 2026-11-10-003,
 // which recorded 235 (a test-first run of the suite is cut at the target's ten minutes).
-// 235 fixed by 2026-11-11-001, which settled eight of 233's ten advisories; 233 stays open for the two that wait for the user.
+// 235 fixed by 2026-11-11-001, which settled eight of 233's ten advisories.
+// 233 fixed by 2026-11-11-002 with the user's two decisions (the class of a not-judged cause; a run not ruled named for a person).
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 233,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -137,7 +138,7 @@ test("2026-11-09-003 AC-27: findings 230 and 231 read fixed by the item, 231 wit
   expect(openFindings(text)).not.toContain(232);
 });
 
-test("2026-11-10-001 AC-5: finding 220 reads fixed by the item with its cause and what the word rests on, and 233 and 234 are recorded open", () => {
+test("2026-11-10-001 AC-5: finding 220 reads fixed by the item with its cause and what the word rests on, and 233 and 234 are recorded", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const sectionOf = (n: number) =>
     text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
@@ -155,7 +156,6 @@ test("2026-11-10-001 AC-5: finding 220 reads fixed by the item with its cause an
   expect(sectionOf(233)).toContain("2026-11-09-004");
   expect(sectionOf(233)).toContain("probeJudge");
   expect(sectionOf(234)).toContain("lock.test.ts");
-  expect(openFindings(text)).toContain(233);
 });
 
 test("2026-11-10-002 AC-6: finding 234 reads fixed by the item, with the fixtures left in the temporary folder as its cause, what was measured and what was inferred, and the limit of the fix", () => {
@@ -193,7 +193,7 @@ test("2026-11-10-003 AC-7: finding 228 reads fixed by the item, with the mainten
   expect(sectionOf(235)).toContain("tdd.ts");
 });
 
-test("2026-11-11-001 AC-10: finding 235 reads fixed by the item, and 233 marks each of its ten advisories taken, refused with a reason or waiting for the user's decision, and stays open for the two that wait", () => {
+test("2026-11-11-001 AC-10: finding 235 reads fixed by the item, and 233 marks each of its ten advisories taken, refused with a reason or waiting for the user's decision", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const sectionOf = (n: number) =>
     text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
@@ -221,6 +221,61 @@ test("2026-11-11-001 AC-10: finding 235 reads fixed by the item, and 233 marks e
   // Each refusal carries its reason.
   expect([...settled.matchAll(/refused: /g)].length).toBe(3);
   expect(outcomeOf(233)).toContain("2026-11-11-001");
-  expect(openFindings(text)).toContain(233);
   expect(openFindings(text)).not.toContain(235);
+});
+
+test("2026-11-11-002 AC-33: finding 233 reads fixed by the item with what was done with the decisions and the advisories, the loop's README names the class words and the hand adoption with its preconditions, and ADR 0024 records the decision and what was weighed", () => {
+  const read = (rel: string) =>
+    readFileSync(fileURLToPath(new URL(`../../../${rel}`, import.meta.url)), "utf8");
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith("### 233. ")) ?? "";
+  const outcome = /\n- Outcome:(.*)/.exec(section)?.[1]?.trim() ?? "";
+  expect(outcome).toStartWith("fixed in 2026-11-11-002");
+  expect(outcome).toContain("2026-11-11-001");
+  expect(openFindings(text)).not.toContain(233);
+  const closed =
+    section
+      .split("\n")
+      .find((l) => l.startsWith("- Closed on 2026-11-11 by item `2026-11-11-002`")) ?? "";
+  for (const said of [
+    "D-1",
+    "`limited`, `overloaded`, `failed`",
+    "D-2",
+    "D-3",
+    "28 of the last 30 days",
+    "(a) taken",
+    "(b) taken",
+    "(c) refused: ",
+    "(d) taken in part",
+  ])
+    expect(closed, said).toContain(said);
+  const readme = read("docs/improve/README.md");
+  for (const said of [
+    '"unjudged": "limited"',
+    "`overloaded`",
+    "`failed`",
+    "## Adopting a kept run by hand",
+    "bun scripts/improve-loop.ts stop",
+    "no pending release",
+    "outside `docs/`",
+    "measured on Claude models",
+    "git push origin --delete",
+    "bun scripts/improve-loop.ts resume",
+  ])
+    expect(readme, said).toContain(said);
+  // The preconditions sit inside the section, before its steps.
+  const hand = readme.slice(readme.indexOf("## Adopting a kept run by hand"));
+  expect(hand.indexOf("bun scripts/improve-loop.ts stop")).toBeLessThan(
+    hand.indexOf("bun scripts/release.ts --patch"),
+  );
+  const adr = read("docs/adr/0024-a-run-not-ruled-is-named-for-a-person.md");
+  for (const said of [
+    "ADR 0015",
+    "decision 3",
+    "second offer",
+    "28 of the last 30 days",
+    "adopt it by hand",
+    "not Claude models",
+  ])
+    expect(adr, said).toContain(said);
 });

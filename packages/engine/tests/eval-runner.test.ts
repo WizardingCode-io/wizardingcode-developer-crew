@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import {
   ALLOW_TOOLS,
   armRuns,
+  causeClass,
   chooseJudge,
   costEstimate,
   createRunFolder,
@@ -4447,7 +4448,12 @@ test("2026-11-09-004 AC-34: a grader whose judge call failed is read as not judg
   const refusal = recordedExplanation("2026-10-26-10", JUDGE_FAILED, "safeguards");
   const otherThrow = recordedExplanation("2026-11-04-3", "grader threw: case");
   expect(unjudgedGraders(graded(limit))).toEqual([
-    { grader: "honest-ending", cause: oneLine(limit.slice(JUDGE_FAILED.length + 2), 120) },
+    {
+      grader: "honest-ending",
+      cause: oneLine(limit.slice(JUDGE_FAILED.length + 2), 120),
+      class: "limited",
+      whole: oneLine(limit.slice(JUDGE_FAILED.length + 2), Number.POSITIVE_INFINITY),
+    },
   ]);
   expect(
     unjudgedGraders(graded(limit))[0]?.cause.startsWith("You've reached your Fable limit"),
@@ -4585,14 +4591,55 @@ test("2026-11-11-001 AC-9 (finding 233): kitCallEnvironment builds a kit call's 
     expect(built[`OUTSIDE_${who.toUpperCase()}`]).toBeUndefined();
     expect(built[`WIZARDINGCODE_${who.toUpperCase()}_TOKEN`]).toBeUndefined();
   }
-  // Both calls of the improve script go through it, and neither builds a PATH-carrying spread of its own.
-  const improve = readFileSync(
-    fileURLToPath(new URL("../../../scripts/improve.ts", import.meta.url)),
-    "utf8",
+  // One way to build a kit call's environment (2026-11-11-002 AC-20): the improve script reaches
+  // kitCallEnvironment once, inside its one local function, which its probe and its kit call both
+  // use (the declaration and two calls: three); and the runner's own kit call goes through it too,
+  // so the one PATH-carrying spread left in the two scripts is kitCallEnvironment's.
+  const source = (name: string) =>
+    readFileSync(fileURLToPath(new URL(`../../../scripts/${name}`, import.meta.url)), "utf8");
+  const count = (text: string, pattern: RegExp) => text.match(pattern)?.length ?? 0;
+  const improve = source("improve.ts");
+  expect(count(improve, /\bkitCallEnvironment\(/g)).toBe(1);
+  expect(count(improve, /\bcallEnvironment\(/g)).toBe(3);
+  expect(count(improve, /\bfunction callEnvironment\(/g)).toBe(1);
+  expect(count(improve, /kitEnvironment\(\{[^}]*PATH/g)).toBe(0);
+  expect(count(source("eval.ts"), /kitEnvironment\(\{[^}]*PATH/g)).toBe(1);
+});
+
+test("2026-11-11-002 AC-12: causeClass sorts a failed model call's text into limited, overloaded or failed; probeOutcome answers through it; unjudgedGraders gives each grader's class from the whole explanation", () => {
+  const fable = "You've reached your Fable limit. Switch to another model.";
+  const refusal = "The model's safeguards flagged this request.";
+  expect(causeClass(fable)).toBe("limited");
+  expect(causeClass("usage limit")).toBe("limited");
+  expect(causeClass("rate limit exceeded")).toBe("overloaded");
+  expect(causeClass("429 Too Many Requests")).toBe("overloaded");
+  expect(causeClass("API Error: 529 Overloaded")).toBe("overloaded");
+  expect(causeClass(refusal)).toBe("failed");
+  expect(causeClass("")).toBe("failed");
+  // The probe reads as before: the limit at any status, an answer at status 0, the class otherwise.
+  expect(probeOutcome({ status: 1, output: "", timedOut: true })).toBe("timed out");
+  expect(probeOutcome({ status: 0, output: fable, timedOut: false })).toBe("limited");
+  expect(probeOutcome({ status: 1, output: fable, timedOut: false })).toBe("limited");
+  expect(probeOutcome({ status: 0, output: "ok, after a 429 retry", timedOut: false })).toBe(
+    "answered",
   );
-  const probe = improve.slice(improve.indexOf("    probeJudge: (call) => {"));
-  const kit = improve.slice(improve.indexOf("    kit: (call) => {"));
-  expect(probe.slice(0, probe.indexOf("\n    },")).includes("kitCallEnvironment(")).toBe(true);
-  expect(kit.slice(0, kit.indexOf("\n    },")).includes("kitCallEnvironment(")).toBe(true);
-  expect(/kitEnvironment\(\{[^}]*PATH/.test(improve)).toBe(false);
+  expect(probeOutcome({ status: 1, output: "rate limit exceeded", timedOut: false })).toBe(
+    "overloaded",
+  );
+  expect(probeOutcome({ status: 1, output: refusal, timedOut: false })).toBe("failed");
+  // The class is read from the whole text: a limit named after the cut, or split by a line break.
+  const late = unjudgedGraders(graded(`${JUDGE_FAILED}: ${"x".repeat(150)} ${fable}`))[0];
+  expect(late?.class).toBe("limited");
+  expect(late?.cause).toHaveLength(120);
+  expect(late?.cause).not.toContain("reached");
+  expect(late?.whole).toBe(`${"x".repeat(150)} ${fable}`);
+  const split = unjudgedGraders(graded(`${JUDGE_FAILED}: You've reached your Fable\nlimit.`))[0];
+  expect(split).toEqual({
+    grader: "honest-ending",
+    cause: "You've reached your Fable limit.",
+    class: "limited",
+    whole: "You've reached your Fable limit.",
+  });
+  expect(unjudgedGraders(graded(`${JUDGE_FAILED}: 529 Overloaded`))[0]?.class).toBe("overloaded");
+  expect(unjudgedGraders(graded(`${JUDGE_FAILED}: ${refusal}`))[0]?.class).toBe("failed");
 });

@@ -827,7 +827,10 @@ export async function adoptRun(
     judgeSystemPrompt: string;
   },
   deps: AdoptDeps,
-): Promise<{ released: string | null; reason: string | null }> {
+): Promise<
+  | { released: string | null; reason: string | null; notRuled?: undefined }
+  | { released: null; reason: string; notRuled: true; branch: string }
+> {
   const { repo, folder, record, provider } = input;
   const branch = record.branch ?? `improve/${record.run}`;
   const write = (rel: string, text: string) =>
@@ -857,10 +860,13 @@ export async function adoptRun(
   const asked = (judge: string): string =>
     `- judge: ${judge}\n- passed over: ${passed.join(", ") || "none"}`;
   /** Nothing is ruled and nothing is released: the file and the log say why, the branch stays. */
-  const notRuled = (sentence: string, reason = sentence): { released: null; reason: string } => {
+  const notRuled = (
+    sentence: string,
+    reason = sentence,
+  ): { released: null; reason: string; notRuled: true; branch: string } => {
     write("ruling.md", `${title}\n\n${asked("none")}\n\n${sentence}\n`);
     deps.log(`adoption of ${record.run}: ${sentence}`);
-    return { released: null, reason };
+    return { released: null, reason, notRuled: true, branch };
   };
   if (choice.judge === null) {
     const reason = `no judge answered (${choice.probed.map((p) => `${p.model}: ${p.outcome}`).join(", ")})`;
@@ -961,6 +967,24 @@ export async function adoptRun(
   return { released: released.version, reason: null };
 }
 
+/** What the tick tells a person of a kept run that was not ruled (2026-11-11-002, D-3). */
+export const ADOPT_BY_HAND = "adopt it by hand (docs/improve/README.md)";
+
+/**
+ * The notification's reason for an adoption that ruled nothing (2026-11-11-002, D-3): the loop
+ * never offers the run again, so the reason names its branch for a person. A run measured on a
+ * provider that is not Claude models gains no words: the loop's own rule never releases one
+ * (ADR 0015, decision 3), so no person is asked to.
+ */
+export function notRuledReason(reason: string, branch: string, claudeModels: boolean): string {
+  return claudeModels ? `${reason}; ${keptForAPerson(branch)}` : reason;
+}
+
+/** The sentence that names a kept branch for a person, in the notification and in the log. */
+function keptForAPerson(branch: string): string {
+  return `the run was not ruled and its branch ${branch} is kept: ${ADOPT_BY_HAND}`;
+}
+
 /** The configuration file's own content, or nothing. */
 function readConfigFile(home: string): Partial<LoopConfig> {
   const path = join(home, "config.json");
@@ -1043,6 +1067,9 @@ function readRecords(repo: string): LoopRecord[] {
  * Whether a case's figures hold a run that was not judged because its judge was at a limit
  * (2026-11-09-004): such a measurement is to be made again. A run not judged for another cause,
  * as a refusal of the case's content, would meet the same cause again, and counts as measured.
+ * A cause is the class the record keeps since 2026-11-11-002 (`limited` and `overloaded` are at a
+ * limit, `failed` is not); any other string is the CLI's text in a record written before that,
+ * read by the pattern.
  */
 export function unjudgedAtLimit(figures: unknown): boolean {
   const f = figures as { unjudged?: unknown; runs?: unknown } | null | undefined;
@@ -1050,8 +1077,15 @@ export function unjudgedAtLimit(figures: unknown): boolean {
   const causes = (f.runs as { unjudged?: unknown }[])
     .map((r) => r?.unjudged)
     .filter((c): c is string => typeof c === "string");
-  return causes.length > 0 && causes.every((c) => LIMITED.test(c));
+  return causes.length > 0 && causes.every((c) => CLASS_AT_LIMIT.get(c) ?? LIMITED.test(c));
 }
+
+/** Whether each class of a not-judged cause is a limit: the measurement is made again. */
+const CLASS_AT_LIMIT: ReadonlyMap<string, boolean> = new Map([
+  ["limited", true],
+  ["overloaded", true],
+  ["failed", false],
+]);
 
 /** The figures of a record a run stopped on: every baseline's and probe's with a run not judged. */
 function unjudgedFigures(record: Pick<LoopRecord, "baseline" | "proposals" | "composition">) {
@@ -1775,6 +1809,13 @@ export async function tick(
       });
       released = adopted.released;
       reason = adopted.reason;
+      if (adopted.notRuled) {
+        // Nothing decided against the run and the loop never offers it again: a person is told.
+        // The branch is the one the adoption read; its reason is already in the log.
+        reason = notRuledReason(adopted.reason, adopted.branch, provider.claudeModels);
+        if (provider.claudeModels)
+          log(`adoption of ${latest.run}: ${keptForAPerson(adopted.branch)}`);
+      }
       // The adoption's files and the day's report, with what the release did.
       writeDayReport();
       if (commitDocs(`Improvement run ${latest.run}: the day's report`)) pushMain([]);

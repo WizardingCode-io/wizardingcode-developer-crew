@@ -20,6 +20,8 @@ import {
   probeSet,
   rationaleOf,
   recordMarkdown,
+  unjudgedClass,
+  unjudgedLogLines,
   verdictOf,
 } from "../../../scripts/improve.ts";
 import { scanText } from "../src/secrets.ts";
@@ -548,7 +550,7 @@ test("2026-11-09-004 AC-22: a run with a grader not judged is marked unjudged wi
     () => null,
     [],
   );
-  expect(got?.runs.map((r) => r.unjudged)).toEqual([undefined, LIMIT_CAUSE, undefined]);
+  expect(got?.runs.map((r) => r.unjudged)).toEqual([undefined, "limited", undefined]);
   // The unjudged graders say nothing about the case: only the grader that failed is failing.
   expect(got?.runs[1]?.failing).toEqual([
     { grader: "ended-proven", explanation: "pattern not found in trace" },
@@ -575,19 +577,19 @@ test("2026-11-09-004 AC-22: a run with a grader not judged is marked unjudged wi
     return {
       ...f,
       unjudged: true,
-      runs: f.runs.map((r, i) => (i ? r : { ...r, unjudged: LIMIT_CAUSE })),
+      runs: f.runs.map((r, i) => (i ? r : { ...r, unjudged: "limited" as const })),
     };
   };
   // A probe that would read as a win, and a baseline, each with a run not judged: never a verdict.
   expect(verdictOf(["t"], ["t"], { t: judged }, { t: marked([1, 1, 1]) })).toEqual({
     verdict: "inconclusive",
-    reasons: [`t's probe was not judged (${LIMIT_CAUSE})`],
+    reasons: ["t's probe was not judged (limited)"],
   });
   expect(
     verdictOf(["t"], ["t"], { t: marked([0.5, 0.5, 0.5]) }, { t: figures("t", [1, 1, 1]) }),
   ).toEqual({
     verdict: "inconclusive",
-    reasons: [`t's baseline was not judged (${LIMIT_CAUSE})`],
+    reasons: ["t's baseline was not judged (limited)"],
   });
   const md = recordMarkdown({
     run: "2026-11-10-1",
@@ -607,20 +609,48 @@ test("2026-11-09-004 AC-22: a run with a grader not judged is marked unjudged wi
   expect(md).toContain("| t | unjudged, 1.00, 1.00 |");
 });
 
-test("2026-11-09-004 AC-30: a cause that holds a secret's shape is withheld whole from the figures and the verdict's reason", () => {
+test("2026-11-09-004 AC-30: a cause that holds a secret's shape is recorded as its class, and withheld whole from the log line", () => {
   // Built here, never committed: the secrets gate scans the tree.
   const token = `${["sk", "ant", "api03"].join("-")}-${"Q".repeat(40)}`;
-  const got = caseFigures(
-    judgedResult([{ score: 0, graders: [notJudged("g", `denied for key ${token}`)] }]),
-    "t",
-    () => null,
-    [],
-  ) as CaseFigures;
+  const result = judgedResult([{ score: 0, graders: [notJudged("g", `denied for key ${token}`)] }]);
+  const got = caseFigures(result, "t", () => null, []) as CaseFigures;
   const rule = scanText(`denied for key ${token}`, "cause")[0]?.rule;
   expect(rule).toBeDefined();
-  expect(got.runs[0]?.unjudged).toBe(`withheld: the cause held a secret (${rule})`);
+  expect(got.runs[0]?.unjudged).toBe("failed");
+  const lines = unjudgedLogLines(result, "t");
+  expect(lines).toEqual([`t run 1 was not judged: g: withheld: the cause held a secret (${rule})`]);
+  expect(lines.join("\n")).not.toContain(token);
   expect(JSON.stringify(got)).not.toContain(token);
   const verdict = verdictOf(["t"], ["t"], { t: got }, { t: figures("t", [1]) });
   expect(verdict.verdict).toBe("inconclusive");
   expect(JSON.stringify(verdict)).not.toContain(token);
+});
+
+test("2026-11-11-002 AC-13: a run not judged records the class of its cause in the figures, and the bounded text goes to a log line alone", () => {
+  const refusal = "The model's safeguards flagged this request.";
+  const result = judgedResult([
+    { score: 1, graders: [] },
+    { score: 0, graders: [notJudged("honest-ending"), notJudged("names-the-gate", refusal)] },
+    { score: 0, graders: [notJudged("g", refusal)] },
+  ]);
+  const got = caseFigures(result, "t", () => null, []) as CaseFigures;
+  expect(got.runs.map((r) => r.unjudged)).toEqual([undefined, "limited", "failed"]);
+  expect(unjudgedClass(got)).toBe("limited");
+  // The published figures hold no text of the CLI.
+  expect(JSON.stringify(got)).not.toContain("reached your");
+  expect(JSON.stringify(got)).not.toContain("safeguards");
+  expect(unjudgedLogLines(result, "t")).toEqual([
+    `t run 2 was not judged: honest-ending: ${LIMIT_CAUSE}`,
+    `t run 3 was not judged: g: ${refusal}`,
+  ]);
+  expect(unjudgedLogLines(judgedResult([{ score: 1, graders: [] }]), "t")).toEqual([]);
+  expect(unjudgedLogLines(result, "another")).toEqual([]);
+  expect(unjudgedLogLines(null, "t")).toEqual([]);
+  // A secret the 120-character cut divides is still withheld: the scan reads the whole explanation.
+  const token = `${["sk", "ant", "api03"].join("-")}-${"Q".repeat(40)}`;
+  const straddling = `${"x".repeat(100)} ${token}`;
+  const cut = judgedResult([{ score: 0, graders: [notJudged("g", straddling)] }]);
+  const [line] = unjudgedLogLines(cut, "t");
+  expect(line).toStartWith("t run 1 was not judged: g: withheld: the cause held a secret (");
+  expect(line).not.toContain("sk-ant");
 });
