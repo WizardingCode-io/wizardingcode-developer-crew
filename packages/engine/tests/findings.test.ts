@@ -83,8 +83,11 @@ function openFindings(text: string): number[] {
 // which recorded 235 (a test-first run of the suite is cut at the target's ten minutes).
 // 235 fixed by 2026-11-11-001, which settled eight of 233's ten advisories.
 // 233 fixed by 2026-11-11-002 with the user's two decisions (the class of a not-judged cause; a run not ruled named for a person).
+// 236 (a document reviewer's whole answer refused for one off-shape line) and 237 (what 2026-11-11-002's delivery left) recorded by 2026-11-11-003,
+// with 238 (the mail lock row's one failure in a whole-suite run, not traced).
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 236, 237,
+  238,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -278,4 +281,43 @@ test("2026-11-11-002 AC-33: finding 233 reads fixed by the item with what was do
     "not Claude models",
   ])
     expect(adr, said).toContain(said);
+});
+
+/** A finding's section of the record, from its heading to the next one; empty when it is not there. */
+const sectionIn = (text: string, n: number): string =>
+  text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+
+test("2026-11-11-003 AC-1: findings 236 and 237 are recorded with their date, what happened, what is expected and an outcome that reads open", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  for (const n of [236, 237]) {
+    const section = sectionIn(text, n);
+    expect(section, String(n)).toContain("- Date: 2026-11-11.");
+    // Each part holds text of its own, not its label alone.
+    for (const part of ["What happened", "Expected", "Evidence", "Outcome"])
+      expect(section, `${n} ${part}`).toMatch(new RegExp(`\\n- ${part}: \\S.{20,}`));
+    expect(section, String(n)).toContain("2026-11-11-002");
+    expect(openFindings(text)).toContain(n);
+  }
+  expect(sectionIn(text, 236)).toContain("parseSpecAnswer");
+  expect(sectionIn(text, 236)).toContain("packages/engine/src/spec-review.ts");
+  expect(sectionIn(text, 237)).toContain("crew tdd green");
+  expect(sectionIn(text, 237)).toContain("docs/improve/README.md");
+});
+
+test("2026-11-11-003 AC-2: finding 238 records the one failure of the mail lock row with its words, the run it failed in and the runs it passed in, and reads open", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = sectionIn(text, 238);
+  for (const said of [
+    "- Date: 2026-11-11.",
+    "SP2c AC-6",
+    "mail.test.ts",
+    "crm's inbox changed outside the engine",
+    "logs/tdd-AC-13-green-1794413833550.txt",
+    "passed in the four gate runs",
+    "Finding 168",
+    "- Expected:",
+    "not traced",
+  ])
+    expect(section, said).toContain(said);
+  expect(openFindings(text)).toContain(238);
 });
