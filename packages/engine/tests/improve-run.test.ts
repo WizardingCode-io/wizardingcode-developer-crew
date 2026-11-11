@@ -35,7 +35,7 @@ import {
   removeKeptSandboxes,
   runImprove,
 } from "../../../scripts/improve.ts";
-import { gitRunEnv } from "./helpers.ts";
+import { gitRunEnv, gitTraceOf, NO_GIT_MAINTENANCE } from "./helpers.ts";
 import { toolResult, toolUse } from "./kit-stub.ts";
 
 const PLUGIN = "/private/tmp/e-run/plugins/wizardingcode-developer-crew";
@@ -231,18 +231,11 @@ test("2026-11-10-003 AC-6 (finding 228): a commit runImprove makes through this 
   const trace = join(mkdtempSync(join(tmpdir(), "improve-trace-")), "events");
   const run = deps(root, tmp, { gitEnv: { GIT_TRACE2_EVENT: trace } });
   expect(await runImprove({ cases: ["t"], proposals: 1 }, run.deps)).toBe(0);
-  const events = readFileSync(trace, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { event: string; argv?: string[] });
-  // The run did commit, and the trace is that commit's: without it a count of zero would prove nothing.
-  expect(events.some((e) => e.event === "start" && e.argv?.includes("commit"))).toBe(true);
-  expect(
-    events.filter((e) => e.event === "child_start" && e.argv?.includes("maintenance")),
-  ).toEqual([]);
+  // The run did commit, and the trace is that commit's.
+  expect(gitTraceOf(trace)).toEqual({ committed: true, maintenance: 0 });
   // What real git got is what the script built plus the run's variable and this row's trace, nothing else.
   const parameters = process.env.GIT_CONFIG_PARAMETERS;
-  expect(parameters).toContain("'maintenance.auto=false'");
+  expect(parameters).toContain(NO_GIT_MAINTENANCE);
   expect(run.seen.handed.length).toBe(run.seen.git.length);
   run.seen.git.forEach((call, i) => {
     expect(call.env.GIT_CONFIG_PARAMETERS, call.args.join(" ")).toBeUndefined();

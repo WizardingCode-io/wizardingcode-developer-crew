@@ -37,6 +37,7 @@ import {
   createRunFolder,
   evalInvocation,
   type JudgeChoice,
+  kitCallEnvironment,
   kitEnvironment,
   LIMITED,
   MODEL_NAME,
@@ -1386,7 +1387,7 @@ export function realDeps(root: string): RealImproveDeps {
     env: process.env,
     now: () => new Date(),
     log: (line) => console.log(line),
-    // The probe stands for a kit call: the runner's variables, the run's environment over them and the composed PATH, in `kit`'s order.
+    // The probe stands for a kit call, so its environment is built as the kit call's is.
     probeJudge: (call) => {
       const { path, env } = evalInvocation({
         root,
@@ -1394,7 +1395,11 @@ export function realDeps(root: string): RealImproveDeps {
         path: process.env.PATH ?? "",
         realGitDir: realGitDir(process.platform),
       });
-      return probeJudge(call.model, kitEnvironment({ ...env, ...call.env, PATH: path }), root);
+      return probeJudge(
+        call.model,
+        kitCallEnvironment({ process: process.env, call: call.env, runner: env, path }),
+        root,
+      );
     },
     git: realGit,
     kit: (call) => {
@@ -1419,7 +1424,7 @@ export function realDeps(root: string): RealImproveDeps {
       const r = spawnSync("claude", args, {
         cwd: call.tree,
         stdio: "inherit",
-        env: kitEnvironment({ ...process.env, ...env, ...call.env, PATH: path }),
+        env: kitCallEnvironment({ process: process.env, call: call.env, runner: env, path }),
       });
       return { status: r.status, result: readJson<unknown>(join(folder, "result.json")) };
     },

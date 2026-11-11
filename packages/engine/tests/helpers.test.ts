@@ -17,7 +17,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   childEnv,
-  enterRunFolder,
+  enterRun,
+  gitTraceOf,
+  NO_GIT_MAINTENANCE,
   removeTempDirs,
   runsHome,
   sweepDeadRuns,
@@ -77,7 +79,7 @@ function withTemp(): { fixture: string; tmp: string } {
 /** A pid no process can hold: past every system's largest, so signal 0 always answers no such process. */
 const DEAD_PID = 2147483646;
 
-test("2026-11-10-002 AC-1: runsHome answers crew-tests beside the temporary folder, owner-only, and the temporary folder itself where that home is not the user's alone; enterRunFolder points TMPDIR at a run folder in the home", () => {
+test("2026-11-10-002 AC-1: runsHome answers crew-tests beside the temporary folder, owner-only, and the temporary folder itself where that home is not the user's alone; enterRun points TMPDIR at a run folder in the home", () => {
   const { fixture, tmp } = withTemp();
   const home = runsHome(tmp);
   expect(home).toBe(join(fixture, "crew-tests"));
@@ -111,7 +113,7 @@ test("2026-11-10-002 AC-1: runsHome answers crew-tests beside the temporary fold
     chmodSync(shared.fixture, 0o700);
   }
   const before = process.env.TMPDIR;
-  const run = enterRunFolder(home);
+  const run = enterRun(home);
   try {
     expect(dirname(run.folder)).toBe(home);
     expect(basename(run.folder)).toMatch(new RegExp(`^crew-run-${process.pid}-`));
@@ -133,17 +135,17 @@ test("2026-11-10-002 AC-1: runsHome answers crew-tests beside the temporary fold
 test("2026-11-10-002 AC-2: a run's leave puts TMPDIR back and removes the folder its entry made and nothing else, once; the keep switch keeps it and marks it; an inner run leaves the outer one as it was", () => {
   const home = tempDir();
   const before = process.env.TMPDIR;
-  const outer = enterRunFolder(home);
+  const outer = enterRun(home);
   let registered = "";
   let loose = "";
-  let inner: ReturnType<typeof enterRunFolder> | undefined;
+  let inner: ReturnType<typeof enterRun> | undefined;
   try {
     registered = tempDir();
     TEMP_DIRS.delete(registered);
     loose = mkdtempSync(join(tmpdir(), "loose-"));
     writeFileSync(join(loose, "f"), "x");
     expect(dirname(loose)).toBe(outer.folder);
-    inner = enterRunFolder(home);
+    inner = enterRun(home);
     expect(process.env.TMPDIR).toBe(inner.folder);
     mkdtempSync(join(tmpdir(), "in-"));
     inner.leave();
@@ -168,7 +170,7 @@ test("2026-11-10-002 AC-2: a run's leave puts TMPDIR back and removes the folder
   inner?.leave();
   expect(process.env.TMPDIR).toBe(before);
   // The post-mortem switch: nothing removed, the folder marked.
-  const kept = enterRunFolder(home);
+  const kept = enterRun(home);
   const fixture = mkdtempSync(join(tmpdir(), "kept-"));
   const previous = process.env.WIZARDINGCODE_CREW_KEEP_FIXTURES;
   try {
@@ -182,7 +184,7 @@ test("2026-11-10-002 AC-2: a run's leave puts TMPDIR back and removes the folder
   expect(existsSync(fixture)).toBe(true);
   expect(readFileSync(join(kept.folder, ".keep"), "utf8")).toBe("");
   // A folder that cannot be removed throws nothing, and TMPDIR is back all the same.
-  const stuck = enterRunFolder(home);
+  const stuck = enterRun(home);
   const readOnly = join(stuck.folder, "ro");
   mkdirSync(readOnly);
   writeFileSync(join(readOnly, "f"), "x");
@@ -196,7 +198,6 @@ test("2026-11-10-002 AC-2: a run's leave puts TMPDIR back and removes the folder
 });
 
 const PARAMETERS = "GIT_CONFIG_PARAMETERS";
-const NO_MAINTENANCE = "'maintenance.auto=false'";
 
 /**
  * How many `git maintenance` children a commit in a fresh repository starts under `env`, by git's
@@ -225,17 +226,13 @@ function maintenanceStarted(env: NodeJS.ProcessEnv): number {
   writeFileSync(join(repo, "f"), "x\n");
   git("add", "f");
   git("commit", "-q", "-m", "m");
-  const events = readFileSync(trace, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as { event: string; argv?: string[] });
-  // The trace is the commit's own: without its start line a count of zero would prove nothing.
-  expect(events.some((e) => e.event === "start" && e.argv?.includes("commit"))).toBe(true);
-  return events.filter((e) => e.event === "child_start" && e.argv?.includes("maintenance")).length;
+  const read = gitTraceOf(trace);
+  expect(read.committed).toBe(true);
+  return read.maintenance;
 }
 
 test("2026-11-10-003 AC-4 (finding 228): in the tests' run a git commit starts no git maintenance, also under a global configuration that turns it on and with the system configuration skipped; with the run's variable taken away and git's defaults alone it starts one", () => {
-  expect(process.env[PARAMETERS]).toContain(NO_MAINTENANCE);
+  expect(process.env[PARAMETERS]).toContain(NO_GIT_MAINTENANCE);
   expect(maintenanceStarted(childEnv())).toBe(0);
   const global = join(tempDir(), "gitconfig");
   writeFileSync(global, "[maintenance]\n\tauto = true\n");
@@ -255,27 +252,27 @@ test("2026-11-10-003 AC-5: a run's entry adds maintenance.auto=false to GIT_CONF
   const found = process.env[PARAMETERS];
   try {
     delete process.env[PARAMETERS];
-    const fromUnset = enterRunFolder(home);
+    const fromUnset = enterRun(home);
     try {
-      expect(process.env[PARAMETERS]).toBe(NO_MAINTENANCE);
+      expect(process.env[PARAMETERS]).toBe(NO_GIT_MAINTENANCE);
     } finally {
       fromUnset.leave();
     }
     expect(process.env[PARAMETERS]).toBeUndefined();
     const own = "'alias.zz=status'";
     process.env[PARAMETERS] = own;
-    const outer = enterRunFolder(home);
-    let inner: ReturnType<typeof enterRunFolder> | undefined;
+    const outer = enterRun(home);
+    let inner: ReturnType<typeof enterRun> | undefined;
     try {
-      const outerValue = `${own} ${NO_MAINTENANCE}`;
+      const outerValue = `${own} ${NO_GIT_MAINTENANCE}`;
       expect(process.env[PARAMETERS]).toBe(outerValue);
       // git reads both: the value that was there and the run's.
       const read = (key: string) =>
         spawnSync("git", ["config", "--get", key], { encoding: "utf8", env: childEnv() }).stdout;
       expect(read("alias.zz").trim()).toBe("status");
       expect(read("maintenance.auto").trim()).toBe("false");
-      inner = enterRunFolder(home);
-      expect(process.env[PARAMETERS]).toBe(`${outerValue} ${NO_MAINTENANCE}`);
+      inner = enterRun(home);
+      expect(process.env[PARAMETERS]).toBe(`${outerValue} ${NO_GIT_MAINTENANCE}`);
       inner.leave();
       expect(process.env[PARAMETERS]).toBe(outerValue);
       // Once: a second leave of the inner run does not move the outer run's value.
@@ -356,6 +353,22 @@ test("2026-11-10-002 AC-4: a bun test run of this repository on a file whose fix
   expect(readdirSync(tmp)).toEqual([]);
   const preload = readFileSync(join(ROOT, "packages", "engine", "tests", "preload.ts"), "utf8");
   expect(preload).toContain("sweepDeadRuns(home)");
-  expect(preload).toContain("enterRunFolder(home)");
+  expect(preload).toContain("enterRun(home)");
   expect(preload).toContain("run.leave()");
 }, 60_000);
+
+test("2026-11-11-001 AC-11 (finding 233): the tests spell git's maintenance setting and read a commit's trace in helpers.ts alone, and the preload enters the run through enterRun", () => {
+  const dir = join(ROOT, "packages/engine/tests");
+  // Built from parts, so this row's own source holds neither text.
+  const setting = ["'maintenance", "auto=false'"].join(".");
+  const reading = ["child", "start"].join("_");
+  const holders = (text: string) =>
+    readdirSync(dir)
+      .filter(
+        (name) => name.endsWith(".ts") && readFileSync(join(dir, name), "utf8").includes(text),
+      )
+      .sort();
+  expect(holders(setting)).toEqual(["helpers.ts"]);
+  expect(holders(reading)).toEqual(["helpers.ts"]);
+  expect(readFileSync(join(dir, "preload.ts"), "utf8")).toContain("enterRun(home)");
+});

@@ -14,8 +14,9 @@ import { basename, join } from "node:path";
 import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
+import { TEST_TIMEOUT_MS } from "../src/gates.ts";
 import { workDir } from "../src/paths.ts";
-import { passCount, recordTdd as record } from "../src/tdd.ts";
+import { defaultTestCommand, passCount, recordTdd as record } from "../src/tdd.ts";
 import { testRunRefusal } from "../src/test-run.ts";
 import type { RunRecord, Target } from "../src/types.ts";
 import { addCriterion, createWork } from "../src/work.ts";
@@ -114,7 +115,9 @@ test("I7: a red run that could not run (missing command, timeout) is not a red",
   expect(denied.ok).toBe(false);
   const target = s.profile.targets[0];
   if (!target) throw new Error("no target");
-  target.timeoutMs = 300;
+  // The limit of a test-first run is the test gate's (finding 235).
+  if (!target.gates.test) throw new Error("no test gate");
+  target.gates.test.timeoutMs = 300;
   const slow = await recordTdd(
     s.paths,
     s.work,
@@ -1034,4 +1037,30 @@ test("2026-11-02-002 AC-7: a step that stalls fails through within with its run'
     /no result in 500 ms; events: tdd-AC-\d+-red-\d+\.events\.txt: start \S+ "npm run test"\nspawn \+\d+ms pid \d+/,
   );
   expect(message).not.toMatch(/\nclose /);
+});
+
+test("2026-11-11-001 AC-8 (finding 235): a test-first run takes the test gate's limit: the gate's own when the profile gives one, else the target's with the twenty-minute floor, and a command that outlasts the target's limit inside the gate's own is recorded", async () => {
+  const s = setup();
+  const target = s.profile.targets[0];
+  if (!target?.gates.test) throw new Error("no test gate");
+  // No limit of the gate's own: the target's, never under the floor the gate run gives the suite.
+  target.timeoutMs = 300;
+  expect(defaultTestCommand(s.profile)?.timeoutMs).toBe(TEST_TIMEOUT_MS);
+  target.timeoutMs = TEST_TIMEOUT_MS + 1000;
+  expect(defaultTestCommand(s.profile)?.timeoutMs).toBe(TEST_TIMEOUT_MS + 1000);
+  // The gate's own decides when the profile gives one, above or below the target's.
+  target.timeoutMs = 300;
+  target.gates.test.timeoutMs = 10_000;
+  expect(defaultTestCommand(s.profile)?.timeoutMs).toBe(10_000);
+  write(s.root, "tests/second.test.sh", "sleep 1\nexit 0\n");
+  await recorded(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.preserve.id,
+    "before",
+    "sh tests/second.test.sh",
+  );
+  expect(s.evidence.tdd[0]?.before?.exit).toBe(0);
 });

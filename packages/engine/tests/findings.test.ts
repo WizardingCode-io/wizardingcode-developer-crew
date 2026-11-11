@@ -81,8 +81,9 @@ function openFindings(text: string): number[] {
 // 234 (the fixtures the tests left in the temporary folder) fixed by 2026-11-10-002.
 // 228 (a commit's detached maintenance repacking a fixture under the next git command) fixed by 2026-11-10-003,
 // which recorded 235 (a test-first run of the suite is cut at the target's ten minutes).
+// 235 fixed by 2026-11-11-001, which settled eight of 233's ten advisories; 233 stays open for the two that wait for the user.
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 233, 235,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 233,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -173,7 +174,7 @@ test("2026-11-10-002 AC-6: finding 234 reads fixed by the item, with the fixture
   expect(openFindings(text)).not.toContain(234);
 });
 
-test("2026-11-10-003 AC-7: finding 228 reads fixed by the item, with the maintenance a commit starts as its cause and the note that ruled it out corrected, and 235 is recorded open", () => {
+test("2026-11-10-003 AC-7: finding 228 reads fixed by the item, with the maintenance a commit starts as its cause and the note that ruled it out corrected", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const sectionOf = (n: number) =>
     text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
@@ -190,5 +191,36 @@ test("2026-11-10-003 AC-7: finding 228 reads fixed by the item, with the mainten
   expect(openFindings(text)).not.toContain(228);
   expect(sectionOf(235)).toContain("2026-11-10-003");
   expect(sectionOf(235)).toContain("tdd.ts");
-  expect(openFindings(text)).toContain(235);
+});
+
+test("2026-11-11-001 AC-10: finding 235 reads fixed by the item, and 233 marks each of its ten advisories taken, refused with a reason or waiting for the user's decision, and stays open for the two that wait", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const sectionOf = (n: number) =>
+    text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+  const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionOf(n))?.[1]?.trim() ?? "";
+  expect(outcomeOf(235)).toStartWith("fixed in 2026-11-11-001");
+  expect(outcomeOf(235)).toContain("gateTimeoutMs");
+  const settled =
+    sectionOf(233)
+      .split("\n")
+      .find((line) => line.startsWith("- Settled on 2026-11-11 by item `2026-11-11-001`")) ?? "";
+  const [first = "", second = ""] = settled.split(" Second batch: ");
+  const marks = (batch: string) =>
+    [...batch.matchAll(/\((\d)\) (taken|refused|waits for the user's decision)/g)].map(
+      (m) => `${m[1]} ${m[2]}`,
+    );
+  expect(first).toContain("First batch: ");
+  expect(marks(first)).toEqual([
+    "1 taken",
+    "2 taken",
+    "3 waits for the user's decision",
+    "4 waits for the user's decision",
+    "5 refused",
+  ]);
+  expect(marks(second)).toEqual(["1 taken", "2 taken", "3 taken", "4 refused", "5 refused"]);
+  // Each refusal carries its reason.
+  expect([...settled.matchAll(/refused: /g)].length).toBe(3);
+  expect(outcomeOf(233)).toContain("2026-11-11-001");
+  expect(openFindings(text)).toContain(233);
+  expect(openFindings(text)).not.toContain(235);
 });

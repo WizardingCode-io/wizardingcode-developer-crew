@@ -26,6 +26,7 @@ import {
   JUDGE_FALLBACK,
   JUDGE_MODEL,
   judgeCandidates,
+  kitCallEnvironment,
   kitEnvironment,
   oneLine,
   PROBE_TIMEOUT_MS,
@@ -4554,4 +4555,44 @@ test("2026-11-09-004 AC-29: the eval judge's id is written once in code: no othe
     return count ? [`${basename(file)}: ${count}`] : [];
   });
   expect(holding).toEqual(["eval-runner.test.ts: 1"]);
+});
+
+test("2026-11-11-001 AC-9 (finding 233): kitCallEnvironment builds a kit call's environment in the order process, call, runner, PATH, through the allowlist, and the improve script builds its judge probe and its kit call through it", () => {
+  const sources = ["process", "call", "runner"] as const;
+  const from = (who: string) => ({
+    // An allowed name all three set, a name outside the allowlist and a secret-shaped one that no call needs.
+    WIZARDINGCODE_CREW_REPO: `${who}'s`,
+    [`OUTSIDE_${who.toUpperCase()}`]: "x",
+    [`WIZARDINGCODE_${who.toUpperCase()}_TOKEN`]: "x",
+    [`ANTHROPIC_FROM_${who.toUpperCase()}`]: who,
+  });
+  const built = kitCallEnvironment({
+    process: { ...from("process"), PATH: "/process/bin", ANTHROPIC_API_KEY: "the shell's" },
+    call: { ...from("call"), ANTHROPIC_API_KEY: "the provider's" },
+    runner: from("runner"),
+    path: "/composed/bin",
+  });
+  expect(built).toEqual({
+    WIZARDINGCODE_CREW_REPO: "runner's",
+    ANTHROPIC_FROM_PROCESS: "process",
+    ANTHROPIC_FROM_CALL: "call",
+    ANTHROPIC_FROM_RUNNER: "runner",
+    // The call's credential over the shell's: a provider's emptied key must win.
+    ANTHROPIC_API_KEY: "the provider's",
+    PATH: "/composed/bin",
+  });
+  for (const who of sources) {
+    expect(built[`OUTSIDE_${who.toUpperCase()}`]).toBeUndefined();
+    expect(built[`WIZARDINGCODE_${who.toUpperCase()}_TOKEN`]).toBeUndefined();
+  }
+  // Both calls of the improve script go through it, and neither builds a PATH-carrying spread of its own.
+  const improve = readFileSync(
+    fileURLToPath(new URL("../../../scripts/improve.ts", import.meta.url)),
+    "utf8",
+  );
+  const probe = improve.slice(improve.indexOf("    probeJudge: (call) => {"));
+  const kit = improve.slice(improve.indexOf("    kit: (call) => {"));
+  expect(probe.slice(0, probe.indexOf("\n    },")).includes("kitCallEnvironment(")).toBe(true);
+  expect(kit.slice(0, kit.indexOf("\n    },")).includes("kitCallEnvironment(")).toBe(true);
+  expect(/kitEnvironment\(\{[^}]*PATH/.test(improve)).toBe(false);
 });

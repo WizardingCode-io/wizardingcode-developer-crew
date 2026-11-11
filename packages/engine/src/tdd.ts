@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { proposedByPack } from "./detect/index.ts";
 import { changedWatchedPaths } from "./fingerprint.ts";
 import { nowIso } from "./fs.ts";
+import { gateTimeoutMs } from "./gates.ts";
 import { matchesAny } from "./glob.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { joinWords, runCommand, shellRefusal } from "./run.ts";
@@ -129,7 +130,8 @@ export function defaultTestCommand(
   if (!target || !test) return null;
   return {
     command: test.command,
-    timeoutMs: target.timeoutMs,
+    // The gate run's own limit for this command: a suite the gate has time for is never cut here (finding 235).
+    timeoutMs: gateTimeoutMs(target, "test"),
     heldBy: proposedByPack(test),
   };
 }

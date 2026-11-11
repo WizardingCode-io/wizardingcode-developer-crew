@@ -121,7 +121,29 @@ export function runsHome(tmp: string, owner: number = currentUser()): string {
  * does not describe the variable's format; the row of finding 228 in helpers.test.ts fails the day
  * git stops reading it.
  */
-const NO_GIT_MAINTENANCE = "'maintenance.auto=false'";
+export const NO_GIT_MAINTENANCE = "'maintenance.auto=false'";
+
+/** What a `GIT_TRACE2_EVENT` file says of the git commands traced into it. */
+export interface GitTrace {
+  /** A `git commit` started: without it a count of zero below would prove nothing. */
+  committed: boolean;
+  /** The `git maintenance` children those commands started. */
+  maintenance: number;
+}
+
+/** Reads git's own trace of the commands run with `GIT_TRACE2_EVENT` at `file`. */
+export function gitTraceOf(file: string): GitTrace {
+  const events = readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { event: string; argv?: string[] });
+  return {
+    committed: events.some((e) => e.event === "start" && e.argv?.includes("commit") === true),
+    maintenance: events.filter(
+      (e) => e.event === "child_start" && e.argv?.includes("maintenance") === true,
+    ).length,
+  };
+}
 
 /**
  * The run's `GIT_CONFIG_PARAMETERS`, for a test that hands git an environment built from a list of
@@ -133,7 +155,7 @@ export function gitRunEnv(): NodeJS.ProcessEnv {
 }
 
 /** A run's temporary folder and the one way out of it. */
-export interface RunFolder {
+export interface TestRun {
   folder: string;
   /** Puts `TMPDIR` and git's variable back as the entry found them, then removes the folder the entry made; once. */
   leave(): void;
@@ -153,7 +175,7 @@ export interface RunFolder {
  * under `objects/17`, one fixture commit in 256, and removes the loose objects while the fixture's
  * next git command reads them.
  */
-export function enterRunFolder(home: string): RunFolder {
+export function enterRun(home: string): TestRun {
   const env = process.env;
   const folder = mkdtempSync(join(home, `crew-run-${process.pid}-`));
   const previous = env.TMPDIR;

@@ -1,7 +1,7 @@
 import { afterAll } from "bun:test";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { enterRunFolder, removeTempDirs, runsHome, sweepDeadRuns } from "./helpers.ts";
+import { enterRun, removeTempDirs, runsHome, sweepDeadRuns } from "./helpers.ts";
 
 // Named by both bunfig.toml files (the root's and the engine's). Every run of the tests gets a
 // temporary folder of its own, beside the system's: each fixture lands in it, registered with
@@ -13,7 +13,7 @@ import { enterRunFolder, removeTempDirs, runsHome, sweepDeadRuns } from "./helpe
 // their own budget.
 const home = runsHome(realpathSync(tmpdir()));
 sweepDeadRuns(home);
-const run = enterRunFolder(home);
+const run = enterRun(home);
 
 afterAll(() => {
   removeTempDirs();

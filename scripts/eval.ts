@@ -231,6 +231,22 @@ export function kitEnvironment(source: Record<string, string | undefined>): Reco
   }
   return kept;
 }
+
+/**
+ * The environment of one kit call, and of the judge probe that stands for it: the process's
+ * variables, the call's over them (a provider's credentials, an emptied key among them), the
+ * runner's own over both, then the composed PATH, through the allowlist. The runner's come after
+ * the call's because a call may carry a copy of the process's environment, and the shell's value
+ * of a name the runner sets must not reach the call.
+ */
+export function kitCallEnvironment(parts: {
+  process: Record<string, string | undefined>;
+  call: Record<string, string | undefined> | undefined;
+  runner: Record<string, string>;
+  path: string;
+}): Record<string, string> {
+  return kitEnvironment({ ...parts.process, ...parts.call, ...parts.runner, PATH: parts.path });
+}
 // The tags the sandbox can run: the three mail cases are tagged needs-real-opener (spike A6, the
 // sandbox's temporary config holds no login) and are recorded from an end-to-end run instead.
 export const SANDBOX_TAGS = [
