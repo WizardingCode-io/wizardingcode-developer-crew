@@ -8065,6 +8065,16 @@ function supersedesRefusal(work, id) {
   const by = decisions.find((d) => d.supersedes === id);
   return by ? `${id} is already superseded by ${by.id}: supersede ${by.id}` : null;
 }
+var PLACEHOLDER_WORDS = new Set(["none", "n/a", "na"]);
+function isPlaceholderQuestion(question) {
+  const marks = [...question.matchAll(/[\p{L}\p{N}]/gu)];
+  const first = marks[0];
+  const last = marks.at(-1);
+  if (first === undefined || last === undefined)
+    return true;
+  const core = question.slice(first.index, last.index + last[0].length);
+  return PLACEHOLDER_WORDS.has(core.toLowerCase());
+}
 function addDecision(work, question, dflt, supersedes) {
   const taken = (work.decisions ?? []).map((d) => Number(d.id.slice("D-".length))).filter(Number.isFinite);
   const next = taken.length ? Math.max(...taken) + 1 : 1;
@@ -17557,6 +17567,52 @@ function setConfigValue(config, key, value) {
   throw new Error(`unknown setting: ${key}`);
 }
 
+// packages/engine/src/continuations.ts
+var STANDING = "the standing grant";
+function continuationsView(work, policy) {
+  const granted = policy.team.continuations === "granted";
+  const groups = [];
+  for (const entry of work.continued ?? []) {
+    const what = oneLine(String(entry.what));
+    const task = entry.task === undefined ? undefined : oneLine(String(entry.task));
+    const standing = entry.standing === true;
+    const by = standing ? STANDING : oneLine(whoDecides(entry.by));
+    const found = groups.find((g) => g.what === what && g.task === task && g.by === by);
+    if (found)
+      found.rounds++;
+    else
+      groups.push({
+        what,
+        ...task === undefined ? {} : { task },
+        by,
+        standing,
+        counted: decisionCounts(policy, entry.by),
+        rounds: 1
+      });
+  }
+  if (!groups.length && !granted)
+    return null;
+  const targetOf = (g) => g.task === undefined ? g.what : `${g.what} ${g.task}`;
+  const targets = [...new Set(groups.map(targetOf))];
+  const parts = targets.map((target) => {
+    const mine = groups.filter((g) => targetOf(g) === target).map(groupText);
+    return `${target}: ${mine.join(", ")}`;
+  });
+  if (!parts.length)
+    parts.push("none on record");
+  if (granted)
+    parts.push("team.continuations is granted: a round past a cap needs no crew continue");
+  return {
+    line: `  continuations: ${parts.join("; ")}`,
+    data: { policy: policy.team.continuations, onRecord: groups }
+  };
+}
+function groupText(group) {
+  if (group.standing)
+    return `${group.rounds} under ${STANDING}`;
+  return `${group.rounds} by ${group.by}${group.counted ? "" : " (not counted under the policy)"}`;
+}
+
 // packages/engine/src/design-pictures.ts
 import { createHash as createHash7 } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
@@ -24786,6 +24842,9 @@ function statusView(env, active) {
   const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
   if (analysis)
     extra.unshift(analysis.origin ? `  analysis: ${originSummary(analysis.origin)}` : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`);
+  const continuations = continuationsView(work, env.policy);
+  if (continuations)
+    extra.push(continuations.line);
   extra.unshift(...openQuestions(work).map((q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`));
   const text = `${work.id} "${work.title}"
   phase ${work.phase}, ${work.abandoned ? `abandoned (${work.abandoned.reason}), ` : ""}route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}
@@ -24827,6 +24886,7 @@ ${notes.join(`
     packs: packsJson(listPacks(env.paths.userDir)),
     awaiting: work.awaiting,
     awaitingMessage: work.awaitingMessage ?? null,
+    ...continuations ? { continuations: continuations.data } : {},
     mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
     threads,
     environment: environmentState(env.paths),
@@ -26136,6 +26196,8 @@ ${originNotes.join(`
       const replaces = parsed.flags.supersedes;
       if (args[1] !== "add" || !question || replaces !== undefined && typeof replaces !== "string")
         return refuse('usage: crew decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]');
+      if (isPlaceholderQuestion(question))
+        return refuse(`"${oneLine(question)}" is no decision: under the gap round's heading "Decisions only the user can make" the word none means there is no decision, and nothing is recorded for it; a decision is a question only the user can answer`);
       const dflt = typeof parsed.flags.default === "string" ? parsed.flags.default : undefined;
       const unfit = replaces === undefined ? null : supersedesRefusal(opened.work, replaces);
       if (unfit)

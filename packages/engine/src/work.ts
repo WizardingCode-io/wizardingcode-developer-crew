@@ -607,6 +607,23 @@ export function supersedesRefusal(work: WorkItem, id: string): string | null {
   return by ? `${id} is already superseded by ${by.id}: supersede ${by.id}` : null;
 }
 
+const PLACEHOLDER_WORDS = new Set(["none", "n/a", "na"]);
+
+/**
+ * Whether a decision's text is a placeholder whole (finding 182): `none`, `n/a` or `na` in any
+ * case between its first and its last letter or digit, or a text that holds neither. The letters
+ * are any script's, so a question with no ASCII letter is a question. The marks are found one by
+ * one: a pattern anchored at both ends costs the square of a long run of punctuation in Node.
+ */
+export function isPlaceholderQuestion(question: string): boolean {
+  const marks = [...question.matchAll(/[\p{L}\p{N}]/gu)];
+  const first = marks[0];
+  const last = marks.at(-1);
+  if (first === undefined || last === undefined) return true;
+  const core = question.slice(first.index, last.index + last[0].length);
+  return PLACEHOLDER_WORDS.has(core.toLowerCase());
+}
+
 /** A decision only the user can make, found by the gap round; `D-n`, a number taken for good. */
 export function addDecision(
   work: WorkItem,

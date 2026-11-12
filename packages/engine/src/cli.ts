@@ -45,6 +45,7 @@ import {
   validateAnswers,
 } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
+import { continuationsView } from "./continuations.ts";
 import {
   appendDecision,
   type DecisionEntry,
@@ -518,6 +519,7 @@ import {
   createWork,
   debateState,
   type GuardContext,
+  isPlaceholderQuestion,
   isSkipped,
   kindLabel,
   kindOfItem,
@@ -3289,6 +3291,9 @@ function statusView(env: Env, active: Opened): Outcome {
         ? `  analysis: ${originSummary(analysis.origin)}`
         : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`,
     );
+  // The rounds past a cap on record and the policy's grant (finding 216): read here, never from memory.
+  const continuations = continuationsView(work, env.policy);
+  if (continuations) extra.push(continuations.line);
   // The open questions first (SP7 §10.3): a doubt a person has to answer comes before everything.
   extra.unshift(
     ...openQuestions(work).map(
@@ -3336,6 +3341,7 @@ function statusView(env: Env, active: Opened): Outcome {
     packs: packsJson(listPacks(env.paths.userDir)),
     awaiting: work.awaiting,
     awaitingMessage: work.awaitingMessage ?? null,
+    ...(continuations ? { continuations: continuations.data } : {}),
     mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
     // The project's threads and the environment's record (SP7b decision 18): what the mod draws.
     threads,
@@ -4932,6 +4938,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       )
         return refuse(
           'usage: crew decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]',
+        );
+      // The gap round's word for no decision is no question (finding 182): refused before anything is recorded or asked.
+      if (isPlaceholderQuestion(question))
+        return refuse(
+          `"${oneLine(question)}" is no decision: under the gap round's heading "Decisions only the user can make" the word none means there is no decision, and nothing is recorded for it; a decision is a question only the user can answer`,
         );
       const dflt = typeof parsed.flags.default === "string" ? parsed.flags.default : undefined;
       // A decision that replaces another (finding 237, D-3): refused before anything is recorded.

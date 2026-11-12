@@ -2144,3 +2144,15 @@ test("2026-11-12-001 AC-7: deliver.md has the report's decisions and checklist r
     step.indexOf("launch every `lead-<team>` seat"),
   );
 });
+
+test("2026-11-12-003 AC-7 (findings 182 and 216): the conclave reference keeps none out of crew decision add, and rule 10 reads a granted round from crew status", () => {
+  expect(readReference("conclave.md"), "finding 182: none stays in the document").toContain(
+    "The word `none` under a heading is written in the document alone: it is never given to `crew decision add`, which refuses it, since a decision is a question only the user can answer.",
+  );
+  expect(
+    readReference("rules.md"),
+    "finding 216: a granted round is read from crew status",
+  ).toContain(
+    "never a `crew continue` asked per round. Whether a further round is granted is read from the `continuations` line of `crew status` (the entries on record, who recorded each, and the grant), never from memory.",
+  );
+});

@@ -1453,7 +1453,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: the session wrote the gap round with `## Decisions only the user can make` followed by `none`, then ran `crew decision add <id> "none"` as if the word were the decision. The engine filed D-1 with the question `none`, the phase stopped at the open decision, and the session, headless with nobody to decide, ended the run with the item at the spec: honest, but nothing built, 0.33 USD spent on a run that measured nothing of the pack. The rerun built the motion and reached the gates.
 - Expected: the engine refuses a decision whose text is `none`, `n/a`, `-` or empty with a sentence naming the gap round's word (`none` under the heading means no decision; a decision is a question with consequences), so no item ever waits on a question nobody asked.
 - Evidence: `docs/evals/2026-10-27-sp9-task-10-results.md` (the first run's row: the trace's `crew decision add … "none"` call and the session's last message naming the mistake).
-- Outcome: recorded by SP9 Task 10 for the next touch of the decision command; open.
+- Outcome: fixed in 2026-11-12-003 (AC-1): `crew decision add` refuses a text that is a placeholder whole (`none`, `n/a` or `na` in any case, or a text with no letter or digit of any script), before anything is recorded or asked, and its refusal names the gap round's word. A question that holds the word among others is filed, and `references/conclave.md` says the word stays in the document (AC-7).
 
 ### 183. A role wait lets the turn end where nobody watches, so a single-turn session ends with the roles unanswered
 
@@ -1727,7 +1727,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: the leads' validation reached its cap of two rounds in a sandbox whose policy had no `team.continuations: granted`. The owner ran `crew continue <id> validation` and later set the policy, and the engine printed both. The session, resumed three times on its own transcript with the engine's lines quoted in the prompt, answered each time that a further round needed a `crew continue` it would not run, without reading the record or the policy. `crew status` does not print a continuation on record or the policy's grant, so the session had nothing on screen to contradict itself with. A fresh session on the same item read the prompt and went on.
 - Expected: a session reads the record before refusing what the record grants, and `crew status` shows a continuation or a grant where it stands.
 - Evidence: the sandbox's `session3.json` to `session5.json`, `packages/engine/src/cli.ts` (`status` prints no continuation).
-- Outcome: open. `crew status` could print the continuations on record and the policy's grant, and the skill could say that a refusal to continue is read from the engine, never from memory.
+- Outcome: fixed in 2026-11-12-003 (AC-6): `crew status` prints a `continuations` line with the entries on record grouped by what they continued and by who recorded them, an entry the policy does not count named as such, and the policy's standing grant. `crew status --json` carries the same facts, and rule 10 of `references/rules.md` says a granted round is read there, never from memory (AC-7).
 
 ### 217. The release script hides which test failed in the check
 

@@ -87,9 +87,9 @@ function openFindings(text: string): number[] {
 // with 238 (the mail lock row's one failure in a whole-suite run).
 // 238 fixed by 2026-11-11-004 (a read of a box with no lock between a writer's two writes), which recorded 239 (the same window in the repository's own store).
 // 239 fixed by 2026-11-11-005 (the store's write under its lock over the file and its hash, a read confirmed under it).
-const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224,
-];
+// 182 (crew decision add took none as a question) and 216 (crew status printed no continuation) fixed by 2026-11-12-003,
+// the first item of the consolidation the user approved on 2026-11-12 from the inventory of the eighteen open findings.
+const OPEN = [77, 114, 177, 178, 181, 183, 206, 209, 210, 212, 213, 214, 215, 221, 222, 224];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
@@ -481,4 +481,17 @@ test("2026-11-12-002 AC-3: finding 240 is recorded with its four points and read
     "stays as answered",
   ])
     expect(outcome, said).toContain(said);
+});
+
+test("2026-11-12-003 AC-5: findings 182 and 216 read fixed by the item, each naming what the engine now does", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const sectionOf = (n: number) =>
+    text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+  const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionOf(n))?.[1]?.trim() ?? "";
+  expect(outcomeOf(182)).toStartWith("fixed in 2026-11-12-003");
+  expect(outcomeOf(182)).toContain("refuses");
+  expect(outcomeOf(216)).toStartWith("fixed in 2026-11-12-003");
+  expect(outcomeOf(216)).toContain("`continuations`");
+  expect(openFindings(text)).not.toContain(182);
+  expect(openFindings(text)).not.toContain(216);
 });
