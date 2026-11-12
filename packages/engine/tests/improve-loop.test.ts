@@ -35,12 +35,12 @@ import {
   type InstallDeps,
   install,
   judgeArgs,
+  keptNote,
   LABEL,
   type LoopConfig,
   lastMeasuredOf,
   launchdPlist,
   launcherScript,
-  notRuledReason,
   parseRuling,
   pauseLoop,
   pickTargets,
@@ -3190,12 +3190,9 @@ test("2026-11-11-002 AC-32: a tick whose adoption was not ruled on Claude models
   const sentence =
     "the run was not ruled and its branch improve/2026-10-25-1 is kept: adopt it by hand (docs/improve/README.md)";
   expect(ADOPT_BY_HAND).toBe("adopt it by hand (docs/improve/README.md)");
-  expect(notRuledReason("no judge answered (x: limited)", "improve/2026-10-25-1", true)).toBe(
-    `no judge answered (x: limited); ${sentence}`,
-  );
-  expect(notRuledReason("no judge answered (x: limited)", "improve/2026-10-25-1", false)).toBe(
-    "no judge answered (x: limited)",
-  );
+  // 2026-11-12-001 AC-9: the sentence is one value; the reason built from it is read below, in the tick's notification.
+  expect(keptNote("improve/2026-10-25-1", true)).toBe(sentence);
+  expect(keptNote("improve/2026-10-25-1", false)).toBeNull();
   const lastNotice = (seen: { sh: string[][] }) =>
     seen.sh
       .filter((c) => c[0] === "osascript")
@@ -3264,4 +3261,94 @@ test("2026-11-11-002 AC-32: a tick whose adoption was not ruled on Claude models
   expect(await tick({}, gate.deps)).toBe(0);
   expect(lastNotice(gate.seen)).toContain("the gate failed");
   expect(lastNotice(gate.seen)).not.toContain("adopt it by hand");
+});
+
+test("2026-11-12-001 AC-9: a run not ruled has one value, the sentence for a person or nothing, and the adoption step tests the provider's models once for the reason and the log line", async () => {
+  expect(keptNote("improve/x", true)).toBe(
+    "the run was not ruled and its branch improve/x is kept: adopt it by hand (docs/improve/README.md)",
+  );
+  expect(keptNote("improve/x", false)).toBeNull();
+  const { fileURLToPath } = await import("node:url");
+  const source = readFileSync(
+    fileURLToPath(new URL("../../../scripts/improve-loop.ts", import.meta.url)),
+    "utf8",
+  );
+  // The block of the tick that handles a run not ruled, alone: up to the line that closes it.
+  const from = source.indexOf("      if (adopted.notRuled) {");
+  expect(from).toBeGreaterThan(-1);
+  const block = source.slice(from, source.indexOf("\n      }\n", from));
+  expect(block).toContain("keptNote(adopted.branch, provider.claudeModels)");
+  expect(block.split("provider.claudeModels").length - 1).toBe(1);
+  expect(block).toContain("reason =");
+  expect(block).toContain("log(");
+  // The function the two were made from apart is gone.
+  expect(source).not.toContain("notRuledReason");
+});
+
+test("2026-11-12-001 AC-16: the adoption writes the commit its patch is taken from, and the README's command prints that commit in another clone, and another after a push to the branch", async () => {
+  const { repo, folder } = adoptionFixture();
+  const { deps } = adoptDeps(holdsJson);
+  const calls: string[][] = [];
+  const branch = "improve/2026-10-25-1";
+  await adoptRun(
+    {
+      repo,
+      folder,
+      record: keptRecord("2026-10-25-1"),
+      provider: claude,
+      judgeSystemPrompt: "# Judge\n\nYou decide on evidence.",
+    },
+    {
+      ...deps,
+      git: (args: string[], cwd: string) => {
+        calls.push(args);
+        return deps.git(args, cwd);
+      },
+    },
+  );
+  const commit = git(repo, "rev-parse", branch).trim();
+  expect(commit).toMatch(/^[0-9a-f]{40}$/);
+  expect(readFileSync(join(folder, "adoption/commit"), "utf8")).toBe(`${commit}\n`);
+  // The patch is the diff of main to that commit, by its id, so the two cannot name two commits.
+  expect(calls).toContainEqual(["diff", `main...${commit}`]);
+  expect(calls).not.toContainEqual(["diff", `main...${branch}`]);
+
+  // The step of the README, and its command read out of it.
+  const { fileURLToPath } = await import("node:url");
+  const readme = readFileSync(
+    fileURLToPath(new URL("../../../docs/improve/README.md", import.meta.url)),
+    "utf8",
+  );
+  const hand = readme.slice(readme.indexOf("## Adopting a kept run by hand"));
+  const steps = hand.slice(hand.indexOf("\nThen:"));
+  const step = steps.split("\n").find((l) => l.startsWith("2. ")) ?? "";
+  for (const said of [
+    "`adoption/commit`",
+    "do not merge",
+    "no `adoption/commit`",
+    "`git diff origin/main...origin/<branch>`",
+  ])
+    expect(step, said).toContain(said);
+  const command = /`(git rev-parse origin\/<branch>)`/.exec(step)?.[1] ?? "";
+  expect(command).not.toBe("");
+  // A person's checkout: another clone of origin, with another length of abbreviated ids.
+  const origin = tempDir("adopt-origin-");
+  git(origin, "clone", "-q", "--bare", repo, ".");
+  const person = tempDir("adopt-person-");
+  git(person, "clone", "-q", origin, ".");
+  git(person, "config", "core.abbrev", "12");
+  const printed = () => {
+    git(person, "fetch", "-q", "origin");
+    return git(person, ...command.replace("<branch>", branch).split(" ").slice(1)).trim();
+  };
+  expect(printed()).toBe(commit);
+  // One more commit pushed to the branch after the run: the command prints another commit.
+  git(repo, "checkout", "-q", branch);
+  writeFileSync(join(repo, "plugins/core/agents/judge.md"), "# Judge\n\nPushed after the run.\n");
+  git(repo, "commit", "-q", "-am", "pushed after the run");
+  git(repo, "push", "-q", origin, branch);
+  git(repo, "checkout", "-q", "main");
+  const moved = printed();
+  expect(moved).toMatch(/^[0-9a-f]{40}$/);
+  expect(moved).not.toBe(commit);
 });

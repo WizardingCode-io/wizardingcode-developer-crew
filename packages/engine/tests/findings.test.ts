@@ -88,7 +88,7 @@ function openFindings(text: string): number[] {
 // 238 fixed by 2026-11-11-004 (a read of a box with no lock between a writer's two writes), which recorded 239 (the same window in the repository's own store).
 // 239 fixed by 2026-11-11-005 (the store's write under its lock over the file and its hash, a read confirmed under it).
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 236, 237,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -297,7 +297,7 @@ test("2026-11-11-003 AC-1: findings 236 and 237 are recorded with their date, wh
     for (const part of ["What happened", "Expected", "Evidence", "Outcome"])
       expect(section, `${n} ${part}`).toMatch(new RegExp(`\\n- ${part}: \\S.{20,}`));
     expect(section, String(n)).toContain("2026-11-11-002");
-    expect(openFindings(text)).toContain(n);
+    // Whether the two read open is the row of 2026-11-12-001 AC-11's to say: an outcome changes, the sections' parts do not.
   }
   expect(sectionIn(text, 236)).toContain("parseSpecAnswer");
   expect(sectionIn(text, 236)).toContain("packages/engine/src/spec-review.ts");
@@ -375,4 +375,70 @@ test("2026-11-11-005 AC-6: finding 239 reads fixed with its two causes, the meas
   ])
     expect(outcome, said).toContain(said);
   expect(openFindings(text)).not.toContain(239);
+});
+
+test("2026-11-12-001 AC-16: the hand adoption reads the patch, checks origin's commit against adoption/commit, merges that commit, then releases, and its last two steps stay", () => {
+  const readme = readFileSync(
+    fileURLToPath(new URL("../../../docs/improve/README.md", import.meta.url)),
+    "utf8",
+  );
+  const hand = readme.slice(readme.indexOf("## Adopting a kept run by hand"));
+  const steps = hand.slice(hand.indexOf("\nThen:"));
+  const order = [
+    "1. Read `adoption/gate.md` and `adoption/diff.patch`",
+    "2. Check that origin's branch is still the commit you read",
+    "`git rev-parse origin/<branch>`",
+    "`adoption/commit`",
+    "3. On a main brought to origin's",
+    "`git merge --no-ff <commit>`",
+    "4. Release: `bun scripts/release.ts --patch",
+    "5. ",
+    "git push origin --delete",
+    "6. ",
+    "bun scripts/improve-loop.ts resume",
+  ];
+  let at = -1;
+  for (const said of order) {
+    const next = steps.indexOf(said, at + 1);
+    expect(next, said).toBeGreaterThan(at);
+    at = next;
+  }
+  // The merge takes the commit that was checked, never the branch's name.
+  expect(steps).not.toContain("git merge --no-ff origin/<branch>");
+});
+
+test("2026-11-12-001 AC-11: findings 236 and 237 read fixed, with what was done for each point and under which decision, and point (5) said to stay", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const outcome = (n: number) =>
+    sectionIn(text, n)
+      .split("\n")
+      .find((l) => l.startsWith("- Outcome: ")) ?? "";
+  for (const n of [236, 237]) {
+    expect(outcome(n), String(n)).toStartWith("- Outcome: fixed in 2026-11-12-001");
+    expect(openFindings(text)).not.toContain(n);
+    expect(outcome(n), String(n)).toContain("Recorded by `2026-11-11-003`.");
+  }
+  for (const said of [
+    "D-1",
+    "`not given`",
+    "joins that finding",
+    "names each such line by its number and its text",
+    "`settled`",
+    "seven reviewers",
+  ])
+    expect(outcome(236), said).toContain(said);
+  for (const said of [
+    "(1)",
+    "D-2",
+    "the command its red ran",
+    "(2)",
+    "D-3",
+    "`--supersedes D-n`",
+    "(3)",
+    "`adoption/commit`",
+    "(4)",
+    "`keptNote`",
+    "(5) stays as recorded",
+  ])
+    expect(outcome(237), said).toContain(said);
 });

@@ -593,8 +593,27 @@ export function currentCriterion(work: WorkItem, criterion: Criterion): Criterio
 
 const USER: Decision = { by: "user" };
 
+/**
+ * Why `id` cannot be superseded by a new decision, or null (finding 237, D-3): it must exist, have
+ * been taken, and not be replaced already. Nothing is ever written on the decision superseded.
+ */
+export function supersedesRefusal(work: WorkItem, id: string): string | null {
+  const decisions = work.decisions ?? [];
+  const found = decisions.find((d) => d.id === id);
+  if (!found) return `unknown decision: ${id}`;
+  if (found.answer === undefined)
+    return `${id} has no answer yet: answer it, a decision is superseded once it was taken`;
+  const by = decisions.find((d) => d.supersedes === id);
+  return by ? `${id} is already superseded by ${by.id}: supersede ${by.id}` : null;
+}
+
 /** A decision only the user can make, found by the gap round; `D-n`, a number taken for good. */
-export function addDecision(work: WorkItem, question: string, dflt?: string): GapDecision {
+export function addDecision(
+  work: WorkItem,
+  question: string,
+  dflt?: string,
+  supersedes?: string,
+): GapDecision {
   const taken = (work.decisions ?? [])
     .map((d) => Number(d.id.slice("D-".length)))
     .filter(Number.isFinite);
@@ -603,6 +622,7 @@ export function addDecision(work: WorkItem, question: string, dflt?: string): Ga
     id: `D-${next}`,
     question: question.trim(),
     ...(dflt?.trim() ? { default: dflt.trim() } : {}),
+    ...(supersedes ? { supersedes } : {}),
   };
   work.decisions = [...(work.decisions ?? []), decision];
   return decision;

@@ -37,10 +37,11 @@ Nothing in code keeps a hand adoption from colliding with the loop. These three 
 Then:
 
 1. Read `adoption/gate.md` and `adoption/diff.patch` in the run's folder. This reading is the ruling the judge did not make: whoever merges answers for the judge's clause, that the change weakens no rule of the method.
-2. On a main brought to origin's (`git pull --ff-only origin main`), merge the branch: `git merge --no-ff origin/<branch>`.
-3. Release: `bun scripts/release.ts --patch --reason "<the run and its gains>"`.
-4. Once the release has finished, and not before, delete the branch on origin, as the loop does after its own release: `git push origin --delete <branch>`.
-5. `bun scripts/improve-loop.ts resume`.
+2. Check that origin's branch is still the commit you read. After the `git fetch origin` of the third precondition, `git rev-parse origin/<branch>` prints the commit in `adoption/commit`, in the run's folder. The patch is the diff of main to that commit, so the same commit is the same change. When it prints another, do not merge: the branch was pushed to after the run, and what you read is not what you would merge. A run's folder with no `adoption/commit` was written before this check existed: read `git diff origin/main...origin/<branch>` whole, in place of the patch, and take the commit `git rev-parse origin/<branch>` printed.
+3. On a main brought to origin's (`git pull --ff-only origin main`), merge that commit, by its id: `git merge --no-ff <commit>`. A fetch between the check and the merge then brings in nothing that was not checked.
+4. Release: `bun scripts/release.ts --patch --reason "<the run and its gains>"`.
+5. Once the release has finished, and not before, delete the branch on origin, as the loop does after its own release: `git push origin --delete <branch>`.
+6. `bun scripts/improve-loop.ts resume`.
 
 The way back from each step:
 

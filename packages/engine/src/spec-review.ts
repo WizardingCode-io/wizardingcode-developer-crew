@@ -202,36 +202,110 @@ export function dueStage(round: SpecRound): SpecStage | null {
   return STAGES.find((s) => !round.stages.some((r) => r.stage === s.stage)) ?? null;
 }
 
+/** The scope a finding takes when its line gave none (finding 236): never equal to itself for `settled`. */
+export const NO_SCOPE = "not given";
+
 export interface ParsedAnswer {
   findings: { severity: SpecSeverity; scope: string; text: string }[];
   /** What the section holds besides findings: the comprehension reviewer's paraphrase. */
   prose: string;
+  /** The lines read without refusing though off the four fields (finding 236), by their number in the answer. */
+  mended: { line: number; kind: "no-scope" | "joined" }[];
 }
 
-/** A reviewer's answer read, or null when it is not one: no findings section, or a line off the shape. */
-export function parseSpecAnswer(answer: string): ParsedAnswer | null {
+/** An answer that is no review: no findings section, or the finding lines whose severity cannot be read. */
+export type RefusedAnswer =
+  | { refused: "no-section" }
+  | { refused: "off-shape"; lines: { line: number; text: string }[] };
+
+/** What makes a line a finding line: `F-<n>` first, at the first column after its `- ` or under an indent or another bullet. */
+const FINDING_LABEL = /^F-\d+\b/;
+const FOUR_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+?) · (.+)$/;
+const THREE_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+)$/;
+
+/**
+ * A reviewer's answer read line by line (finding 236). A finding is one line at the first column,
+ * of the four fields or of three with no scope; a line indented under a finding ends that finding's
+ * text. Any other line that starts `F-<n>` under its indent and its bullet is off the shape and
+ * refuses the answer: no severity is guessed, and a finding line is never joined to another, whose
+ * severity would hide its own.
+ */
+export function parseSpecAnswer(answer: string): ParsedAnswer | RefusedAnswer {
   const at = answer.search(/^## Findings\s*$/m);
-  if (at === -1) return null;
+  if (at === -1) return { refused: "no-section" };
+  // The heading's own line number, from 1: the section's lines follow it.
+  const heading = answer.slice(0, at).split("\n").length;
   const body = answer.slice(at).replace(/^## Findings\s*$/m, "");
   const end = body.search(/^## /m);
   const lines = (end === -1 ? body : body.slice(0, end)).split("\n");
   const findings: ParsedAnswer["findings"] = [];
+  const mended: ParsedAnswer["mended"] = [];
+  const off: { line: number; text: string }[] = [];
   const prose: string[] = [];
-  for (const line of lines) {
-    if (!/^- F-\d+\b/.test(line)) {
-      prose.push(line);
-      continue;
+  // The finding an indented line would join: the last line read was it, or a line joined to it.
+  let open: ParsedAnswer["findings"][number] | null = null;
+  lines.forEach((raw, i) => {
+    const line = heading + i;
+    const text = raw.trim();
+    if (raw.startsWith("- ") && FINDING_LABEL.test(raw.slice(2))) {
+      const four = FOUR_FIELDS.exec(text);
+      const three = four ? null : THREE_FIELDS.exec(text);
+      if (four)
+        open = {
+          severity: four[1] as SpecSeverity,
+          scope: four[2] as string,
+          text: four[3] as string,
+        };
+      else if (three) {
+        open = { severity: three[1] as SpecSeverity, scope: NO_SCOPE, text: three[2] as string };
+        mended.push({ line, kind: "no-scope" });
+      } else {
+        open = null;
+        off.push({ line, text });
+        return;
+      }
+      findings.push(open);
+      return;
     }
-    const match = /^- F-\d+ · (Blocker|Major|Nit) · (.+?) · (.+)$/.exec(line.trim());
-    if (!match) return null;
-    findings.push({
-      severity: match[1] as SpecSeverity,
-      scope: match[2] as string,
-      text: match[3] as string,
-    });
-  }
+    // Under its bullet, with the spaces a second one leaves (`-  x`).
+    const bare = text.replace(/^[-*] /, "").trim();
+    if (FINDING_LABEL.test(bare)) {
+      open = null;
+      off.push({ line, text });
+      return;
+    }
+    if (open && text !== "" && /^[ \t]/.test(raw)) {
+      open.text = `${open.text} ${bare}`;
+      mended.push({ line, kind: "joined" });
+      return;
+    }
+    open = null;
+    prose.push(raw);
+  });
+  if (off.length) return { refused: "off-shape", lines: off };
   const text = prose.join("\n").trim();
-  return { findings, prose: text === "none" || text === "(or: none)" ? "" : text };
+  return { findings, prose: text === "none" || text === "(or: none)" ? "" : text, mended };
+}
+
+const numbered = (lines: number[]): string =>
+  lines.length === 1
+    ? `line ${lines[0]}`
+    : `lines ${lines.slice(0, -1).join(", ")} and ${lines.at(-1)}`;
+
+/** What a recorded answer's mended lines were, for the command's answer; "" when it had none. */
+export function mendedText(mended: ParsedAnswer["mended"]): string {
+  const of = (kind: "no-scope" | "joined") =>
+    mended.filter((m) => m.kind === kind).map((m) => m.line);
+  const bare = of("no-scope");
+  const joined = of("joined");
+  return [
+    bare.length ? `${numbered(bare)} had no scope (recorded as "${NO_SCOPE}")` : "",
+    joined.length
+      ? `${numbered(joined)} joined to the finding above ${joined.length === 1 ? "it" : "them"}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 }
 
 /** A stage's result written into its round: the findings take their stable ids. */
@@ -310,6 +384,10 @@ export function resolveSpecFinding(record: SpecReviewRecord, input: ResolveInput
     if (earlier.round >= f.round) return `${earlier.id} is not of an earlier round`;
     if (!closes(earlier))
       return `${earlier.id} was not contested, confirmed or declined: a fixed finding raised again stays open`;
+    // A scope the engine wrote is no scope (finding 236): two of them would pass as the same one.
+    const bare = [f, earlier].find((x) => sameScope(x.scope, NO_SCOPE));
+    if (bare)
+      return `${bare.id} was recorded with no scope: a finding with no scope cannot be settled against another by scope; fix it, contest it or give it to the person`;
     if (!sameScope(earlier.scope, f.scope))
       return `${earlier.id} has another scope ("${earlier.scope}", here "${f.scope}")`;
   }

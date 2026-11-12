@@ -1226,3 +1226,28 @@ test("2026-10-28-004 round 2 (code-quality): answerDecision refuses the validato
     by: "validator",
   });
 });
+
+test("2026-11-12-001 AC-15: a decision that supersedes another names it on itself alone; an unknown, an unanswered and an already superseded one are refused", async () => {
+  const { supersedesRefusal } = await import("../src/work.ts");
+  const work = createWork(repoPaths(makeRepo(), testEnv()), "feature");
+  addDecision(work, "Name the kept branch in status?", "yes");
+  expect(supersedesRefusal(work, "D-9")).toBe("unknown decision: D-9");
+  expect(supersedesRefusal(work, "D-1")).toBe(
+    "D-1 has no answer yet: answer it, a decision is superseded once it was taken",
+  );
+  answerDecision(work, "D-1", "yes", { by: "user" }, DEFAULT_POLICY);
+  expect(supersedesRefusal(work, "D-1")).toBeNull();
+  const first = JSON.stringify(work.decisions?.[0]);
+  const second = addDecision(work, "Name it in the notification alone?", "yes", "D-1");
+  expect(second).toEqual({
+    id: "D-2",
+    question: "Name it in the notification alone?",
+    default: "yes",
+    supersedes: "D-1",
+  });
+  // Nothing is written on the decision superseded.
+  expect(JSON.stringify(work.decisions?.[0])).toBe(first);
+  expect(supersedesRefusal(work, "D-1")).toBe("D-1 is already superseded by D-2: supersede D-2");
+  // A decision added as before carries no such field.
+  expect("supersedes" in addDecision(work, "Another?")).toBe(false);
+});

@@ -150,6 +150,8 @@ export async function recordTdd(
   step: TddStep,
   override?: string | readonly string[],
   reason?: string,
+  /** Where a line said before the run goes: the command a green took from its red (finding 237). */
+  say?: (line: string) => void,
 ): Promise<TddOutcome> {
   const criterion = work.criteria.find((c) => c.id === criterionId);
   if (!criterion) return { ok: false, message: `unknown criterion ${criterionId}` };
@@ -177,13 +179,27 @@ export async function recordTdd(
     if (why) return { ok: false, message: why };
   }
   const fallback = defaultTestCommand(profile);
-  if (override === undefined && fallback?.heldBy)
+  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
+  // A green with nothing after `--` runs its red's command (finding 237, D-2): the pair proves one
+  // command red and then green. That command passed the checks of a command after `--` when its
+  // red was recorded, or is the profile's own.
+  const fromRed = step === "green" && override === undefined ? entry?.red?.command : undefined;
+  // A pack's unconfirmed command is never run unseen: refused whenever the profile's own would run.
+  if (
+    override === undefined &&
+    fallback?.heldBy &&
+    (fromRed === undefined || fromRed === fallback.command)
+  )
     return {
       ok: false,
       message: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`,
     };
   const command =
-    typeof override === "string" ? override : override ? joinWords(override) : fallback?.command;
+    typeof override === "string"
+      ? override
+      : override
+        ? joinWords(override)
+        : (fromRed ?? fallback?.command);
   if (!command) {
     return {
       ok: false,
@@ -206,7 +222,6 @@ export async function recordTdd(
         message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`,
       };
   }
-  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
   if (step === "green" && !entry?.red)
     return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
   if (step === "after" && !entry?.before)
@@ -253,6 +268,7 @@ export async function recordTdd(
     if (recorded === "observed" && reason) target.reason = reason.trim();
   };
 
+  if (fromRed !== undefined) say?.(`green runs the red's command: ${fromRed}`);
   const log = `logs/tdd-${criterionId}-${step}-${Date.now()}.txt`;
   const result = await runCommand(command, {
     cwd: paths.root,

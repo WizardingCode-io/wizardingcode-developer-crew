@@ -1685,3 +1685,43 @@ test("2026-11-04-001 AC-44: an unavailable e2e gate gets its own line offering t
   };
   expect(line(NO_E2E_REASON, held, noE2e)).toEqual([`gate e2e unavailable: ${NO_E2E_REASON}`]);
 });
+
+test("2026-11-12-001 AC-15: the report marks the new decision at once and the superseded one only once the new one's answer counts", async () => {
+  const { addDecision, answerDecision } = await import("../src/work.ts");
+  const paths = repoPaths(makeRepo(), testEnv());
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  const lineOf = (work: WorkItem, id: string) =>
+    renderReport(work, evidence, DEFAULT_POLICY)
+      .split("\n")
+      .find((l) => l.startsWith(`- ${id}:`)) ?? "";
+  const work = workWith(paths);
+  addDecision(work, "Name the kept branch in status?", "yes");
+  answerDecision(work, "D-1", "yes", { by: "user" }, DEFAULT_POLICY);
+  // A record with no supersedes prints as before.
+  const asBefore = lineOf(work, "D-1");
+  expect(asBefore).toBe("- D-1: Name the kept branch in status? → yes, by the user");
+  addDecision(work, "Name it in the notification alone?", "yes", "D-1");
+  // The new one says what it supersedes from the add; the old one reads as before while it has no answer.
+  expect(lineOf(work, "D-2")).toBe(
+    "- D-2: Name it in the notification alone? → no answer yet · supersedes D-1",
+  );
+  expect(lineOf(work, "D-1")).toBe(asBefore);
+  // An answer that does not count (the agent's, where nobody watches, under the default policy) marks nothing.
+  answerDecision(work, "D-2", "yes", { by: "agent", mode: "dontAsk" }, DEFAULT_POLICY);
+  expect(lineOf(work, "D-2")).toContain(" · supersedes D-1");
+  expect(lineOf(work, "D-1")).toBe(asBefore);
+  // The same answer counted by the policy, and a person's answer, mark it.
+  const counting = { ...DEFAULT_POLICY, unattendedDecisions: "count" as const };
+  expect(
+    renderReport(work, evidence, counting)
+      .split("\n")
+      .find((l) => l.startsWith("- D-1:")),
+  ).toBe(`${asBefore} · superseded by D-2`);
+  const other = workWith(paths);
+  addDecision(other, "Name the kept branch in status?", "yes");
+  answerDecision(other, "D-1", "yes", { by: "user" }, DEFAULT_POLICY);
+  addDecision(other, "Name it in the notification alone?", "yes", "D-1");
+  answerDecision(other, "D-2", "yes", { by: "user", relayed: true }, DEFAULT_POLICY);
+  expect(lineOf(other, "D-1")).toBe(`${asBefore} · superseded by D-2`);
+  expect(lineOf(other, "D-2")).toContain(" · supersedes D-1");
+});

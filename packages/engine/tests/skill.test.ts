@@ -2124,3 +2124,23 @@ test("2026-11-01-002 AC-4: the calibration is on record: ADR 0021, the loop skil
   ])
     expect(results).toContain(row);
 });
+
+test("2026-11-12-001 AC-7: deliver.md has the report's decisions and checklist reason read against the last spec before the leads' brief", () => {
+  const deliver = readReference("deliver.md");
+  const step = deliver.split("\n").find((l) => l.startsWith("0. ")) ?? "";
+  for (const said of [
+    "read the report's gap round and its checklists line against the last `spec.md`",
+    "names something the design no longer has",
+    '`crew decision <id> add "<what stands now>" --default "<answer>" --supersedes D-n`',
+    "answered by the person as any decision",
+    '`crew pack files checklists none --item <id> --reason "<why>"`',
+  ])
+    expect(step, said).toContain(said);
+  // Before the leads are launched.
+  expect(step.indexOf("--supersedes D-n")).toBeLessThan(
+    step.indexOf("launch every `lead-<team>` seat"),
+  );
+  expect(step.indexOf("checklists none")).toBeLessThan(
+    step.indexOf("launch every `lead-<team>` seat"),
+  );
+});

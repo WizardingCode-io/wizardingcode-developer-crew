@@ -850,7 +850,14 @@ export function renderReport(
         d.answer === undefined
           ? "no answer yet"
           : `${d.answer}, ${decidedBy(d)}${countedNote(policy, d)}`;
-      lines.push(`- ${d.id}: ${d.question} → ${answer}${decisionMarks(d, policy)}`);
+      // A decision replaced by a later one (finding 237): the later says so from its add; the
+      // earlier is marked only once the later's answer counts, so a question nobody answered never
+      // tells a reader that a person's answer no longer stands.
+      const replacedBy = decisions.find(
+        (m) => m.supersedes === d.id && m.answer !== undefined && decisionCounts(policy, m),
+      );
+      const superseding = `${d.supersedes ? ` · supersedes ${d.supersedes}` : ""}${replacedBy ? ` · superseded by ${replacedBy.id}` : ""}`;
+      lines.push(`- ${d.id}: ${d.question} → ${answer}${decisionMarks(d, policy)}${superseding}`);
     }
     // Whether the round found a decision with consequences (SP2 §7): the debate, its reason, its close.
     const debate = work.debate;

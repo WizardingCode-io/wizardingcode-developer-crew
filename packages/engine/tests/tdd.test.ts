@@ -1064,3 +1064,99 @@ test("2026-11-11-001 AC-8 (finding 235): a test-first run takes the test gate's 
   );
   expect(s.evidence.tdd[0]?.before?.exit).toBe(0);
 });
+
+test("2026-11-12-001 AC-5: a green with nothing after -- runs its red's command, said before the run; a command after -- runs as given; a pack's held command is refused only when it is the red's", async () => {
+  const s = setup();
+  // The profile's command would pass and leave a mark: the green must not run it.
+  write(s.root, "run-tests.sh", "touch suite.txt\nexit 0\n");
+  write(s.root, "tests/own.test.sh", "exit 1\n");
+  const own = ["sh", "tests/own.test.sh"];
+  await recorded(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red", own);
+  const entry = () => s.evidence.tdd.find((t) => t.criterion === s.behaviour.id);
+  expect(entry()?.red?.command).toBe("sh tests/own.test.sh");
+  write(s.root, "tests/own.test.sh", "touch own.txt\nexit 0\n");
+  const said: { line: string; ranAlready: boolean }[] = [];
+  const say = (line: string) =>
+    void said.push({ line, ranAlready: existsSync(join(s.root, "own.txt")) });
+  const green = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.behaviour.id,
+    "green",
+    undefined,
+    undefined,
+    say,
+  );
+  expect(green.ok, green.message).toBe(true);
+  expect(entry()?.green?.command).toBe("sh tests/own.test.sh");
+  // Said once, before the command had run.
+  expect(said).toEqual([
+    { line: "green runs the red's command: sh tests/own.test.sh", ranAlready: false },
+  ]);
+  expect(existsSync(join(s.root, "own.txt"))).toBe(true);
+  expect(existsSync(join(s.root, "suite.txt"))).toBe(false);
+
+  // A command after -- runs as given, and nothing is said.
+  write(s.root, "tests/other.test.sh", "touch other.txt\nexit 0\n");
+  said.length = 0;
+  const given = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.behaviour.id,
+    "green",
+    ["sh", "tests/other.test.sh"],
+    undefined,
+    say,
+  );
+  expect(given.ok, given.message).toBe(true);
+  expect(entry()?.green?.command).toBe("sh tests/other.test.sh");
+  expect(said).toEqual([]);
+  expect(existsSync(join(s.root, "other.txt"))).toBe(true);
+
+  // A pack holds the profile's command: a green whose red ran another command still runs.
+  const target = s.profile.targets[0] as Target;
+  const profileCommand = target.gates.test?.command ?? "";
+  target.gates.test = { command: profileCommand, source: "proposed", pack: "wizardingcode-pack-x" };
+  const second = addCriterion(s.work, "y");
+  write(s.root, "tests/own.test.sh", "exit 1\n");
+  await recorded(s.paths, s.work, s.evidence, s.profile, second.id, "red", own);
+  write(s.root, "tests/own.test.sh", "exit 0\n");
+  const free = await recordTdd(s.paths, s.work, s.evidence, s.profile, second.id, "green");
+  expect(free.ok, free.message).toBe(true);
+  expect(s.evidence.tdd.find((t) => t.criterion === second.id)?.green?.command).toBe(
+    "sh tests/own.test.sh",
+  );
+  expect(existsSync(join(s.root, "suite.txt"))).toBe(false);
+
+  // A red on the profile's own command, recorded while it was confirmed; held since: the green is refused unrun.
+  target.gates.test = { command: profileCommand, source: "confirmed" };
+  write(s.root, "run-tests.sh", "exit 1\n");
+  const third = addCriterion(s.work, "z");
+  await recorded(s.paths, s.work, s.evidence, s.profile, third.id, "red");
+  expect(s.evidence.tdd.find((t) => t.criterion === third.id)?.red?.command).toBe(profileCommand);
+  target.gates.test = { command: profileCommand, source: "proposed", pack: "wizardingcode-pack-x" };
+  write(s.root, "run-tests.sh", "touch suite.txt\nexit 0\n");
+  said.length = 0;
+  const held = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    third.id,
+    "green",
+    undefined,
+    undefined,
+    say,
+  );
+  expect(held.ok).toBe(false);
+  expect(held.message).toBe(
+    "pack wizardingcode-pack-x's command is not confirmed (crew profile confirm test): pass -- <cmd> to run another",
+  );
+  expect(said).toEqual([]);
+  expect(existsSync(join(s.root, "suite.txt"))).toBe(false);
+  expect(s.evidence.tdd.find((t) => t.criterion === third.id)?.green).toBeUndefined();
+});

@@ -661,6 +661,8 @@ export interface GapDecision {
   id: string;
   question: string;
   default?: string;
+  /** The decision this one replaces (finding 237): the report marks that one once this one's answer counts. */
+  supersedes?: string;
   answer?: string;
   at?: string;
   by?: DecidedBy;

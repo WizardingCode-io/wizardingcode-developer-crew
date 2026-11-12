@@ -6,7 +6,7 @@ import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { answerFile } from "../src/hooks/subagent-stop.ts";
 import { isProtectedPath } from "../src/paths.ts";
-import { briefHash, SPEC_LENSES, STAGES } from "../src/spec-review.ts";
+import { briefHash, parseSpecAnswer, SPEC_LENSES, STAGES } from "../src/spec-review.ts";
 import { hookContext, makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const ANSWERS = (touches_infra: number, scope = 1) =>
@@ -1107,4 +1107,237 @@ test("2026-11-08-001 AC-11: the texts say two rounds, a Blocker-only clean round
   expect(loopRow).toMatchObject({ status: "refused", decision: "D-1" });
   expect(loopRow?.reason).toContain("at most two rounds");
   expect(loopRow?.reason).toContain("only an unsettled Blocker");
+});
+
+const HEAD = "# findings\nreviewer: goldfish-style\n\n## Findings\n";
+
+test("2026-11-12-001 AC-1: an answer with a finding line of no readable severity is refused with each such line named; no section has its own refusal", async () => {
+  expect(parseSpecAnswer("I read it.\n")).toEqual({ refused: "no-section" });
+  const off = parseSpecAnswer(
+    `${HEAD}- F-1 · Nit · Goals · fine\n- F-2 · Minor · Goals · no such severity\n- F-3 · Major\n- F-4 · Nit · \n`,
+  );
+  expect(off).toEqual({
+    refused: "off-shape",
+    lines: [
+      { line: 6, text: "- F-2 · Minor · Goals · no such severity" },
+      { line: 7, text: "- F-3 · Major" },
+      { line: 8, text: "- F-4 · Nit ·" },
+    ],
+  });
+  // Through the command: each refusal in its own words, and nothing recorded for the stage.
+  const t = await item();
+  await t.run("spec-review", t.id, "check");
+  expect((await t.stage(5)).code).toBe(0);
+  const before = JSON.stringify(record(t));
+  const long = `- F-2 · Minor · Goals · ${"x".repeat(200)}`;
+  const refused = await t.stage(7, {
+    "goldfish-style": `${HEAD}- F-1 · Nit · Goals · fine\n${long}\n- F-3 · Major\n`,
+  });
+  expect(refused.code).toBe(1);
+  expect(refused.text).toContain(
+    "goldfish-style's answer has 2 finding lines off the shape (- F-n · Blocker|Major|Nit · <scope> · <text>)",
+  );
+  // A line's text is cut at 120 characters.
+  expect(refused.text).toContain(`line 6 "${long.slice(0, 120)}…"`);
+  expect(refused.text).not.toContain(long.slice(0, 121));
+  expect(refused.text).toContain('line 7 "- F-3 · Major"');
+  expect(refused.text).toContain("launch it again or record it as not run");
+  expect(JSON.stringify(record(t))).toBe(before);
+  const none = await t.stage(7, { "goldfish-style": "I read it and it looks fine.\n" });
+  expect(none.code).toBe(1);
+  expect(none.text).toContain(
+    "goldfish-style's answer is no review: it has no ## Findings section",
+  );
+  expect(none.text).not.toContain("off the shape");
+  expect(JSON.stringify(record(t))).toBe(before);
+  const one = await t.stage(7, { "goldfish-style": `${HEAD}- F-1 · Minor · Goals · x\n` });
+  expect(one.text).toContain("has 1 finding line off the shape");
+});
+
+test("2026-11-12-001 AC-2: a finding line with a severity and a text and no scope is recorded with the scope not given, and the answer names the line", async () => {
+  const read = parseSpecAnswer(
+    `${HEAD}- F-1 · Nit · Goals · fine\n- F-2 · Nit · Line 113 repeats line 50\n- F-3 · Blocker · Risks · the risk is false\n`,
+  );
+  expect(read).toEqual({
+    findings: [
+      { severity: "Nit", scope: "Goals", text: "fine" },
+      { severity: "Nit", scope: "not given", text: "Line 113 repeats line 50" },
+      { severity: "Blocker", scope: "Risks", text: "the risk is false" },
+    ],
+    prose: "",
+    mended: [{ line: 6, kind: "no-scope" }],
+  });
+  const t = await item();
+  await t.run("spec-review", t.id, "check");
+  await t.stage(5);
+  const done = await t.stage(7, {
+    "goldfish-style": `${HEAD}- F-1 · Nit · Goals · fine\n- F-2 · Nit · Line 113 repeats line 50\n- F-3 · Nit · and line 60\n`,
+    "goldfish-design": `## Findings\n- F-1 · Major · no scope here either\n`,
+  });
+  expect(done.code).toBe(0);
+  expect(done.text).toContain("stage 7 recorded: 4 findings");
+  expect(done.text).toContain(
+    'goldfish-style: lines 6 and 7 had no scope (recorded as "not given")',
+  );
+  expect(done.text).toContain('goldfish-design: line 2 had no scope (recorded as "not given")');
+  const found = record(t)?.rounds.at(-1)?.findings ?? [];
+  expect(
+    found.filter((f) => f.reviewer === "goldfish-style").map((f) => [f.scope, f.text]),
+  ).toEqual([
+    ["Goals", "fine"],
+    ["not given", "Line 113 repeats line 50"],
+    ["not given", "and line 60"],
+  ]);
+  // An answer with nothing mended says nothing more than before.
+  const quiet = await t.stage(9);
+  expect(quiet.text).not.toContain("had no scope");
+  expect(quiet.text).not.toContain("joined");
+});
+
+test("2026-11-12-001 AC-3: a line indented under a finding joins that finding's text and is named; a line not indented, or after a blank line, stays outside", async () => {
+  const read = parseSpecAnswer(
+    `${HEAD}- F-1 · Major · Goals · the goal is vague\n  - it names no measure\n\tand no date\n- F-2 · Nit · Risks · short\n\n  an indented line after a blank line\nnot indented\n- F-3 · Nit · Design · last\n  * a starred bullet\n`,
+  );
+  expect(read).toEqual({
+    findings: [
+      {
+        severity: "Major",
+        scope: "Goals",
+        text: "the goal is vague it names no measure and no date",
+      },
+      { severity: "Nit", scope: "Risks", text: "short" },
+      { severity: "Nit", scope: "Design", text: "last a starred bullet" },
+    ],
+    prose: "an indented line after a blank line\nnot indented",
+    mended: [
+      { line: 6, kind: "joined" },
+      { line: 7, kind: "joined" },
+      { line: 13, kind: "joined" },
+    ],
+  });
+  // An indented line under no finding is prose.
+  const lone = parseSpecAnswer(`## Findings\n  a paraphrase, indented\n- F-1 · Nit · Goals · x\n`);
+  expect(lone).toMatchObject({ prose: "a paraphrase, indented", mended: [] });
+  const t = await item();
+  await t.run("spec-review", t.id, "check");
+  await t.stage(5);
+  const done = await t.stage(7, {
+    "goldfish-style": `${HEAD}- F-1 · Major · Goals · the goal is vague\n  - it names no measure\n- F-2 · Nit · no scope\n  and more\n  and more still\n`,
+  });
+  expect(done.code).toBe(0);
+  expect(done.text).toContain(
+    'goldfish-style: line 7 had no scope (recorded as "not given"), lines 6, 8 and 9 joined to the finding above them',
+  );
+  const texts = (record(t)?.rounds.at(-1)?.findings ?? []).map((f) => f.text);
+  expect(texts).toEqual([
+    "the goal is vague it names no measure",
+    "no scope and more and more still",
+  ]);
+  // One joined line reads in the singular.
+  const t2 = await item();
+  await t2.run("spec-review", t2.id, "check");
+  await t2.stage(5);
+  const single = await t2.stage(7, {
+    "goldfish-style": `${HEAD}- F-1 · Major · Goals · vague\n  - no measure\n`,
+  });
+  expect(single.text).toContain("goldfish-style: line 6 joined to the finding above it");
+});
+
+test("2026-11-12-001 AC-13: a finding line that is indented, starred or without its bullet refuses the answer and is never joined nor left as prose", async () => {
+  const cases: [string, number][] = [
+    // A Blocker indented under a Nit: joined, its severity would be lost.
+    [`${HEAD}- F-1 · Nit · Goals · fine\n  - F-2 · Blocker · Goals · the goal is false\n`, 6],
+    [`${HEAD}* F-1 · Blocker · Goals · the goal is false\n`, 5],
+    // An indented first finding, under nothing.
+    [`${HEAD}  - F-1 · Blocker · Goals · the goal is false\n`, 5],
+    [`${HEAD}F-1 · Nit · Goals · no bullet\n`, 5],
+    [`${HEAD}- F-1 · Nit · Goals · fine\n\tF-2 above is worse\n`, 6],
+    // More than one space after the bullet: at the first column, starred, and indented under a finding.
+    [`${HEAD}-  F-1 · Blocker · Goals · the goal is false\n`, 5],
+    [`${HEAD}*  F-1 · Blocker · Goals · the goal is false\n`, 5],
+    [`${HEAD}- F-1 · Nit · Goals · fine\n  -  F-2 · Blocker · Goals · the goal is false\n`, 6],
+  ];
+  for (const [answer, line] of cases) {
+    const read = parseSpecAnswer(answer);
+    expect(read, answer).toMatchObject({ refused: "off-shape" });
+    expect("lines" in read ? read.lines.map((l) => l.line) : [], answer).toEqual([line]);
+  }
+  const t = await item();
+  await t.run("spec-review", t.id, "check");
+  await t.stage(5);
+  const before = JSON.stringify(record(t));
+  const refused = await t.stage(7, { "goldfish-style": cases[0]?.[0] ?? "" });
+  expect(refused.code).toBe(1);
+  expect(refused.text).toContain('line 6 "- F-2 · Blocker · Goals · the goal is false"');
+  expect(JSON.stringify(record(t))).toBe(before);
+});
+
+test("2026-11-12-001 AC-14: settled is refused when either finding was recorded with no scope, and nothing is recorded", async () => {
+  const noScope = "## Findings\n- F-1 · Blocker · the goal is false\n";
+  const settle = (t: Awaited<ReturnType<typeof item>>, id: string, earlier: string) =>
+    t.run("spec-review", t.id, "resolve", id, "settled", "--reason", "x", "--earlier", earlier);
+  /** Round 1 with two contested findings (one with no scope, one on Goals) and one fixed, then round 2 open. */
+  const twoRounds = async () => {
+    const t = await item();
+    await t.run("spec-review", t.id, "check");
+    await t.stage(5, { "goldfish-zoom-out": noScope });
+    const bare = findingId(t);
+    await t.run(
+      "spec-review",
+      t.id,
+      "resolve",
+      bare,
+      "contest",
+      "--reason",
+      "x",
+      "--evidence",
+      "src/known.ts:known",
+    );
+    await t.stage(7, { "goldfish-design": blocker("Goals") });
+    const scoped = findingId(t);
+    await t.run(
+      "spec-review",
+      t.id,
+      "resolve",
+      scoped,
+      "contest",
+      "--reason",
+      "x",
+      "--evidence",
+      "src/known.ts:known",
+    );
+    // A Blocker fixed keeps round 1 from being clean, so round 2 runs (2026-11-08-001).
+    await t.stage(9, { "goldfish-readiness": blocker("Risks") });
+    await t.run("spec-review", t.id, "resolve", findingId(t), "propose-fix", "--reason", "x");
+    await t.run("spec-review", t.id, "close");
+    expect((await t.run("spec-review", t.id, "check")).code).toBe(0);
+    return { t, bare, scoped };
+  };
+  const WORDS =
+    "was recorded with no scope: a finding with no scope cannot be settled against another by scope";
+  // Both with no scope: the placeholder never equals itself.
+  const a = await twoRounds();
+  await a.t.stage(5, { "goldfish-zoom-out": noScope });
+  const laterBare = findingId(a.t);
+  const before = JSON.stringify(record(a.t));
+  const both = await settle(a.t, laterBare, a.bare);
+  expect(both.code).toBe(1);
+  expect(both.text).toContain(`${laterBare} ${WORDS}`);
+  // The later one alone.
+  const laterOnly = await settle(a.t, laterBare, a.scoped);
+  expect(laterOnly.code).toBe(1);
+  expect(laterOnly.text).toContain(`${laterBare} ${WORDS}`);
+  expect(JSON.stringify(record(a.t))).toBe(before);
+  // The earlier one alone, and a reviewer that wrote the placeholder as its scope.
+  const b = await twoRounds();
+  await b.t.stage(5, { "goldfish-zoom-out": blocker("not given") });
+  const written = findingId(b.t);
+  expect((await settle(b.t, written, b.bare)).text).toContain(WORDS);
+  await b.t.stage(7, { "goldfish-design": blocker("Goals") });
+  const laterScoped = findingId(b.t);
+  const earlierOnly = await settle(b.t, laterScoped, b.bare);
+  expect(earlierOnly.code).toBe(1);
+  expect(earlierOnly.text).toContain(`${b.bare} ${WORDS}`);
+  // Two findings of one written scope still settle.
+  expect((await settle(b.t, laterScoped, b.scoped)).code).toBe(0);
 });

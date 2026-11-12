@@ -14228,3 +14228,80 @@ test("2026-11-09-003 AC-50: a refused remove leaves the mark as it was", async (
   );
   expect(readFileSync(markPath(repoPaths(root, env)), "utf8")).toBe(before);
 });
+
+test("2026-11-12-001 AC-15: crew decision add --supersedes records the replacement, refuses three cases with nothing recorded, and the usage and the help name the flag", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const file = join(root, ".crew", "work", id, "work.json");
+  const decisions = () => JSON.stringify(JSON.parse(readFileSync(file, "utf8")).decisions ?? []);
+  await c.run("decision", id, "add", "Name the kept branch in status?", "--default", "yes");
+  const add = (...flags: string[]) =>
+    c.run(
+      "decision",
+      id,
+      "add",
+      "Name it in the notification alone?",
+      "--default",
+      "yes",
+      ...flags,
+    );
+  let before = decisions();
+  const unknown = await add("--supersedes", "D-9");
+  expect(unknown.code).toBe(1);
+  expect(unknown.err.trim()).toBe("unknown decision: D-9");
+  const unanswered = await add("--supersedes", "D-1");
+  expect(unanswered.code).toBe(1);
+  expect(unanswered.err.trim()).toBe(
+    "D-1 has no answer yet: answer it, a decision is superseded once it was taken",
+  );
+  // The flag with no decision named is the usage, which names the flag.
+  const bare = await add("--supersedes");
+  expect(bare.code).toBe(1);
+  expect(bare.err).toContain(
+    'usage: crew decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]',
+  );
+  expect(decisions()).toBe(before);
+  await c.run("decide", id, "D-1", "yes");
+  const added = await add("--supersedes", "D-1");
+  expect(added.code).toBe(0);
+  expect(added.out).toContain(
+    "D-2: Name it in the notification alone? (default: yes) · supersedes D-1",
+  );
+  const status = await c.json("status");
+  expect((status.data.decisions as { supersedes?: string }[])[1]?.supersedes).toBe("D-1");
+  before = decisions();
+  const again = await add("--supersedes", "D-1");
+  expect(again.code).toBe(1);
+  expect(again.err.trim()).toBe("D-1 is already superseded by D-2: supersede D-2");
+  expect(decisions()).toBe(before);
+  // The report: the old line is marked only once the new decision is answered.
+  const line = async (d: string) =>
+    (await c.run("evidence", id)).out.split("\n").find((l) => l.startsWith(`- ${d}:`)) ?? "";
+  expect(await line("D-2")).toContain(" · supersedes D-1");
+  expect(await line("D-1")).not.toContain("superseded");
+  await c.run("decide", id, "D-2", "yes");
+  expect(await line("D-1")).toContain(" · superseded by D-2");
+  expect((await c.run("help")).out).toContain(
+    'decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]',
+  );
+});
+
+test("2026-11-12-001 AC-5: crew tdd green with nothing after -- prints its red's command before the result, and not under --json", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "tests/own.test.sh", "exit 1\n");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "sh", "tests/own.test.sh")).code).toBe(0);
+  write(root, "tests/own.test.sh", "exit 0\n");
+  const green = await c.run("tdd", "green", id, "AC-1");
+  expect(green.code).toBe(0);
+  const said = green.out.indexOf("green runs the red's command: sh tests/own.test.sh");
+  expect(said).toBeGreaterThan(-1);
+  expect(said).toBeLessThan(green.out.indexOf("green recorded for AC-1"));
+  const json = await c.json("tdd", "green", id, "AC-1");
+  expect(json.code).toBe(0);
+  expect((json.data.record as { command: string }).command).toBe("sh tests/own.test.sh");
+});

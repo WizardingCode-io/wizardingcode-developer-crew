@@ -46,4 +46,6 @@ read: <the document's range, the standard, the files you read>
 (or: none)
 ```
 
+Every finding is one line of the four fields: the scope is required, the text holds no ` · `, and nothing is nested under a finding; what would be a second line goes into the text.
+
 Blocker: the document cannot be built as written, or states something false. Major: on the finding you name what a competent reader would build wrong, or the real risk they would miss; a finding you cannot write that sentence for is a Nit. Nit: wording, structure, repetition, headings, and anything that reads worse than it should. The session decides what to do with each finding, and no fix is yours to write.

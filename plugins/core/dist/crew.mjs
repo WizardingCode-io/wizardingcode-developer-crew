@@ -7174,33 +7174,77 @@ function openSpecRound(record, hash, at) {
 function dueStage(round) {
   return STAGES.find((s) => !round.stages.some((r) => r.stage === s.stage)) ?? null;
 }
+var NO_SCOPE = "not given";
+var FINDING_LABEL = /^F-\d+\b/;
+var FOUR_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+?) · (.+)$/;
+var THREE_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+)$/;
 function parseSpecAnswer(answer) {
   const at = answer.search(/^## Findings\s*$/m);
   if (at === -1)
-    return null;
+    return { refused: "no-section" };
+  const heading = answer.slice(0, at).split(`
+`).length;
   const body = answer.slice(at).replace(/^## Findings\s*$/m, "");
   const end = body.search(/^## /m);
   const lines = (end === -1 ? body : body.slice(0, end)).split(`
 `);
   const findings = [];
+  const mended = [];
+  const off = [];
   const prose = [];
-  for (const line of lines) {
-    if (!/^- F-\d+\b/.test(line)) {
-      prose.push(line);
-      continue;
+  let open = null;
+  lines.forEach((raw, i) => {
+    const line = heading + i;
+    const text = raw.trim();
+    if (raw.startsWith("- ") && FINDING_LABEL.test(raw.slice(2))) {
+      const four = FOUR_FIELDS.exec(text);
+      const three = four ? null : THREE_FIELDS.exec(text);
+      if (four)
+        open = {
+          severity: four[1],
+          scope: four[2],
+          text: four[3]
+        };
+      else if (three) {
+        open = { severity: three[1], scope: NO_SCOPE, text: three[2] };
+        mended.push({ line, kind: "no-scope" });
+      } else {
+        open = null;
+        off.push({ line, text });
+        return;
+      }
+      findings.push(open);
+      return;
     }
-    const match = /^- F-\d+ · (Blocker|Major|Nit) · (.+?) · (.+)$/.exec(line.trim());
-    if (!match)
-      return null;
-    findings.push({
-      severity: match[1],
-      scope: match[2],
-      text: match[3]
-    });
-  }
+    const bare = text.replace(/^[-*] /, "").trim();
+    if (FINDING_LABEL.test(bare)) {
+      open = null;
+      off.push({ line, text });
+      return;
+    }
+    if (open && text !== "" && /^[ \t]/.test(raw)) {
+      open.text = `${open.text} ${bare}`;
+      mended.push({ line, kind: "joined" });
+      return;
+    }
+    open = null;
+    prose.push(raw);
+  });
+  if (off.length)
+    return { refused: "off-shape", lines: off };
   const text = prose.join(`
 `).trim();
-  return { findings, prose: text === "none" || text === "(or: none)" ? "" : text };
+  return { findings, prose: text === "none" || text === "(or: none)" ? "" : text, mended };
+}
+var numbered2 = (lines) => lines.length === 1 ? `line ${lines[0]}` : `lines ${lines.slice(0, -1).join(", ")} and ${lines.at(-1)}`;
+function mendedText(mended) {
+  const of = (kind) => mended.filter((m) => m.kind === kind).map((m) => m.line);
+  const bare = of("no-scope");
+  const joined = of("joined");
+  return [
+    bare.length ? `${numbered2(bare)} had no scope (recorded as "${NO_SCOPE}")` : "",
+    joined.length ? `${numbered2(joined)} joined to the finding above ${joined.length === 1 ? "it" : "them"}` : ""
+  ].filter(Boolean).join(", ");
 }
 function recordSpecStage(round, stage, answers) {
   const reviewers = {};
@@ -7259,6 +7303,9 @@ function resolveSpecFinding(record, input) {
       return `${earlier.id} is not of an earlier round`;
     if (!closes(earlier))
       return `${earlier.id} was not contested, confirmed or declined: a fixed finding raised again stays open`;
+    const bare = [f, earlier].find((x) => sameScope(x.scope, NO_SCOPE));
+    if (bare)
+      return `${bare.id} was recorded with no scope: a finding with no scope cannot be settled against another by scope; fix it, contest it or give it to the person`;
     if (!sameScope(earlier.scope, f.scope))
       return `${earlier.id} has another scope ("${earlier.scope}", here "${f.scope}")`;
   }
@@ -8007,13 +8054,24 @@ function currentCriterion(work, criterion) {
   return current;
 }
 var USER = { by: "user" };
-function addDecision(work, question, dflt) {
+function supersedesRefusal(work, id) {
+  const decisions = work.decisions ?? [];
+  const found = decisions.find((d) => d.id === id);
+  if (!found)
+    return `unknown decision: ${id}`;
+  if (found.answer === undefined)
+    return `${id} has no answer yet: answer it, a decision is superseded once it was taken`;
+  const by = decisions.find((d) => d.supersedes === id);
+  return by ? `${id} is already superseded by ${by.id}: supersede ${by.id}` : null;
+}
+function addDecision(work, question, dflt, supersedes) {
   const taken = (work.decisions ?? []).map((d) => Number(d.id.slice("D-".length))).filter(Number.isFinite);
   const next = taken.length ? Math.max(...taken) + 1 : 1;
   const decision = {
     id: `D-${next}`,
     question: question.trim(),
-    ...dflt?.trim() ? { default: dflt.trim() } : {}
+    ...dflt?.trim() ? { default: dflt.trim() } : {},
+    ...supersedes ? { supersedes } : {}
   };
   work.decisions = [...work.decisions ?? [], decision];
   return decision;
@@ -15481,7 +15539,7 @@ function defaultTestCommand(profile) {
     heldBy: proposedByPack(test)
   };
 }
-async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason) {
+async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason, say) {
   const criterion = work.criteria.find((c) => c.id === criterionId);
   if (!criterion)
     return { ok: false, message: `unknown criterion ${criterionId}` };
@@ -15506,12 +15564,14 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
       return { ok: false, message: why };
   }
   const fallback = defaultTestCommand(profile);
-  if (override === undefined && fallback?.heldBy)
+  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
+  const fromRed = step === "green" && override === undefined ? entry?.red?.command : undefined;
+  if (override === undefined && fallback?.heldBy && (fromRed === undefined || fromRed === fallback.command))
     return {
       ok: false,
       message: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`
     };
-  const command = typeof override === "string" ? override : override ? joinWords(override) : fallback?.command;
+  const command = typeof override === "string" ? override : override ? joinWords(override) : fromRed ?? fallback?.command;
   if (!command) {
     return {
       ok: false,
@@ -15532,7 +15592,6 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
         message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`
       };
   }
-  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
   if (step === "green" && !entry?.red)
     return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
   if (step === "after" && !entry?.before)
@@ -15568,6 +15627,8 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
     if (recorded === "observed" && reason)
       target.reason = reason.trim();
   };
+  if (fromRed !== undefined)
+    say?.(`green runs the red's command: ${fromRed}`);
   const log = `logs/tdd-${criterionId}-${step}-${Date.now()}.txt`;
   const result = await runCommand(command, {
     cwd: paths.root,
@@ -16539,7 +16600,9 @@ function renderReport(work, evidence, policy, options = {}) {
     lines.push("", "## Gap round", "");
     for (const d of decisions) {
       const answer = d.answer === undefined ? "no answer yet" : `${d.answer}, ${decidedBy(d)}${countedNote(policy, d)}`;
-      lines.push(`- ${d.id}: ${d.question} → ${answer}${decisionMarks(d, policy)}`);
+      const replacedBy = decisions.find((m) => m.supersedes === d.id && m.answer !== undefined && decisionCounts(policy, m));
+      const superseding = `${d.supersedes ? ` · supersedes ${d.supersedes}` : ""}${replacedBy ? ` · superseded by ${replacedBy.id}` : ""}`;
+      lines.push(`- ${d.id}: ${d.question} → ${answer}${decisionMarks(d, policy)}${superseding}`);
     }
     const debate = work.debate;
     lines.push(debate ? `- Debate: opened (${debate.reason}), ${debate.closedAt ? "closed" : "open"}${debate.tokens !== undefined ? `, ${debate.tokens} tokens` : ""}` : "- Debate: none");
@@ -22872,7 +22935,7 @@ var KNOWN_FLAGS = {
   design: ["invention", "seed", "redraw", "reason", "regions"],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
-  decision: ["default"],
+  decision: ["default", "supersedes"],
   debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
   objection: ["by", "severity", "criterion", "reason", "mode"],
@@ -24206,7 +24269,7 @@ function supersedeCommand(env, opened, parsed, args) {
   });
   return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
 }
-async function tddCommand(env, parsed, args) {
+async function tddCommand(env, parsed, args, say) {
   const [step, id, criterion] = args;
   const opened = openForChange(env, id);
   if (isOutcome(opened))
@@ -24218,7 +24281,7 @@ async function tddCommand(env, parsed, args) {
   const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
   if (step === "observed" && reason?.trim() && !override)
     return refuse("crew tdd observed needs -- <a command that reads the artefact>");
-  const outcome = await withRunning(env.paths, opened.work.id, env.session, `crew tdd ${step} ${opened.work.id} ${criterion}`, () => recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason));
+  const outcome = await withRunning(env.paths, opened.work.id, env.session, `crew tdd ${step} ${opened.work.id} ${criterion}`, () => recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason, say));
   const tail = outcome.record?.tail ? `
 ${outcome.record.tail}` : "";
   if (!outcome.ok)
@@ -24807,7 +24870,8 @@ ${notes.join(`
       id: d.id,
       question: d.question,
       ...d.answer !== undefined ? { answer: d.answer } : {},
-      ...d.by ? { by: d.by } : {}
+      ...d.by ? { by: d.by } : {},
+      ...d.supersedes ? { supersedes: d.supersedes } : {}
     })),
     objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
       id: o.id,
@@ -25000,8 +25064,12 @@ function specReviewCommand(env, args, parsed) {
         if (record.agentIds.includes(row.agentId))
           return refuse(`${role}'s answer comes from an agent already recorded: a reviewer is fresh every time: launch a new one, never resume it`);
         const answer = parseSpecAnswer(text);
-        if (!answer)
-          return refuse(`${role}'s answer is no review: it has no ## Findings section with lines of the shape, launch it again or ${notRunWay}`);
+        if ("refused" in answer) {
+          if (answer.refused === "no-section")
+            return refuse(`${role}'s answer is no review: it has no ## Findings section, launch it again or ${notRunWay}`);
+          const named = answer.lines.map((l) => `line ${l.line} "${l.text.length > 120 ? `${l.text.slice(0, 120)}…` : l.text}"`).join("; ");
+          return refuse(`${role}'s answer has ${answer.lines.length} finding line${answer.lines.length === 1 ? "" : "s"} off the shape (- F-n · Blocker|Major|Nit · <scope> · <text>): ${named}, launch it again or ${notRunWay}`);
+        }
         answers.push({ role, parsed: answer, text, agentId: row.agentId });
       }
       recordSpecStage(round, due, answers);
@@ -25016,7 +25084,11 @@ function specReviewCommand(env, args, parsed) {
         return refuse(unsaved);
       const next = dueStage(round);
       const count = round.findings.filter((f) => f.stage === due.stage).length;
-      return ok(`stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`, {});
+      const mended = answers.flatMap((a) => {
+        const text = a.parsed ? mendedText(a.parsed.mended) : "";
+        return text ? [`; ${a.role}: ${text}`] : [];
+      }).join("");
+      return ok(`stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}${mended}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`, {});
     }
     case "brief": {
       const text = readText(join65(dir, "concepts_brief.md"));
@@ -26060,10 +26132,14 @@ ${originNotes.join(`
       if (isOutcome(opened))
         return opened;
       const question = args.slice(2).join(" ").trim();
-      if (args[1] !== "add" || !question)
-        return refuse('usage: crew decision <id> add "<question>" [--default "<answer>"]');
+      const replaces = parsed.flags.supersedes;
+      if (args[1] !== "add" || !question || replaces !== undefined && typeof replaces !== "string")
+        return refuse('usage: crew decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]');
       const dflt = typeof parsed.flags.default === "string" ? parsed.flags.default : undefined;
-      const decision = addDecision(opened.work, question, dflt);
+      const unfit = replaces === undefined ? null : supersedesRefusal(opened.work, replaces);
+      if (unfit)
+        return refuse(unfit);
+      const decision = addDecision(opened.work, question, dflt, replaces);
       let markLine = "";
       const jev = jevConfig(io.env, env.config);
       if (jev.configured && askAllowed(env.policy, "decision")) {
@@ -26078,7 +26154,7 @@ ${originNotes.join(`
         markLine = askLine(env, opened.work, outcome, outcome.marks ? decisionMarkText(decision.jev, env.policy) : null);
       } else
         saveWork(env.paths, opened.work);
-      return ok(`${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}${markLine}`, { decision });
+      return ok(`${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}${replaces ? ` · supersedes ${replaces}` : ""}${markLine}`, { decision });
     }
     case "debate": {
       const opened = openForChange(env, args[0]);
@@ -26569,7 +26645,10 @@ ${notes.join(`
       return refuse(usage);
     }
     case "tdd":
-      return tddCommand(env, parsed, args);
+      return tddCommand(env, parsed, args, (line) => {
+        if (parsed.flags.json !== true)
+          io.stdout(line);
+      });
     case "gate": {
       const opened = openForChange(env, args[1]);
       if (isOutcome(opened))
@@ -27871,7 +27950,7 @@ var HELP = `crew ${VERSION}
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   criteria <id> supersede <AC-n> --by <AC-m>   AC-m's text replaces AC-n's: the report shows both, the verdict reads AC-m, AC-n's records stay (a kind at least as strict; no objection left on AC-n)
   abandon <id> --reason "<why>"         close an item the user drops: their decision on record; the item leaves the open items and the active slot, nothing changes it again, every file stays readable (asks the user)
-  decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
+  decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]   a decision only the user can make (gap round); --supersedes: it replaces D-n, which the report marks once this one is answered
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
       --mode <mode> --validator stated-default   no person watching: the validator takes the default
   objection <id> add "<text>" --by <role> --severity blocking|advisory   file an objection (ledger)

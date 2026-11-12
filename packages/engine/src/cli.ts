@@ -350,6 +350,7 @@ import {
   closeSpecRound,
   dueStage,
   emptySpecReview,
+  mendedText,
   openSpecRound,
   type ParsedAnswer,
   parseSpecAnswer,
@@ -533,6 +534,7 @@ import {
   removeCriterion,
   saveWork,
   supersedeCriterion,
+  supersedesRefusal,
   validatorPreconditions,
   waitingPhrase,
   waitingText,
@@ -577,7 +579,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   design: ["invention", "seed", "redraw", "reason", "regions"],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
-  decision: ["default"],
+  decision: ["default", "supersedes"],
   debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
   objection: ["by", "severity", "criterion", "reason", "mode"],
@@ -2553,7 +2555,12 @@ function supersedeCommand(env: Env, opened: Opened, parsed: Parsed, args: string
 }
 
 /** A test-first record: the run outside any lock, the record applied under it (finding 81; its own function, finding 82). */
-async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Outcome> {
+async function tddCommand(
+  env: Env,
+  parsed: Parsed,
+  args: string[],
+  say: (line: string) => void,
+): Promise<Outcome> {
   const [step, id, criterion] = args;
   const opened = openForChange(env, id);
   if (isOutcome(opened)) return opened;
@@ -2583,6 +2590,7 @@ async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Out
         step as TddStep,
         override,
         reason,
+        say,
       ),
   );
   const tail = outcome.record?.tail ? `\n${outcome.record.tail}` : "";
@@ -3386,6 +3394,7 @@ function statusView(env: Env, active: Opened): Outcome {
       question: d.question,
       ...(d.answer !== undefined ? { answer: d.answer } : {}),
       ...(d.by ? { by: d.by } : {}),
+      ...(d.supersedes ? { supersedes: d.supersedes } : {}),
     })),
     objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
       id: o.id,
@@ -3622,10 +3631,22 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
             `${role}'s answer comes from an agent already recorded: a reviewer is fresh every time: launch a new one, never resume it`,
           );
         const answer = parseSpecAnswer(text);
-        if (!answer)
+        if ("refused" in answer) {
+          if (answer.refused === "no-section")
+            return refuse(
+              `${role}'s answer is no review: it has no ## Findings section, launch it again or ${notRunWay}`,
+            );
+          // Each line off the shape by its number and its text (finding 236), so the cause is read at once.
+          const named = answer.lines
+            .map(
+              (l) =>
+                `line ${l.line} "${l.text.length > 120 ? `${l.text.slice(0, 120)}…` : l.text}"`,
+            )
+            .join("; ");
           return refuse(
-            `${role}'s answer is no review: it has no ## Findings section with lines of the shape, launch it again or ${notRunWay}`,
+            `${role}'s answer has ${answer.lines.length} finding line${answer.lines.length === 1 ? "" : "s"} off the shape (- F-n · Blocker|Major|Nit · <scope> · <text>): ${named}, launch it again or ${notRunWay}`,
           );
+        }
         answers.push({ role, parsed: answer, text, agentId: row.agentId });
       }
       recordSpecStage(round, due, answers);
@@ -3641,8 +3662,15 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
       if (unsaved) return refuse(unsaved);
       const next = dueStage(round);
       const count = round.findings.filter((f) => f.stage === due.stage).length;
+      // What the engine read without refusing is said, never silent (finding 236).
+      const mended = answers
+        .flatMap((a) => {
+          const text = a.parsed ? mendedText(a.parsed.mended) : "";
+          return text ? [`; ${a.role}: ${text}`] : [];
+        })
+        .join("");
       return ok(
-        `stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`,
+        `stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}${mended}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`,
         {},
       );
     }
@@ -4896,10 +4924,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const question = args.slice(2).join(" ").trim();
-      if (args[1] !== "add" || !question)
-        return refuse('usage: crew decision <id> add "<question>" [--default "<answer>"]');
+      const replaces = parsed.flags.supersedes;
+      if (
+        args[1] !== "add" ||
+        !question ||
+        (replaces !== undefined && typeof replaces !== "string")
+      )
+        return refuse(
+          'usage: crew decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]',
+        );
       const dflt = typeof parsed.flags.default === "string" ? parsed.flags.default : undefined;
-      const decision = addDecision(opened.work, question, dflt);
+      // A decision that replaces another (finding 237, D-3): refused before anything is recorded.
+      const unfit = replaces === undefined ? null : supersedesRefusal(opened.work, replaces);
+      if (unfit) return refuse(unfit);
+      const decision = addDecision(opened.work, question, dflt, replaces);
       // Jev's marks on the decision (2026-10-28-004, D-3): the default conservative or not, the
       // question the user's or not; printed under the line and kept on the record.
       let markLine = "";
@@ -4920,7 +4958,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         );
       } else saveWork(env.paths, opened.work);
       return ok(
-        `${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}${markLine}`,
+        `${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}${replaces ? ` · supersedes ${replaces}` : ""}${markLine}`,
         { decision },
       );
     }
@@ -5501,7 +5539,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return refuse(usage);
     }
     case "tdd":
-      return tddCommand(env, parsed, args);
+      // A line said before the run would break a --json answer, whose record names the command.
+      return tddCommand(env, parsed, args, (line) => {
+        if (parsed.flags.json !== true) io.stdout(line);
+      });
     case "gate": {
       const opened = openForChange(env, args[1]);
       if (isOutcome(opened)) return opened;
@@ -7181,7 +7222,7 @@ const HELP = `crew ${VERSION}
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   criteria <id> supersede <AC-n> --by <AC-m>   AC-m's text replaces AC-n's: the report shows both, the verdict reads AC-m, AC-n's records stay (a kind at least as strict; no objection left on AC-n)
   abandon <id> --reason "<why>"         close an item the user drops: their decision on record; the item leaves the open items and the active slot, nothing changes it again, every file stays readable (asks the user)
-  decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
+  decision <id> add "<question>" [--default "<answer>"] [--supersedes D-n]   a decision only the user can make (gap round); --supersedes: it replaces D-n, which the report marks once this one is answered
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
       --mode <mode> --validator stated-default   no person watching: the validator takes the default
   objection <id> add "<text>" --by <role> --severity blocking|advisory   file an objection (ledger)

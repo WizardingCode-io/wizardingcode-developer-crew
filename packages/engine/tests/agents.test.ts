@@ -403,3 +403,19 @@ test("2026-10-31-004 AC-3: the hook, the mail and the model table know every gol
     expect(mod, name).toContain(`'${name}'`);
   }
 });
+
+test("2026-11-12-001 AC-12: each of the seven document reviewers states the rule of a finding line, right after its answer's shape", () => {
+  const RULE =
+    "Every finding is one line of the four fields: the scope is required, the text holds no ` · `, and nothing is nested under a finding; what would be a second line goes into the text.";
+  const seven = GOLDFISH.filter((n) => n !== "goldfish-explorer");
+  expect(seven.length).toBe(7);
+  for (const name of seven) {
+    const body = agent(name).body;
+    expect(body, name).toContain(RULE);
+    // After the shape, before the severities' definitions.
+    const at = body.indexOf(RULE);
+    expect(body.indexOf("- F-1 · Blocker|Major|Nit ·"), name).toBeLessThan(at);
+    expect(at, name).toBeLessThan(body.indexOf("Blocker: the document cannot be built as written"));
+  }
+  expect(agent("goldfish-explorer").body).not.toContain("one line of the four fields");
+});

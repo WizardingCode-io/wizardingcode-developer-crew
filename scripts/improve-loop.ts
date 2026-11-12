@@ -847,7 +847,12 @@ export async function adoptRun(
     deps.log(`adoption of ${record.run}: the gate failed: ${gate.clause}`);
     return { released: null, reason: `the gate failed: ${gate.clause}` };
   }
-  write("diff.patch", deps.git(["diff", `main...${branch}`], repo).stdout);
+  // The commit the patch is taken from, by its id (finding 237): a person adopting the run by hand
+  // checks origin's branch against it, and the patch is cut from the id written, never from the
+  // branch's name a second time, so the file and the patch cannot name two commits.
+  const commit = deps.git(["rev-parse", branch], repo).stdout.trim();
+  write("commit", `${commit}\n`);
+  write("diff.patch", deps.git(["diff", `main...${commit}`], repo).stdout);
   // The judge of the ruling, chosen as a run's is (2026-11-09-004 D-3): the first candidate that
   // answers its probe in the provider's environment. No probe's output is written anywhere but the log.
   const title = `# Ruling of ${record.run} (${ADOPTION_RULE})`;
@@ -971,18 +976,16 @@ export async function adoptRun(
 export const ADOPT_BY_HAND = "adopt it by hand (docs/improve/README.md)";
 
 /**
- * The notification's reason for an adoption that ruled nothing (2026-11-11-002, D-3): the loop
- * never offers the run again, so the reason names its branch for a person. A run measured on a
- * provider that is not Claude models gains no words: the loop's own rule never releases one
- * (ADR 0015, decision 3), so no person is asked to.
+ * What a person is told of an adoption that ruled nothing (2026-11-11-002, D-3): the loop never
+ * offers the run again, so the sentence names its branch, in the notification's reason and in the
+ * log. A run measured on a provider that is not Claude models has none: the loop's own rule never
+ * releases one (ADR 0015, decision 3), so no person is asked to. One value for the two places
+ * (finding 237): the sentence, or null.
  */
-export function notRuledReason(reason: string, branch: string, claudeModels: boolean): string {
-  return claudeModels ? `${reason}; ${keptForAPerson(branch)}` : reason;
-}
-
-/** The sentence that names a kept branch for a person, in the notification and in the log. */
-function keptForAPerson(branch: string): string {
-  return `the run was not ruled and its branch ${branch} is kept: ${ADOPT_BY_HAND}`;
+export function keptNote(branch: string, claudeModels: boolean): string | null {
+  return claudeModels
+    ? `the run was not ruled and its branch ${branch} is kept: ${ADOPT_BY_HAND}`
+    : null;
 }
 
 /** The configuration file's own content, or nothing. */
@@ -1812,9 +1815,11 @@ export async function tick(
       if (adopted.notRuled) {
         // Nothing decided against the run and the loop never offers it again: a person is told.
         // The branch is the one the adoption read; its reason is already in the log.
-        reason = notRuledReason(adopted.reason, adopted.branch, provider.claudeModels);
-        if (provider.claudeModels)
-          log(`adoption of ${latest.run}: ${keptForAPerson(adopted.branch)}`);
+        const note = keptNote(adopted.branch, provider.claudeModels);
+        if (note !== null) {
+          reason = `${adopted.reason}; ${note}`;
+          log(`adoption of ${latest.run}: ${note}`);
+        }
       }
       // The adoption's files and the day's report, with what the release did.
       writeDayReport();
