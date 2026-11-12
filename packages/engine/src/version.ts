@@ -1,4 +1,4 @@
-export const VERSION = "0.23.3";
+export const VERSION = "0.23.4";
 
 /** Two `X.Y.Z` versions compared part by part: -1, 0 or 1 as `a` is older than, equal to or newer than `b`. */
 export function compareVersions(a: string, b: string): -1 | 0 | 1 {
