@@ -32,7 +32,7 @@ import { clearWorking, recordWorking, workingRoles } from "../src/state.ts";
 import * as store from "../src/store.ts";
 import { ROLE_NAMES } from "../src/team.ts";
 import type { Mailbox, RoleRecord, WorkItem } from "../src/types.ts";
-import { replyFile } from "../src/validation.ts";
+import { fileHash, replyFile } from "../src/validation.ts";
 import {
   activeWork,
   addCriterion,
@@ -371,6 +371,13 @@ test("SP2c AC-3: SubagentStop saves the answer, records the role and its tokens,
       file: "review/code-quality.findings.md",
       // SP7a: the registry's team of the reviewer travels with the record.
       team: "backend",
+      // Finding 242: the hash of the content filed, so a later record can tell it from a rewrite.
+      fileHash: fileHash(
+        readFileSync(
+          join(root, ".crew", "work", work.id, "review", "code-quality.findings.md"),
+          "utf8",
+        ),
+      ),
     },
     {
       agent: "judge",
@@ -379,6 +386,9 @@ test("SP2c AC-3: SubagentStop saves the answer, records the role and its tokens,
       tokens: 1200,
       tokensFrom: "transcript",
       file: "review/ruling.json",
+      fileHash: fileHash(
+        readFileSync(join(root, ".crew", "work", work.id, "review", "ruling.json"), "utf8"),
+      ),
     },
   ]);
   // Another plugin's agent, and a role with no transcript: ignored, and recorded with tokens unread.

@@ -77,6 +77,8 @@ import {
   filedRuling,
   git,
   hookContext,
+  leadAnswerText,
+  registerFiled,
   repoPaths,
   spyMailReads,
   tempDir,
@@ -2673,13 +2675,22 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
   );
 });
 
-/** A lead's `validated` file for the item, written where the hook would save it. */
-function leadFile(root: string, id: string, lead: string, body?: string): string {
-  const text =
-    body ??
-    `# ${lead.replace(/^lead-/, "")} lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`;
-  write(root, `.crew/work/${id}/conclave/${lead}.md`, text);
-  return `.crew/work/${id}/conclave/${lead}.md`;
+/**
+ * A lead's answer for `crew validation record --file`, at the place and under the name the row
+ * gives it, put on record as the answer a role filed (finding 242, `registerFiled`): the rows of
+ * this file pin those names in the engine's lines.
+ */
+function leadFile(
+  env: NodeJS.ProcessEnv,
+  root: string,
+  id: string,
+  lead: string,
+  body?: string,
+): string {
+  const file = `.crew/work/${id}/conclave/${lead}.md`;
+  write(root, file, body ?? leadAnswerText(id, lead, "spec"));
+  registerFiled(env, root, id, file);
+  return file;
 }
 
 /** Records every lead seat's validation of the spec, as the method asks before the plan (SP7a). */
@@ -2695,7 +2706,7 @@ async function validateLeads(c: ReturnType<typeof io>, root: string, id: string)
       "--by",
       seat.role,
       "--file",
-      leadFile(root, id, seat.role),
+      leadFile(c.env, root, id, seat.role),
     );
     if (recorded.code !== 0) throw new Error(recorded.err || recorded.out);
   }
@@ -2786,7 +2797,7 @@ test("SP7a-Task5 AC-2: every decision taken or recorded lands in the project's r
         "--by",
         "lead-security",
         "--file",
-        leadFile(root, id, "lead-security", returned),
+        leadFile(c.env, root, id, "lead-security", returned),
       )
     ).code,
   ).toBe(0);
@@ -2912,7 +2923,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--by",
         "lead-etl",
         "--file",
-        leadFile(root, id, "lead-etl"),
+        leadFile(c.env, root, id, "lead-etl"),
       )
     ).err.trim(),
   ).toBe(`lead-etl is not a seat of ${id} (crew team ${id} prints the seats)`);
@@ -2933,6 +2944,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     ).err.trim(),
   ).toBe(`no validation file at ${join(root, "nowhere.md")}`);
   const bad = leadFile(
+    c.env,
     root,
     id,
     "lead-qa",
@@ -2962,7 +2974,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--by",
         "lead-qa",
         "--file",
-        leadFile(root, id, "lead-qa"),
+        leadFile(c.env, root, id, "lead-qa"),
       )
     ).out.split("\n")[0],
   ).toBe("validation of spec by lead-qa: validated (round 1)");
@@ -2978,7 +2990,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--by",
         "lead-security",
         "--file",
-        leadFile(root, id, "lead-security", returned),
+        leadFile(c.env, root, id, "lead-security", returned),
       )
     ).out.split("\n")[0],
   ).toBe("validation of spec by lead-security: returned, 1 return (round 1)");
@@ -3004,6 +3016,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "lead-qa",
         "--file",
         leadFile(
+          c.env,
           root,
           id,
           "lead-qa",
@@ -3023,7 +3036,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--by",
         "lead-security",
         "--file",
-        leadFile(root, id, "lead-security"),
+        leadFile(c.env, root, id, "lead-security"),
       )
     ).code,
   ).toBe(0);
@@ -3048,6 +3061,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     "lead-qa",
     "--file",
     leadFile(
+      c.env,
       root,
       id,
       "lead-qa",
@@ -3070,6 +3084,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "lead-qa",
         "--file",
         leadFile(
+          c.env,
           root,
           id,
           "lead-qa",
@@ -3081,6 +3096,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
   // Plan and delivery validations carry their own round by hash and spend no spec round.
   const planFile = (n: number) =>
     leadFile(
+      c.env,
       root,
       id,
       `lead-qa-plan-${n}`,
@@ -3118,6 +3134,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     ).out.split("\n")[0],
   ).toBe("validation of plan by lead-qa: validated (round 2)");
   const deliveryFile = leadFile(
+    c.env,
     root,
     id,
     "lead-qa.delivery",
@@ -4195,6 +4212,7 @@ test("SP7b-T5 AC-2 (validation), 2026-10-27-007 AC-1: under the standing grant t
       "lead-qa",
       "--file",
       leadFile(
+        c.env,
         root,
         id,
         "lead-qa",
@@ -4802,6 +4820,7 @@ test("SP3-T1 AC-4 (finding 78): crew validation record reads the last block of a
     reply,
     `# qa lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- round 1\n\n# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- round 2\n`,
   );
+  registerFiled(c.env, root, id, reply);
   const recorded = await c.json(
     "validation",
     id,
@@ -4838,10 +4857,15 @@ test("AC-4 (finding 119; item D): crew validation record refuses a file whose co
     file,
     `# qa lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- round 1\n`,
   );
-  const record = (path: string) =>
-    c.run("validation", id, "record", "--what", "spec", "--by", "lead-qa", "--file", path);
-  const recorded = (path: string, lead = "lead-qa", what = "spec") =>
-    c.json("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  // Each file the row writes is what the hook left on disk: on record as filed before it is read.
+  const record = (path: string) => {
+    registerFiled(c.env, root, id, path);
+    return c.run("validation", id, "record", "--what", "spec", "--by", "lead-qa", "--file", path);
+  };
+  const recorded = (path: string, lead = "lead-qa", what = "spec") => {
+    registerFiled(c.env, root, id, path);
+    return c.json("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  };
   const first = await recorded(file);
   expect(first.code).toBe(0);
   expect(first.data.validation).toMatchObject({ round: 1, verdict: "returned", returns: 1 });
@@ -4897,6 +4921,7 @@ test("AC-4 (finding 119; item D): crew validation record refuses a file whose co
     reply,
     `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- round 2\n`,
   );
+  registerFiled(c.env, root, id, reply);
   const second = await c.json(
     "validation",
     id,
@@ -7475,6 +7500,7 @@ async function specAtValidation(team: Record<string, unknown>) {
       lead,
       "--file",
       leadFile(
+        c.env,
         root,
         id,
         lead,
@@ -10232,11 +10258,16 @@ async function validationItem() {
   const body = "verdict: validated\n## Returns\n- none\n## Notes\n- n\n";
   const spec = `.crew/work/${id}/conclave/lead-qa.md`;
   write(root, spec, `${head("qa", "spec")}${body}`);
-  const recorded = (path: string, what = "spec", lead = "lead-qa") =>
-    c.json("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  // Each file a row writes is what the hook left on disk: on record as filed before it is read.
+  const recorded = (path: string, what = "spec", lead = "lead-qa") => {
+    registerFiled(env, root, id, path);
+    return c.json("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  };
   // A refusal is read from the command's error output.
-  const refused = (path: string, what = "spec", lead = "lead-qa") =>
-    c.run("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  const refused = (path: string, what = "spec", lead = "lead-qa") => {
+    registerFiled(env, root, id, path);
+    return c.run("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  };
   expect((await recorded(spec)).code).toBe(0);
   return { root, env, c, id, head, body, spec, recorded, refused };
 }

@@ -45,6 +45,7 @@ import type {
 import { partyLabel } from "./types.ts";
 import { safeText, type UiEvidence } from "./ui.ts";
 import { leadsMissing } from "./validation.ts";
+import { CODE_CHANGED, GATES_NOT_RUN, NOT_ON_CURRENT_CODE } from "./verdict-reasons.ts";
 import { decisionMarkText } from "./verify.ts";
 import { currentCriterion, isSkipped, kindOfItem, tddDone } from "./work.ts";
 
@@ -288,8 +289,8 @@ export function computeVerdict(input: VerdictInput): {
     evidence.fingerprint !== null &&
     evidence.fingerprint !== currentFingerprint &&
     !evidence.runs.some((r) => r.fingerprint === currentFingerprint);
-  if (evidence.fingerprint === null) unproven.push("gates have not run");
-  else if (stale) unproven.push("code changed since the last gate run");
+  if (evidence.fingerprint === null) unproven.push(GATES_NOT_RUN);
+  else if (stale) unproven.push(CODE_CHANGED);
   const multiTarget = new Set(expected.map((e) => e.target)).size > 1;
   for (const planned of expected) {
     const { gate } = planned;
@@ -298,7 +299,7 @@ export function computeVerdict(input: VerdictInput): {
     const run = evidence.runs.find((r) => runMatches(r, planned));
     if (!run) unproven.push(`gate ${label} not run`);
     else if (run.fingerprint !== currentFingerprint && !stale)
-      unproven.push(`gate ${label} not run on the current code`);
+      unproven.push(`gate ${label} ${NOT_ON_CURRENT_CODE}`);
     else if (run.status === "skipped") {
       // A skipped run counts through a decision that still holds: an item's own skip (passed over
       // above) or the project's standing e2e skip; any other is no decision (finding 223, G-6).
@@ -335,7 +336,7 @@ export function computeVerdict(input: VerdictInput): {
     const record = (evidence.judgement ?? []).find((j) => j.gate === gate);
     if (!record) unproven.push(`judgement gate ${gate} not run`);
     else if (record.fingerprint !== currentFingerprint && !stale)
-      unproven.push(`judgement gate ${gate} not run on the current code`);
+      unproven.push(`judgement gate ${gate} ${NOT_ON_CURRENT_CODE}`);
     else if (record.verdict === "not-proven") {
       const n = record.findings.length;
       unproven.push(`judgement gate ${gate} not proven (${n} finding${n === 1 ? "" : "s"})`);

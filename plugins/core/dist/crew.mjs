@@ -7648,6 +7648,14 @@ function leadsMissing(work, ctx, what) {
   return missing;
 }
 
+// packages/engine/src/verdict-reasons.ts
+var GATES_NOT_RUN = "gates have not run";
+var CODE_CHANGED = "code changed since the last gate run";
+var NOT_ON_CURRENT_CODE = "not run on the current code";
+function aboutTheCode(reason) {
+  return reason === CODE_CHANGED || reason === GATES_NOT_RUN || reason.endsWith(NOT_ON_CURRENT_CODE);
+}
+
 // packages/engine/src/work.ts
 var DELIBERATE = [
   "receive",
@@ -8332,9 +8340,14 @@ function guardFor(work, next, ctx) {
     }
   } else if (next === "learn") {
     if (!ctx.proven)
-      missing.push(`not proven: the proof is on earlier code (crew gate run ${work.id})`);
+      missing.push(...notProvenLines(work.id, ctx.unproven));
   }
   return missing;
+}
+function notProvenLines(id, unproven) {
+  const others = unproven.filter((reason) => !aboutTheCode(reason));
+  const code = others.length < unproven.length || unproven.length === 0 ? [`not proven: the proof is on earlier code (crew gate run ${id})`] : [];
+  return [...code, ...others.map((reason) => `not proven: ${reason}`)];
 }
 function nextPhaseOf(work) {
   const phases = phasesFor(work);
@@ -16296,9 +16309,9 @@ function computeVerdict(input) {
     unproven.push("fingerprint unavailable: too many files to watch without git");
   const stale = evidence.fingerprint !== null && evidence.fingerprint !== currentFingerprint && !evidence.runs.some((r) => r.fingerprint === currentFingerprint);
   if (evidence.fingerprint === null)
-    unproven.push("gates have not run");
+    unproven.push(GATES_NOT_RUN);
   else if (stale)
-    unproven.push("code changed since the last gate run");
+    unproven.push(CODE_CHANGED);
   const multiTarget = new Set(expected.map((e) => e.target)).size > 1;
   for (const planned of expected) {
     const { gate } = planned;
@@ -16309,7 +16322,7 @@ function computeVerdict(input) {
     if (!run)
       unproven.push(`gate ${label} not run`);
     else if (run.fingerprint !== currentFingerprint && !stale)
-      unproven.push(`gate ${label} not run on the current code`);
+      unproven.push(`gate ${label} ${NOT_ON_CURRENT_CODE}`);
     else if (run.status === "skipped") {
       if (run.standing === undefined)
         unproven.push(`gate ${label} skipped with no decision on record: run crew gate run ${work.id} again`);
@@ -16332,7 +16345,7 @@ function computeVerdict(input) {
     if (!record)
       unproven.push(`judgement gate ${gate} not run`);
     else if (record.fingerprint !== currentFingerprint && !stale)
-      unproven.push(`judgement gate ${gate} not run on the current code`);
+      unproven.push(`judgement gate ${gate} ${NOT_ON_CURRENT_CODE}`);
     else if (record.verdict === "not-proven") {
       const n = record.findings.length;
       unproven.push(`judgement gate ${gate} not proven (${n} finding${n === 1 ? "" : "s"})`);
@@ -18683,6 +18696,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   }
   const personality = personalityOf(answer);
   const team = saved.agent === "tech-lead" ? leadAnswer(answer)?.team ?? null : teamOf(saved.agent);
+  const filedText = saved.file ? readTextQuietly(join54(dir, saved.file)) : null;
   evidence.roles = [
     ...roles,
     {
@@ -18695,7 +18709,8 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       file: saved.file,
       ...personality ? { personality } : {},
       ...team ? { team } : {},
-      ...input.filedBy === "session" ? { filedBy: "session" } : {}
+      ...input.filedBy === "session" ? { filedBy: "session" } : {},
+      ...filedText !== null ? { fileHash: fileHash(filedText) } : {}
     }
   ];
   saveEvidence(ctx.paths, id, evidence);
@@ -22587,7 +22602,8 @@ function learnItem(paths, work, profile, policy, mail, proven, options = {}) {
       refused: `already learned: ${learnedBody(work.learned.entries, work.learned.confirmed)}`
     };
   if (!proven)
-    return { refused: `not proven: the proof is on earlier code (crew gate run ${work.id})` };
+    return { refused: notProvenLines(work.id, options.unproven ?? []).join(`
+`) };
   const dir = workDir(paths, work.id);
   const scope = scopeOf(paths, mail.self);
   const { drafts, skipped } = draftsOf(paths, work, profile, policy, scope);
@@ -23675,6 +23691,10 @@ function deliver2(env, opened, evidence) {
   writeProtectedText(env.paths, join65(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
   return refused;
 }
+function isLeadsAnswer(record, by) {
+  const techLead = record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
+  return techLead && record.team !== undefined && `lead-${record.team}` === by;
+}
 function verdictAfterRecord(env, opened) {
   const work = opened.work;
   const before = assess(env.paths, work, env.profile, env.policy, opened.tampered);
@@ -23685,14 +23705,19 @@ function verdictAfterRecord(env, opened) {
     return merged;
   });
   if ("refused" in written)
-    return { result: before, evidence: before.evidence, notes: [written.refused] };
+    return {
+      result: before,
+      evidence: before.evidence,
+      notes: [written.refused],
+      written: false
+    };
   const result = written.result;
   if (result.verdict === "proven") {
     const notSaved = deliver2(env, opened, written.saved);
-    return { result, evidence: written.saved, notes: notSaved ? [notSaved] : [] };
+    return { result, evidence: written.saved, notes: notSaved ? [notSaved] : [], written: true };
   }
   writeProtectedText(env.paths, join65(workDir(env.paths, work.id), "report.md"), reportOf(env, work, written.saved));
-  return { result, evidence: written.saved, notes: [] };
+  return { result, evidence: written.saved, notes: [], written: true };
 }
 function saveWorkAsItStands(env, opened) {
   const id = opened.work.id;
@@ -26553,7 +26578,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       const current = assess(env.paths, opened.work, env.profile, env.policy, opened.tampered);
       const recorded = loadEvidence(env.paths, opened.work.id);
       const verdict = current.verdict === "proven" || recorded.tampered ? current.verdict : recorded.evidence.verdict;
-      const outcome = learnItem(env.paths, opened.work, env.profile, env.policy, env.mail, verdict === "proven", { confirm });
+      const outcome = learnItem(env.paths, opened.work, env.profile, env.policy, env.mail, verdict === "proven", { confirm, unproven: current.unproven });
       if ("refused" in outcome)
         return refuse(outcome.refused);
       saveWork(env.paths, opened.work);
@@ -27191,10 +27216,16 @@ test-first not credited: ${out.uncredited}` : "";
       const repeated = (work.validations ?? []).find((v) => v.by === by && v.fileHash === contentHash);
       if (repeated)
         return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`);
+      const evidence = loadEvidence(env.paths, work.id).evidence;
+      const filed = (evidence.roles ?? []).filter((r) => r.file === name).at(-1);
+      if (!filed || !isLeadsAnswer(filed, by))
+        return refuse(`${name} is not an answer a role filed for ${by}: resume or launch the lead so its answer is filed, or, where the runtime files none, crew answer file ${work.id} --role tech-lead --file <path>; nothing recorded`);
+      if (filed.fileHash !== undefined && filed.fileHash !== contentHash)
+        return refuse(`${name} changed after its filing: its content is not the one ${oneLine(filed.agent)} filed; resume the lead for a new answer; nothing recorded`);
+      const contentChecked = filed.fileHash !== undefined;
       const specText = readText(join65(dir, "spec.md"));
       if (what === "spec" && specText === null)
         return refuse(`no spec.md to validate: write .crew/work/${work.id}/spec.md first (the route asks for it)`);
-      const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(what, specText, readText(join65(dir, "plan.md")), evidence.fingerprint ?? "");
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
       const { round, newRound } = validationRound(work.validations ?? [], what, by, hash, rounds.validation);
@@ -27230,21 +27261,37 @@ test-first not credited: ${out.uncredited}` : "";
           file: recorded.file
         });
       const said = verdict.verdict === "validated" ? `validated (round ${round})` : `returned, ${verdict.returns} return${verdict.returns === 1 ? "" : "s"} (round ${round})`;
-      const { result, evidence: current, notes } = verdictAfterRecord(env, opened);
+      const { result, evidence: current, notes, written } = verdictAfterRecord(env, opened);
+      const verdictPart = written ? {
+        lines: [
+          result.verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${result.unproven.join("; ")}`
+        ],
+        after: notes,
+        data: { verdict: result.verdict, unproven: result.unproven }
+      } : {
+        lines: [
+          ...notes,
+          `the verdict was not written: crew evidence ${work.id} reads it again`
+        ],
+        after: [],
+        data: {}
+      };
+      const filedLine = sessionFiledLine(current.roles ?? []);
+      const unchecked = contentChecked ? [] : [`taken with no content check (its record predates the content hash): ${by}`];
       const lines = [
         `validation of ${what} by ${by}: ${said}`,
-        result.verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${result.unproven.join("; ")}`
+        ...verdictPart.lines,
+        ...filedLine ? [filedLine] : [],
+        ...unchecked,
+        ...verdictPart.after
       ];
-      const filedLine = sessionFiledLine(current.roles ?? []);
-      if (filedLine)
-        lines.push(filedLine);
-      lines.push(...notes);
       return ok(lines.join(`
 `), {
         validation: work.validations[work.validations.length - 1],
         rounds: work.rounds ?? rounds,
-        verdict: result.verdict,
-        unproven: result.unproven
+        contentChecked,
+        verdictWritten: written,
+        ...verdictPart.data
       });
     }
     case "metrics": {

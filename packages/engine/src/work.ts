@@ -45,6 +45,7 @@ import type {
 } from "./types.ts";
 import { PHASE_ORDER } from "./types.ts";
 import { leadsMissing } from "./validation.ts";
+import { aboutTheCode } from "./verdict-reasons.ts";
 
 // The conclave sits between specify and plan (SP2 §6): the gap round happens before a plan exists.
 const DELIBERATE: Phase[] = [
@@ -1038,10 +1039,24 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
   } else if (next === "learn") {
     // The proof as it stands now is the ticket into the base (SP4 Task 4, the security lead's
     // return): a verdict taken on earlier code learns nothing until the gates run again.
-    if (!ctx.proven)
-      missing.push(`not proven: the proof is on earlier code (crew gate run ${work.id})`);
+    if (!ctx.proven) missing.push(...notProvenLines(work.id, ctx.unproven));
   }
   return missing;
+}
+
+/**
+ * What a not-proven verdict says on the way into the base, for the guard into Learn and for
+ * `crew learn` alike (finding 242's item): the code's reasons as the one line that names the gate
+ * run, since one run answers them all, then every other reason on its own line, since a gate run
+ * does not answer a stale validation or a failing gate. With no reason on record, the code line.
+ */
+export function notProvenLines(id: string, unproven: readonly string[]): string[] {
+  const others = unproven.filter((reason) => !aboutTheCode(reason));
+  const code =
+    others.length < unproven.length || unproven.length === 0
+      ? [`not proven: the proof is on earlier code (crew gate run ${id})`]
+      : [];
+  return [...code, ...others.map((reason) => `not proven: ${reason}`)];
 }
 
 export function nextPhaseOf(work: WorkItem): Phase | null {

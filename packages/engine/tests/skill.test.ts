@@ -2175,3 +2175,12 @@ test("2026-11-12-004 AC-6 (finding 209): the method says the leads' validations 
     "The rule reads the Write and Edit tools and a command line's own write shapes (a redirect, `tee`, `sed -i`, `cp` or `mv` onto a source file); a write made inside an interpreter's script (`python3 - <<E`) is one it cannot read, and the leads' validations on record are what keeps such an item not proven.",
   );
 });
+
+test("2026-11-12-005 AC-7 (finding 242): the method says a lead's file is filed by its role, never written by hand, in the conclave and in the runtimes", () => {
+  expect(readReference("conclave.md"), "the leads' validation").toContain(
+    "A lead's file is never written or edited by hand: when it is missing after the lead returned, resume the lead so its answer is filed, and `crew validation record` refuses a file no role filed or one changed after its filing.",
+  );
+  expect(readReference("runtimes.md"), "a lead's answer where the runtime files none").toContain(
+    "A lead's validation is recorded only from an answer filed this way or by the hook: `crew validation record` refuses a file written at the lead's place by hand, and one changed after its filing.",
+  );
+});

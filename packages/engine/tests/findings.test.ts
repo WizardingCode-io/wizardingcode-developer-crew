@@ -92,7 +92,8 @@ function openFindings(text: string): number[] {
 // 209 (Proven on a route with leads before a lead read anything) fixed by 2026-11-12-004, which recorded 241
 // (what the leads of 2026-11-12-003 left on the continuations line) and 242 (crew validation record takes a
 // lead's file no role filed), both for the next item of the consolidation.
-const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 241, 242];
+// 242 (a lead's file no role filed) fixed by 2026-11-12-005, with the two lines 2026-11-12-004 left on the same records.
+const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 241];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
@@ -499,7 +500,7 @@ test("2026-11-12-003 AC-5: findings 182 and 216 read fixed by the item, each nam
   expect(openFindings(text)).not.toContain(216);
 });
 
-test("2026-11-12-004 AC-12: finding 209 reads fixed by the item, and findings 241 and 242 are recorded open", () => {
+test("2026-11-12-004 AC-12: finding 209 reads fixed by the item, and findings 241 and 242 are recorded, 241 open", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const sectionOf = (n: number) =>
     text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
@@ -510,5 +511,13 @@ test("2026-11-12-004 AC-12: finding 209 reads fixed by the item, and findings 24
   expect(sectionOf(241)).toContain("2026-11-12-003");
   expect(sectionOf(242)).toContain("`crew validation record`");
   expect(openFindings(text)).toContain(241);
-  expect(openFindings(text)).toContain(242);
+});
+
+test("2026-11-12-005 AC-8: finding 242 reads fixed by the item, naming the role record and its content hash", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith("### 242. ")) ?? "";
+  const outcome = /\n- Outcome:(.*)/.exec(section)?.[1]?.trim() ?? "";
+  expect(outcome).toStartWith("fixed in 2026-11-12-005");
+  expect(outcome).toContain("`fileHash`");
+  expect(openFindings(text)).not.toContain(242);
 });

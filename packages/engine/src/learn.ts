@@ -23,7 +23,7 @@ import { type CrewPaths, workDir } from "./paths.ts";
 import { parseFacts, urlRefusal } from "./research.ts";
 import { scanText } from "./secrets.ts";
 import type { KnowledgeDraft, KnowledgeEntry, Policy, Profile, Stack, WorkItem } from "./types.ts";
-import { kindOfItem } from "./work.ts";
+import { kindOfItem, notProvenLines } from "./work.ts";
 
 export interface LearnOutcome {
   entries: KnowledgeEntry[];
@@ -271,7 +271,8 @@ export function learnItem(
   policy: Policy,
   mail: MailContext,
   proven: boolean,
-  options: { confirm?: string } = {},
+  /** `unproven`: the verdict's reasons when it is not proven, named in the refusal as the guard into Learn names them. */
+  options: { confirm?: string; unproven?: readonly string[] } = {},
 ): LearnOutcome | { refused: string } {
   if (work.phase !== "learn")
     return { refused: `crew learn runs in the learn phase: crew phase ${work.id} next first` };
@@ -280,8 +281,7 @@ export function learnItem(
     return {
       refused: `already learned: ${learnedBody(work.learned.entries, work.learned.confirmed)}`,
     };
-  if (!proven)
-    return { refused: `not proven: the proof is on earlier code (crew gate run ${work.id})` };
+  if (!proven) return { refused: notProvenLines(work.id, options.unproven ?? []).join("\n") };
   const dir = workDir(paths, work.id);
   const scope = scopeOf(paths, mail.self);
   const { drafts, skipped } = draftsOf(paths, work, profile, policy, scope);

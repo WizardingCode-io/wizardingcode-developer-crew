@@ -30,7 +30,17 @@ import { loadPolicy } from "../src/policy.ts";
 import { scopeRefusal, shortId, taskNames, taskScope, taskText, writeBrief } from "../src/tasks.ts";
 import type { Message, TaskRecord } from "../src/types.ts";
 import { createWork, loadWork, saveWork } from "../src/work.ts";
-import { filedRuling, git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import {
+  filedLead,
+  filedRuling,
+  git,
+  leadAnswerText,
+  makeRepo,
+  repoPaths,
+  tempDir,
+  testEnv,
+  write,
+} from "./helpers.ts";
 
 const FAKE = fileURLToPath(new URL("./fixtures/fake-claude.sh", import.meta.url));
 
@@ -135,11 +145,6 @@ async function lead(options: LeadOptions = {}) {
   await c.run("phase", id, "next");
   // SP7a: the mandatory leads validate the spec before the plan opens.
   for (const lead of ["lead-qa", "lead-security"]) {
-    write(
-      root,
-      `.crew/work/${id}/conclave/${lead}.md`,
-      `# ${lead.slice(5)} lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
-    );
     const recorded = await c.run(
       "validation",
       id,
@@ -149,7 +154,7 @@ async function lead(options: LeadOptions = {}) {
       "--by",
       lead,
       "--file",
-      `.crew/work/${id}/conclave/${lead}.md`,
+      filedLead(env, root, id, leadAnswerText(id, lead, "spec")),
     );
     if (recorded.code !== 0) throw new Error(recorded.err);
   }
@@ -311,11 +316,6 @@ describe("SP7a AC-3 (Task 6): a todo's gate runs the gates its diff touches, bou
       brief: "tasks/T-2.brief.md",
     });
     // A delivery validation a lead returned is what the brief leaves open; the spec's validated ones are not listed.
-    write(
-      root,
-      `.crew/work/${id}/conclave/lead-qa.delivery.md`,
-      `# qa lead's validation of ${id}: delivery\nverdict: returned\n## Returns\n- R-1 · src/b.ts:1 · B is a number, the plan says a string\n## Notes\n- none\n`,
-    );
     const returned = await c.run(
       "validation",
       id,
@@ -325,7 +325,12 @@ describe("SP7a AC-3 (Task 6): a todo's gate runs the gates its diff touches, bou
       "--by",
       "lead-qa",
       "--file",
-      `.crew/work/${id}/conclave/lead-qa.delivery.md`,
+      filedLead(
+        env,
+        root,
+        id,
+        `# qa lead's validation of ${id}: delivery\nverdict: returned\n## Returns\n- R-1 · src/b.ts:1 · B is a number, the plan says a string\n## Notes\n- none\n`,
+      ),
     );
     if (returned.code !== 0) throw new Error(returned.err);
     const rebriefed = (await c.run("task", id, "brief", "T-2")).out;
@@ -1682,12 +1687,6 @@ test("2026-11-12-004 AC-11 (finding 209): a task's child on a route with leads r
   expect(owed.every((reason) => reason.startsWith("validation of "))).toBe(true);
   for (const what of ["spec", "delivery"] as const)
     for (const by of ["lead-qa", "lead-security"]) {
-      const name = `.crew/work/${childId}/conclave/${by}${what === "delivery" ? ".delivery" : ""}.md`;
-      write(
-        worktree,
-        name,
-        `# ${by.slice(5)} lead's validation of ${childId}: ${what}\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
-      );
       const recorded = await w.run(
         "validation",
         childId,
@@ -1697,7 +1696,7 @@ test("2026-11-12-004 AC-11 (finding 209): a task's child on a route with leads r
         "--by",
         by,
         "--file",
-        name,
+        filedLead(childEnv, worktree, childId, leadAnswerText(childId, by, what)),
       );
       if (recorded.code !== 0) throw new Error(recorded.err);
     }

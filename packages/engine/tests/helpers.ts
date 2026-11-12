@@ -17,17 +17,20 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
-import { loadEvidence } from "../src/evidence.ts";
+import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { runGates } from "../src/gates.ts";
 import { buildContext } from "../src/hooks/context.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
-import { fileAnswerBySession } from "../src/hooks/subagent-stop.ts";
+import { fileAnswer, fileAnswerBySession, type Progress } from "../src/hooks/subagent-stop.ts";
 import type { HookContext, HookPayload } from "../src/hooks/types.ts";
 import { learnItem } from "../src/learn.ts";
-import { type CrewPaths, resolvePaths } from "../src/paths.ts";
+import { withLock } from "../src/lock.ts";
+import { type CrewPaths, resolvePaths, workDir } from "../src/paths.ts";
 import { updateState } from "../src/state.ts";
 import * as store from "../src/store.ts";
-import type { Mailbox, WorkItem } from "../src/types.ts";
+import { TEAMS } from "../src/team.ts";
+import type { Mailbox, TeamName, WorkItem } from "../src/types.ts";
+import { fileHash, leadHeading } from "../src/validation.ts";
 import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
 
 const GIT_ENV = {
@@ -470,6 +473,99 @@ export function filedRuling(
   });
   if (!done.file) throw new Error(done.note ?? "the ruling was not filed");
   return join(root, ".crew", "work", id, done.file);
+}
+
+/** A lead's answer in the shape its role file asks, for the fixtures that record one. */
+export function leadAnswerText(
+  id: string,
+  lead: string,
+  what: "spec" | "plan" | "delivery",
+  options: { verdict?: "validated" | "returned"; returns?: string; note?: string } = {},
+): string {
+  return `# ${lead.replace(/^lead-/, "")} lead's validation of ${id}: ${what}\nverdict: ${options.verdict ?? "validated"}\n## Returns\n${options.returns ?? "- none"}\n## Notes\n- ${options.note ?? "holds"}\n`;
+}
+
+let leadAgents = 0;
+
+/**
+ * A lead's answer filed as the SubagentStop hook files it (finding 242): the file under the work
+ * folder and its role record, through the hook's own filing under the work folder's lock, never a
+ * file written by hand. Each call is a lead launched fresh unless `agentId` names the one to
+ * resume, whose answer then lands in its reply file. Returns the path a `crew validation record
+ * --file` takes.
+ */
+export function filedLead(
+  env: NodeJS.ProcessEnv,
+  root: string,
+  id: string,
+  text: string,
+  agentId = `crew-test-lead-${++leadAgents}`,
+): string {
+  const ctx = buildContext({ session_id: "crew-test-lead", cwd: root }, env);
+  if (!ctx) throw new Error(`crew is inactive in ${root}`);
+  const progress: Progress = { saved: null, recorded: false, pending: null, reply: null };
+  const note = withLock(
+    workDir(ctx.paths, id),
+    () =>
+      fileAnswer(
+        ctx,
+        id,
+        "tech-lead",
+        {
+          answer: text.replace(/\n$/, ""),
+          agentId,
+          filedBy: "hook",
+          tokens: { tokens: 0, from: "none" },
+        },
+        "",
+        progress,
+      ),
+    { what: "work folder" },
+  );
+  if (!progress.saved?.file) throw new Error(note ?? "the lead's answer was not filed");
+  return join(root, ".crew", "work", id, progress.saved.file);
+}
+
+/**
+ * A lead's file a fixture wrote in a shape one filing does not give (a reply file of several
+ * blocks, a name of the row's own), put on record as the answer a role filed (finding 242): the
+ * role record the hook writes, with the team of the file's last lead heading and the hash of the
+ * content as it stands, saved through the engine's own writer. A file with no lead heading, or
+ * outside the item's folder, is left as it is: its row is about a refusal that comes before the
+ * record is read. Rows on what the hook itself files use `filedLead`.
+ */
+export function registerFiled(
+  env: NodeJS.ProcessEnv,
+  root: string,
+  id: string,
+  file: string,
+): void {
+  const paths = repoPaths(root, env);
+  const dir = workDir(paths, id);
+  const path = isAbsolute(file) ? file : join(root, file);
+  if (!existsSync(path) || !path.startsWith(`${dir}${sep}`)) return;
+  const text = readFileSync(path, "utf8");
+  const heading = leadHeading(text);
+  const team = (Object.keys(TEAMS) as TeamName[]).find((name) => name === heading?.team);
+  if (!team) return;
+  const evidence = loadEvidence(paths, id).evidence;
+  evidence.roles = [
+    ...(evidence.roles ?? []),
+    {
+      agent: "tech-lead",
+      agentId: `crew-test-lead-${++leadAgents}`,
+      at: new Date().toISOString(),
+      tokens: 0,
+      tokensFrom: "none",
+      file: path
+        .slice(dir.length + 1)
+        .split(sep)
+        .join("/"),
+      team,
+      fileHash: fileHash(text),
+    },
+  ];
+  saveEvidence(paths, id, evidence);
 }
 
 /**

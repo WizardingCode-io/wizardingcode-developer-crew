@@ -1634,6 +1634,12 @@ function deliver(env: Env, opened: OpenedForChange, evidence: Evidence): string 
   return refused;
 }
 
+/** Whether a role record is the answer of the lead `by` names: a tech lead's, of that lead's team (a headless answer has no team). */
+function isLeadsAnswer(record: RoleRecord, by: string): boolean {
+  const techLead = record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
+  return techLead && record.team !== undefined && `lead-${record.team}` === by;
+}
+
 /**
  * The verdict after a record that is no gate run and no ruling changed what it reads (a lead's
  * validation, finding 209). It is computed on the evidence as it stands at the save, under the
@@ -1650,6 +1656,8 @@ function verdictAfterRecord(
   result: { verdict: "proven" | "unproven"; unproven: string[] };
   evidence: Evidence;
   notes: string[];
+  /** False when the save was refused: `result` is then a reading nobody wrote, and is not to be printed as the verdict. */
+  written: boolean;
 } {
   const work = opened.work;
   const before = assess(env.paths, work, env.profile, env.policy, opened.tampered);
@@ -1660,18 +1668,23 @@ function verdictAfterRecord(
     return merged;
   });
   if ("refused" in written)
-    return { result: before, evidence: before.evidence, notes: [written.refused] };
+    return {
+      result: before,
+      evidence: before.evidence,
+      notes: [written.refused],
+      written: false,
+    };
   const result = written.result;
   if (result.verdict === "proven") {
     const notSaved = deliver(env, opened, written.saved);
-    return { result, evidence: written.saved, notes: notSaved ? [notSaved] : [] };
+    return { result, evidence: written.saved, notes: notSaved ? [notSaved] : [], written: true };
   }
   writeProtectedText(
     env.paths,
     join(workDir(env.paths, work.id), "report.md"),
     reportOf(env, work, written.saved),
   );
-  return { result, evidence: written.saved, notes: [] };
+  return { result, evidence: written.saved, notes: [], written: true };
 }
 
 /**
@@ -5395,7 +5408,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         env.policy,
         env.mail,
         verdict === "proven",
-        { confirm },
+        { confirm, unproven: current.unproven },
       );
       if ("refused" in outcome) return refuse(outcome.refused);
       saveWork(env.paths, opened.work);
@@ -6259,6 +6272,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(
           `already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`,
         );
+      // The file is an answer a role filed (finding 242): the latest role record that names it is a
+      // tech lead's of this lead's team, and the content is the one that record filed. A record
+      // from before the content hash is taken by its name, and said beside the verdict.
+      const evidence = loadEvidence(env.paths, work.id).evidence;
+      const filed = (evidence.roles ?? []).filter((r) => r.file === name).at(-1);
+      if (!filed || !isLeadsAnswer(filed, by))
+        return refuse(
+          `${name} is not an answer a role filed for ${by}: resume or launch the lead so its answer is filed, or, where the runtime files none, crew answer file ${work.id} --role tech-lead --file <path>; nothing recorded`,
+        );
+      if (filed.fileHash !== undefined && filed.fileHash !== contentHash)
+        return refuse(
+          `${name} changed after its filing: its content is not the one ${oneLine(filed.agent)} filed; resume the lead for a new answer; nothing recorded`,
+        );
+      const contentChecked = filed.fileHash !== undefined;
       // A spec's validation is of a text (finding 209): with no spec.md there is nothing a lead
       // read, and an empty text is never recorded as validated.
       const specText = readText(join(dir, "spec.md"));
@@ -6266,7 +6293,6 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(
           `no spec.md to validate: write .crew/work/${work.id}/spec.md first (the route asks for it)`,
         );
-      const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(
         what,
         specText,
@@ -6328,21 +6354,44 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : `returned, ${verdict.returns} return${verdict.returns === 1 ? "" : "s"} (round ${round})`;
       // The verdict reads the validations (finding 209), so this record can be the step that
       // proves the item.
-      const { result, evidence: current, notes } = verdictAfterRecord(env, opened);
+      const { result, evidence: current, notes, written } = verdictAfterRecord(env, opened);
+      // A verdict that was not written is not printed as one, in the text or in the data: a caller
+      // reads `crew evidence` for it (finding 242's item).
+      const verdictPart = written
+        ? {
+            lines: [
+              result.verdict === "proven"
+                ? `Proven: ${work.id}`
+                : `Not proven: ${result.unproven.join("; ")}`,
+            ],
+            after: notes,
+            data: { verdict: result.verdict, unproven: result.unproven },
+          }
+        : {
+            lines: [
+              ...notes,
+              `the verdict was not written: crew evidence ${work.id} reads it again`,
+            ],
+            after: [],
+            data: {},
+          };
+      const filedLine = sessionFiledLine(current.roles ?? []);
+      const unchecked = contentChecked
+        ? []
+        : [`taken with no content check (its record predates the content hash): ${by}`];
       const lines = [
         `validation of ${what} by ${by}: ${said}`,
-        result.verdict === "proven"
-          ? `Proven: ${work.id}`
-          : `Not proven: ${result.unproven.join("; ")}`,
+        ...verdictPart.lines,
+        ...(filedLine ? [filedLine] : []),
+        ...unchecked,
+        ...verdictPart.after,
       ];
-      const filedLine = sessionFiledLine(current.roles ?? []);
-      if (filedLine) lines.push(filedLine);
-      lines.push(...notes);
       return ok(lines.join("\n"), {
         validation: work.validations[work.validations.length - 1],
         rounds: work.rounds ?? rounds,
-        verdict: result.verdict,
-        unproven: result.unproven,
+        contentChecked,
+        verdictWritten: written,
+        ...verdictPart.data,
       });
     }
     case "metrics": {

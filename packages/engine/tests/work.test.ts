@@ -1081,7 +1081,8 @@ test("SP4-T4 AC-1: learn follows deliver on every route and kind but the audit, 
   const stale = advancePhase(work, {
     ...empty,
     proven: false,
-    unproven: ["watched files changed"],
+    // The verdict's own words for a tree that moved since the proof (the guard names the gate run for them).
+    unproven: ["code changed since the last gate run"],
   });
   expect(stale).toEqual({
     ok: false,

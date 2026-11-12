@@ -467,6 +467,12 @@ export interface RoleRecord {
   team?: TeamName;
   /** Who filed the answer (SP6 Task 4): the SubagentStop hook (absent, the default) or the session with `crew answer file`. */
   filedBy?: "hook" | "session";
+  /**
+   * The hash of the content filed under `file` (finding 242), so a record that reads the file later
+   * can tell the answer a role gave from one rewritten since. Absent on a record written before it
+   * existed, and on one with no file.
+   */
+  fileHash?: string;
 }
 
 /** A project the engine has seen (`~/.wizardingcode/crew/projects.json`). */

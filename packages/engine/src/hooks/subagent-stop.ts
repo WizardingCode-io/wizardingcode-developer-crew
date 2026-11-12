@@ -10,7 +10,7 @@ import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName, WorkItem, WorkKind } from "../types.ts";
-import { LEAD_LINE, leadSuffix, replyFile } from "../validation.ts";
+import { fileHash, LEAD_LINE, leadSuffix, replyFile } from "../validation.ts";
 import { activeWork, kindOfItem, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -662,6 +662,9 @@ export function fileAnswer(
   const personality = personalityOf(answer);
   const team =
     saved.agent === "tech-lead" ? (leadAnswer(answer)?.team ?? null) : teamOf(saved.agent);
+  // The content as it stands on disk right after the filing (finding 242): read back, since each
+  // kind of answer is written in its own shape.
+  const filedText = saved.file ? readTextQuietly(join(dir, saved.file)) : null;
   evidence.roles = [
     ...roles,
     {
@@ -675,6 +678,7 @@ export function fileAnswer(
       ...(personality ? { personality } : {}),
       ...(team ? { team } : {}),
       ...(input.filedBy === "session" ? { filedBy: "session" as const } : {}),
+      ...(filedText !== null ? { fileHash: fileHash(filedText) } : {}),
     },
   ];
   saveEvidence(ctx.paths, id, evidence);

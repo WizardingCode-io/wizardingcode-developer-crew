@@ -6,7 +6,17 @@ import { onStop } from "../src/hooks/stop.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { Seat, WorkItem } from "../src/types.ts";
 import { loadWork, openItems, saveWork } from "../src/work.ts";
-import { cliIo, filedRuling, hookContext, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
+import {
+  cliIo,
+  filedLead,
+  filedRuling,
+  hookContext,
+  leadAnswerText,
+  makeRepo,
+  repoPaths,
+  testEnv,
+  write,
+} from "./helpers.ts";
 
 const STANDARD = JSON.stringify({
   work_type: "feature",
@@ -82,12 +92,6 @@ async function ruled(route: "standard" | "fast" = "standard") {
     returns = "- none",
     note = "holds",
   ) => {
-    const name = `conclave/${lead}${what === "delivery" ? ".delivery" : ""}${note === "holds" ? "" : `-${note}`}.md`;
-    write(
-      root,
-      `.crew/work/${id}/${name}`,
-      `# ${lead.replace(/^lead-/, "")} lead's validation of ${id}: ${what}\nverdict: ${verdict}\n## Returns\n${returns}\n## Notes\n- ${note}\n`,
-    );
     return run(
       "validation",
       id,
@@ -97,7 +101,16 @@ async function ruled(route: "standard" | "fast" = "standard") {
       "--by",
       lead,
       "--file",
-      `.crew/work/${id}/${name}`,
+      filedLead(
+        env,
+        root,
+        id,
+        leadAnswerText(id, lead, what, {
+          verdict: verdict as "validated" | "returned",
+          returns,
+          note,
+        }),
+      ),
     );
   };
   const unproven = async (): Promise<string[]> =>
@@ -165,7 +178,7 @@ test("2026-11-12-004 AC-8 (D-1, answer A): a spec edited after a lead validated 
       .code,
   ).toBe(0);
   expect((await unproven())[0]).toBe(
-    "validation of spec by lead-qa: returned 1 return (conclave/lead-qa-again.md); revise the spec and record the lead again (a resumed lead's answer: its -reply.md file)",
+    "validation of spec by lead-qa: returned 1 return (conclave/lead-qa.md); revise the spec and record the lead again (a resumed lead's answer: its -reply.md file)",
   );
 });
 
@@ -362,12 +375,6 @@ test("2026-11-12-004 AC-2: a delivery validated before any gate run proves nothi
   const unproven = async (): Promise<string[]> =>
     (JSON.parse((await run("status", id, "--json")).out) as { unproven: string[] }).unproven;
   for (const lead of LEADS) {
-    const name = `.crew/work/${id}/conclave/${lead}.delivery.md`;
-    write(
-      root,
-      name,
-      `# ${lead.replace(/^lead-/, "")} lead's validation of ${id}: delivery\nverdict: validated\n## Returns\n- none\n## Notes\n- early\n`,
-    );
     const early = await run(
       "validation",
       id,
@@ -377,7 +384,7 @@ test("2026-11-12-004 AC-2: a delivery validated before any gate run proves nothi
       "--by",
       lead,
       "--file",
-      name,
+      filedLead(env, root, id, leadAnswerText(id, lead, "delivery", { note: "early" })),
     );
     expect(early.code).toBe(0);
     expect(early.out).toContain("Not proven: gates have not run");
@@ -397,4 +404,39 @@ test("2026-11-12-004 AC-2: a delivery validated before any gate run proves nothi
         `validation of delivery by ${lead}: stale (the evidence changed); record the lead again`,
     ),
   );
+});
+
+test("2026-11-12-005 AC-12: with a spec edited after the leads validated it, the guard into Learn and crew learn name the leads to record again, not a gate run", async () => {
+  const { root, run, id, judge, validate, work } = await ruled();
+  await judge();
+  for (const lead of LEADS) await validate("spec", lead);
+  for (const lead of LEADS) await validate("delivery", lead);
+  expect(work().phase).toBe("deliver");
+  const stale = LEADS.map(
+    (lead) =>
+      `not proven: validation of spec by ${lead}: stale (spec changed); record the lead again`,
+  );
+  const spec = `.crew/work/${id}/spec.md`;
+  const before = readFileSync(join(root, spec), "utf8");
+  write(root, spec, "# Spec\n\n## Acceptance criteria\n- AC-1: a, amended\n");
+  const guard = await run("phase", id, "next");
+  expect(guard.code).toBe(1);
+  for (const line of stale) expect(guard.err).toContain(line);
+  expect(guard.err).not.toContain("the proof is on earlier code");
+  // Into Learn on the proof as it stood, then the same edit with the verdict written again:
+  // crew learn's own refusal says the same two lines.
+  write(root, spec, before);
+  expect((await run("phase", id, "next")).out.trim()).toBe(`${id}: phase learn`);
+  write(root, spec, "# Spec\n\n## Acceptance criteria\n- AC-1: a, amended\n");
+  await run("evidence", id);
+  const learn = await run("learn", id);
+  expect(learn.code).toBe(1);
+  expect(learn.err.trim().split("\n")).toEqual(stale);
+  // A code edit beside it adds the line that names the gate run, once, first.
+  write(root, "src/a.ts", "x = 3");
+  await run("evidence", id);
+  expect((await run("learn", id)).err.trim().split("\n")).toEqual([
+    `not proven: the proof is on earlier code (crew gate run ${id})`,
+    ...stale,
+  ]);
 });

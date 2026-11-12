@@ -48,10 +48,14 @@ crew approve "$id" spec --validator complete-gap-round > /dev/null
 crew phase "$id" next > /dev/null
 crew phase "$id" next > /dev/null
 crew phase "$id" next > /dev/null
-# SP7a: the mandatory leads validate the spec before the plan opens.
-mkdir -p "$item/conclave"
+# SP7a: the mandatory leads validate the spec before the plan opens. Each lead's answer is filed as
+# the SubagentStop hook files it (finding 242): the engine records a validation only from a file a
+# tech lead's role record names, so the fixture hands the answer to the hook as the lead's last
+# message, and the hook writes conclave/lead-<team>.md with its record.
 for lead in lead-qa lead-security; do
-  printf "# %s lead's validation of %s: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- the criteria are observable\n" "${lead#lead-}" "$id" > "$item/conclave/$lead.md"
+  ANSWER="# ${lead#lead-} lead's validation of $id: spec\\nverdict: validated\\n## Returns\\n- none\\n## Notes\\n- the criteria are observable"
+  printf '{"cwd":"%s","session_id":"fixture","agent_id":"%s-1","agent_type":"wizardingcode-developer-crew:tech-lead","last_assistant_message":"%s"}' "$(pwd)" "$lead" "$ANSWER" | crew hook subagent-stop > /dev/null
+  test -f "$item/conclave/$lead.md"
   crew validation "$id" record --what spec --by "$lead" --file "$item/conclave/$lead.md" > /dev/null
 done
 crew phase "$id" next > /dev/null
