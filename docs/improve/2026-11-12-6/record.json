@@ -1,0 +1,233 @@
+{
+  "run": "2026-11-12-6",
+  "at": "2026-11-12T16:00:11.814Z",
+  "targets": [
+    "code-quality-flags-unasked-dependency",
+    "pack-laravel-blade-tags-the-view-absent"
+  ],
+  "baseline": {
+    "code-quality-flags-unasked-dependency": {
+      "name": "code-quality-flags-unasked-dependency",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "review-names-dependency",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.9444444444444445,
+      "spread": 0.16666666666666663,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 6.5251212
+    },
+    "pack-laravel-blade-tags-the-view-absent": {
+      "name": "pack-laravel-blade-tags-the-view-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/screen.md",
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/screen.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 5.9742168
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "unprobed",
+      "refusal": "the probe set (38 cases, about 371.20 USD by the baseline's costs) is above what is left under the ceiling (6.49 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/rubrics/code-quality.md"
+        }
+      ],
+      "rationale": "Finishing up: the edit is in place, and here is the summary.\n\nI changed one harness page and nothing else: `plugins/core/skills/crew/rubrics/code-quality.md`, a new paragraph at the end of its \"Only the change\" section. Nothing was run in this session (no shell), so there is no test run and no eval rerun, and whether the score moves is unmeasured. `pack-laravel-blade-tags-the-view-absent` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `code-quality-flags-unasked-dependency`, `review-names-dependency` is a regex over the trace for the code-quality reviewer's own `defect … nodemon` bullet under `## Findings`, before `## Outside the change`. A mean of 0.94 fits one run in three losing only that grader. I had no trace of the failing run, so the cause is inferred: the lead either commits the person's uncommitted `package.json` edit before `crew start`, so the diff base swallows it and the reviewer files `nodemon` as debt, or removes `nodemon` itself after reading question 7, before any review runs. The 2026-11-05 baseline records show all three runs reading only the two rubrics, never `understand.md` or `gate.md`, and the skill page is at its byte cap, so the rubric is the one editable page both the lead and the reviewer read. The new paragraph says the person's uncommitted edits are part of the change, that a problem in them is a finding of the review and never debt, and that the session leaves them in the diff, neither committed apart nor corrected ahead of the reviewer, and changes them after the ruling. The three `skill.test.ts` checks that pin this rubric's wording (questions 7 to 11 and the defect list) are untouched.",
+      "probeSet": [
+        "audit-report-three-formats",
+        "brief-per-todo",
+        "code-quality-flags-unasked-dependency",
+        "confidential-entry-not-reused",
+        "decision-register-reread",
+        "env-observed-proof",
+        "gate-scoped-to-change",
+        "kind-preserve-not-behavior",
+        "no-environment-cannot-prove",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team",
+        "pack-frontend-absent",
+        "pack-frontend-seats-the-team",
+        "pack-laravel-absent",
+        "pack-laravel-blade-tags-the-view",
+        "pack-laravel-blade-tags-the-view-absent",
+        "pack-laravel-refines-the-gates",
+        "pack-next-absent",
+        "pack-next-refines-the-gates",
+        "pack-nuxt-absent",
+        "pack-nuxt-refines-the-gates",
+        "personalities-differ",
+        "prose-gate-refuses-chatbot-artefact",
+        "proven-test-first",
+        "rounds-bounded",
+        "site-bakery",
+        "team-by-route",
+        "thread-with-contracts",
+        "ui-audit-not-captured",
+        "ui-captures-by-fixture",
+        "ui-design-token-drift",
+        "ui-missing-screen-named",
+        "ui-motion-frequency-found",
+        "ui-motion-thesis-built",
+        "ui-reduced-motion-fails",
+        "ui-ux-generic-tells",
+        "validator-unattended-approval",
+        "writing-standard-ending-without-tells"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "unprobed",
+      "refusal": "the probe set (38 cases, about 371.20 USD by the baseline's costs) is above what is left under the ceiling (5.79 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/rubrics/code-quality.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/skills/crew/rubrics/code-quality.md`, a new paragraph at the end of its \"Only the change\" section. Nothing was run in this session (no shell), so there is no test run and no eval rerun, and whether the score moves is unmeasured. `pack-laravel-blade-tags-the-view-absent` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `code-quality-flags-unasked-dependency`, `review-names-dependency` is a regex over the trace for the code-quality reviewer's own bullet under `## Findings` that carries both `defect` and `nodemon`; a bullet under `## Outside the change`, an advisory, or the lead's prose does not match. I had no trace of the failing run, so the cause is inferred from earlier records. The item's diff base is HEAD at `crew start`, so a lead that commits the person's uncommitted edits first moves `nodemon` into the base, and the reviewer files it as debt. A lead that removes `nodemon` itself after reading question 7 leaves the reviewer nothing to find. The 2026-11-05 baseline runs read only the two rubrics besides the skill page, which is at its byte cap, so this rubric is the one editable page both the lead and the reviewer read. The new paragraph says the person's uncommitted edits are the change and a problem in them is a finding, never debt. It tells the session to start the item on them without committing first and to leave an added dependency in the manifest until the reviewer has answered. It also says the question 7 finding names the dependency and the dependency is removed after the ruling. It is limited to the dependency, so the debug line may still go before the review, as the fixture allows. The sentences `skill.test.ts` pins on this rubric are unchanged.",
+      "probeSet": [
+        "audit-report-three-formats",
+        "brief-per-todo",
+        "code-quality-flags-unasked-dependency",
+        "confidential-entry-not-reused",
+        "decision-register-reread",
+        "env-observed-proof",
+        "gate-scoped-to-change",
+        "kind-preserve-not-behavior",
+        "no-environment-cannot-prove",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team",
+        "pack-frontend-absent",
+        "pack-frontend-seats-the-team",
+        "pack-laravel-absent",
+        "pack-laravel-blade-tags-the-view",
+        "pack-laravel-blade-tags-the-view-absent",
+        "pack-laravel-refines-the-gates",
+        "pack-next-absent",
+        "pack-next-refines-the-gates",
+        "pack-nuxt-absent",
+        "pack-nuxt-refines-the-gates",
+        "personalities-differ",
+        "prose-gate-refuses-chatbot-artefact",
+        "proven-test-first",
+        "rounds-bounded",
+        "site-bakery",
+        "team-by-route",
+        "thread-with-contracts",
+        "ui-audit-not-captured",
+        "ui-captures-by-fixture",
+        "ui-design-token-drift",
+        "ui-missing-screen-named",
+        "ui-motion-frequency-found",
+        "ui-motion-thesis-built",
+        "ui-reduced-motion-fails",
+        "ui-ux-generic-tells",
+        "validator-unattended-approval",
+        "writing-standard-ending-without-tells"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 14.2059372,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-fable-5-2",
+  "judgeSkipped": [],
+  "unmeasured": []
+}
