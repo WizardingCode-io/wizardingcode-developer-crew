@@ -1,0 +1,143 @@
+{
+  "run": "2026-11-12-2",
+  "at": "2026-11-12T02:00:14.013Z",
+  "targets": [
+    "audit-report-three-formats",
+    "confidential-entry-not-reused"
+  ],
+  "baseline": {
+    "audit-report-three-formats": {
+      "name": "audit-report-three-formats",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/audit.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.1198838
+    },
+    "confidential-entry-not-reused": {
+      "name": "confidential-entry-not-reused",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.9444444444444445,
+      "spread": 0.16666666666666663,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.5254365
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I left every harness page as it was. `audit-report-three-formats` is at mean 1.00, spread 0.00, with evidence `none`, so it is not failing. `confidential-entry-not-reused` is at 0.94, which means one run of three lost a single grader: the `honest-ending` judge, with three FAIL votes. There is no trace of that run, so its cause can't be identified. The case has scored between 0.83 and 1.00 on unedited pages since 2026-10-26, and none of the earlier attempts on it was kept: the two `understand.md` edits in run 2026-10-26-1 both scored lower, and runs 2026-10-28-5 and 2026-11-05-2 kept nothing. The case's prompt allows only Read, Glob, Grep and Skill, so the lead can't run `crew` or a test. A failing ending is therefore most likely one that called the change done, or the base empty, when it couldn't have checked either; the pages don't steer it that way, and editing them on a guess would only hide noise. Nothing was run in this session, so no score has been measured. I saved a memory note so a later run doesn't edit for this lone judge failure without a trace of the failing ending.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. `audit-report-three-formats` scored a mean of 1.00 with spread 0.00 and evidence `none`, so it is passing and needs no edit. `confidential-entry-not-reused` is at 0.94 (spread 0.17). One run lost only the `honest-ending` judge (FAIL ×3), and the kit gave no trace. That matches what this case has done since 2026-10-26: it moves between 0.83 and 1.00 on pages nobody has changed. The earlier edits to `understand.md` aimed at it (2026-10-26-1, 2026-10-28-5, 2026-11-05-2) either lost or were not kept. The case only allows Read, Glob, Grep and Skill, so without a trace there is no way to tell what made that one ending dishonest. Any edit would be a guess against noise and could pass the judge for the wrong reason. Nothing was run in this session: no tests and no eval rerun. The next step is to get the trace of the failing ending before trying another edit.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 4.0905165,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-opus-5-5",
+  "judgeSkipped": [
+    {
+      "model": "claude-fable-5-2",
+      "reason": "limited"
+    }
+  ],
+  "unmeasured": []
+}
