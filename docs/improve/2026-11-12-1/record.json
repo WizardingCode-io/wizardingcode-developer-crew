@@ -1,0 +1,136 @@
+{
+  "run": "2026-11-12-1",
+  "at": "2026-11-12T01:00:11.614Z",
+  "targets": [
+    "pack-nuxt-absent",
+    "pack-nuxt-refines-the-gates"
+  ],
+  "baseline": {
+    "pack-nuxt-absent": {
+      "name": "pack-nuxt-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 5.005115600000001
+    },
+    "pack-nuxt-refines-the-gates": {
+      "name": "pack-nuxt-refines-the-gates",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 3.4099562000000008
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I made no changes. The task lists `pack-nuxt-absent` and `pack-nuxt-refines-the-gates` as failing, but the eval kit's own evidence says otherwise: both have a mean of 1.00, a spread of 0.00 and no failing trace (evidence `none`). They pass on every run, and there is no CTO plan to act on. Any edit to the skill page, a reference page or an agent page would be a change with no failure to fix, and it could break other cases that read the same pages. That matters most for `SKILL.md`, which is within about 10 bytes of its size cap. So I left `plugins/core/skills/crew/` and `plugins/core/agents/` as they were. I didn't run any tests or an eval rerun, since nothing changed. If these two cases really are failing somewhere, the place to look is the kit's reporting, not the harness.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I made no changes. Both listed graders, `pack-nuxt-absent` and `pack-nuxt-refines-the-gates`, have a mean of 1.00, a spread of 0.00 and no failure evidence, so they are already passing. The CTO plan is empty too, and none of the earlier lessons is about the Nuxt pack cases. There was nothing failing to fix, and any edit to the skill page or agent pages would have been unrelated to these graders. The skill page is also close to its byte limit. So I left every file under `plugins/core/skills/crew/` and `plugins/core/agents/` as it was. Nothing was run in this session, and none was needed.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 8.558550400000001,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-opus-5-5",
+  "judgeSkipped": [
+    {
+      "model": "claude-fable-5-2",
+      "reason": "limited"
+    }
+  ],
+  "unmeasured": []
+}
