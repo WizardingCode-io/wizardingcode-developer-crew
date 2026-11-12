@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
@@ -6,7 +7,13 @@ import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { answerFile } from "../src/hooks/subagent-stop.ts";
 import { isProtectedPath } from "../src/paths.ts";
-import { briefHash, parseSpecAnswer, SPEC_LENSES, STAGES } from "../src/spec-review.ts";
+import {
+  briefHash,
+  FINDING_LINE,
+  parseSpecAnswer,
+  SPEC_LENSES,
+  STAGES,
+} from "../src/spec-review.ts";
 import { hookContext, makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const ANSWERS = (touches_infra: number, scope = 1) =>
@@ -1340,4 +1347,107 @@ test("2026-11-12-001 AC-14: settled is refused when either finding was recorded 
   expect(earlierOnly.text).toContain(`${b.bare} ${WORDS}`);
   // Two findings of one written scope still settle.
   expect((await settle(b.t, laterScoped, b.scoped)).code).toBe(0);
+});
+
+test("2026-11-12-002 AC-6: a line whose first word under any leading marks is F-<n> is a finding line and refuses the answer off the two recorded shapes; another first word stays prose; a joined line keeps its text", async () => {
+  const REST = " · Blocker · Goals · the goal is false";
+  const shapes = [
+    `- **F-2**${REST}`,
+    `**F-2**${REST}`,
+    `- __F-2__${REST}`,
+    `- *F-2*${REST}`,
+    `- _F-2_${REST}`,
+    `- \`F-2\`${REST}`,
+    `- ~~F-2~~${REST}`,
+    `+ F-2${REST}`,
+    `• F-2${REST}`,
+    `– F-2${REST}`,
+    `-F-2${REST}`,
+    `1. F-2${REST}`,
+    `1) F-2${REST}`,
+    `- [F-2]${REST}`,
+    `- [ ] F-2${REST}`,
+    `- [x] F-2${REST}`,
+    `- [X] F-2${REST}`,
+    `> - F-2${REST}`,
+    `### F-2${REST}`,
+    "| F-2 | Blocker | Goals | the goal is false |",
+    `- f-2${REST}`,
+  ];
+  for (const shape of shapes) {
+    // At the first column, and indented under a Nit, where it would be joined and its severity hidden.
+    const first = parseSpecAnswer(`${HEAD}${shape}\n`);
+    expect(first, shape).toEqual({ refused: "off-shape", lines: [{ line: 5, text: shape }] });
+    const under = parseSpecAnswer(`${HEAD}- F-1 · Nit · Goals · fine\n  ${shape}\n`);
+    expect(under, `indented: ${shape}`).toEqual({
+      refused: "off-shape",
+      lines: [{ line: 6, text: shape }],
+    });
+  }
+  // Another first word: prose at the first column, as before.
+  const prose = [
+    "**Note** the goal is vague",
+    "- É F-2 que falha",
+    "- 3 of them, see F-2",
+    "- F-2nd draft",
+    "- [x] done, see F-2",
+  ];
+  for (const line of prose)
+    expect(parseSpecAnswer(`${HEAD}- F-1 · Nit · Goals · fine\n${line}\n`), line).toEqual({
+      findings: [{ severity: "Nit", scope: "Goals", text: "fine" }],
+      prose: line,
+      mended: [],
+    });
+  // An indented line that is no finding line joins with its text as before: only a "- " or "* " bullet goes.
+  expect(
+    parseSpecAnswer(
+      `${HEAD}- F-1 · Major · Goals · vague\n  + no measure\n  **why** it matters\n  - and no date\n`,
+    ),
+  ).toMatchObject({
+    findings: [
+      {
+        severity: "Major",
+        scope: "Goals",
+        text: "vague + no measure **why** it matters and no date",
+      },
+    ],
+  });
+  // Through the command: refused in its words, nothing recorded.
+  const t = await item();
+  await t.run("spec-review", t.id, "check");
+  await t.stage(5);
+  const before = JSON.stringify(record(t));
+  const refused = await t.stage(7, {
+    "goldfish-style": `${HEAD}- F-1 · Nit · Goals · fine\n- **F-2**${REST}\n`,
+  });
+  expect(refused.code).toBe(1);
+  expect(refused.text).toContain("goldfish-style's answer has 1 finding line off the shape");
+  expect(refused.text).toContain(`line 6 "- **F-2**${REST}"`);
+  expect(JSON.stringify(record(t))).toBe(before);
+});
+
+test("2026-11-12-002 AC-6 (cost): in Node, where the command runs, a long line of spaces with no label is read in time that grows with its length, not with its square", () => {
+  // Measured before the fix, in Node: two quantifiers over the same spaces took 220 ms at 16 000
+  // characters and four times that at each doubling, so a line of 200 000 takes over half a minute.
+  // One quantifier reads it in under a millisecond. Bun's own engine stops such a search after
+  // about 0.4 s whatever the length, so the cost is measured where the engine's users meet it: the
+  // expression's source runs in a Node process that is killed at five seconds.
+  const script = `const re = new RegExp(${JSON.stringify(FINDING_LINE.source)}, ${JSON.stringify(FINDING_LINE.flags)});
+const line = " ".repeat(200000) + "no label here";
+const started = performance.now();
+const found = re.test(line);
+console.log(JSON.stringify({ found, ms: Math.round(performance.now() - started) }));`;
+  const run = spawnSync("node", ["-e", script], { encoding: "utf8", timeout: 5000 });
+  expect(run.error, `killed at five seconds: ${run.signal ?? ""}`).toBeUndefined();
+  expect(run.status).toBe(0);
+  const out = JSON.parse(run.stdout) as { found: boolean; ms: number };
+  expect(out.found).toBe(false);
+  expect(out.ms).toBeLessThan(1000);
+  // The same line through the parser: it is indented under a finding and no finding line, so it joins.
+  const long = `${" ".repeat(200_000)}no label here`;
+  expect(parseSpecAnswer(`${HEAD}- F-1 · Nit · Goals · fine\n${long}\n`)).toEqual({
+    findings: [{ severity: "Nit", scope: "Goals", text: "fine no label here" }],
+    prose: "",
+    mended: [{ line: 6, kind: "joined" }],
+  });
 });

@@ -218,8 +218,16 @@ export type RefusedAnswer =
   | { refused: "no-section" }
   | { refused: "off-shape"; lines: { line: number; text: string }[] };
 
-/** What makes a line a finding line: `F-<n>` first, at the first column after its `- ` or under an indent or another bullet. */
-const FINDING_LABEL = /^F-\d+\b/;
+/**
+ * What makes a line a finding line, by class and not by a list of bullets (finding 240): under its
+ * indent every leading character that is no letter of any alphabet is passed over (a bullet of any
+ * kind, a list number, a quote mark, a bracket, a pipe, a hash, emphasis and strike marks), a
+ * checkbox's `[x]` with them, and the first word is then `F-<n>` in either case. A first word that
+ * is another word makes the line prose: the rule never reads a label inside a sentence. One
+ * quantifier covers the indent and the marks: a second one over the same spaces made a long line
+ * with no label cost the square of its length in Node.
+ */
+export const FINDING_LINE = /^(?:[^\p{L}]|\[[xX]\])*[Ff]-\d+(?![\p{L}\d])/u;
 const FOUR_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+?) · (.+)$/;
 const THREE_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+)$/;
 
@@ -247,7 +255,9 @@ export function parseSpecAnswer(answer: string): ParsedAnswer | RefusedAnswer {
   lines.forEach((raw, i) => {
     const line = heading + i;
     const text = raw.trim();
-    if (raw.startsWith("- ") && FINDING_LABEL.test(raw.slice(2))) {
+    const finding = FINDING_LINE.test(raw);
+    // The two shapes recorded, at the first column alone.
+    if (finding && raw.startsWith("- ")) {
       const four = FOUR_FIELDS.exec(text);
       const three = four ? null : THREE_FIELDS.exec(text);
       if (four)
@@ -267,13 +277,14 @@ export function parseSpecAnswer(answer: string): ParsedAnswer | RefusedAnswer {
       findings.push(open);
       return;
     }
-    // Under its bullet, with the spaces a second one leaves (`-  x`).
-    const bare = text.replace(/^[-*] /, "").trim();
-    if (FINDING_LABEL.test(bare)) {
+    if (finding) {
       open = null;
       off.push({ line, text });
       return;
     }
+    // A joined line's text: its `- ` or `* ` bullet removed, with the spaces a second one leaves
+    // (`-  x`), and nothing else of what the reviewer wrote.
+    const bare = text.replace(/^[-*] /, "").trim();
     if (open && text !== "" && /^[ \t]/.test(raw)) {
       open.text = `${open.text} ${bare}`;
       mended.push({ line, kind: "joined" });

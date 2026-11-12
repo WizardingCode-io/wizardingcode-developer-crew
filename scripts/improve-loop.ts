@@ -835,8 +835,20 @@ export async function adoptRun(
   const branch = record.branch ?? `improve/${record.run}`;
   const write = (rel: string, text: string) =>
     writeRedacted(join(folder, "adoption", rel), text, provider.secrets);
+  // The branch's commit, read once and first (findings 237 and 240): the gate's paths, the patch and
+  // the merge all name it by its id, so what is gated, ruled on and merged is one commit, and a
+  // person adopting the run by hand checks origin's branch against it. A branch that does not
+  // resolve ends here: nothing is gated, judged or merged on a name that names no commit.
+  const resolved = deps.git(["rev-parse", branch], repo);
+  const commit = resolved.stdout.trim();
+  if (resolved.status !== 0 || !/^[0-9a-f]{40}$/.test(commit)) {
+    const reason = `the branch ${branch} does not resolve to a commit`;
+    deps.log(`adoption of ${record.run}: ${reason}`);
+    return { released: null, reason };
+  }
+  write("commit", `${commit}\n`);
   // No rename detection: a file moved into the harness roots lists its old path too.
-  const names = deps.git(["diff", "--name-only", "--no-renames", `main...${branch}`], repo);
+  const names = deps.git(["diff", "--name-only", "--no-renames", `main...${commit}`], repo);
   const paths = names.stdout.split("\n").filter((l) => l.trim() !== "");
   const gate = adoptionGate(record, paths);
   write(
@@ -847,11 +859,6 @@ export async function adoptRun(
     deps.log(`adoption of ${record.run}: the gate failed: ${gate.clause}`);
     return { released: null, reason: `the gate failed: ${gate.clause}` };
   }
-  // The commit the patch is taken from, by its id (finding 237): a person adopting the run by hand
-  // checks origin's branch against it, and the patch is cut from the id written, never from the
-  // branch's name a second time, so the file and the patch cannot name two commits.
-  const commit = deps.git(["rev-parse", branch], repo).stdout.trim();
-  write("commit", `${commit}\n`);
   write("diff.patch", deps.git(["diff", `main...${commit}`], repo).stdout);
   // The judge of the ruling, chosen as a run's is (2026-11-09-004 D-3): the first candidate that
   // answers its probe in the provider's environment. No probe's output is written anywhere but the log.
@@ -940,7 +947,7 @@ export async function adoptRun(
       "-q",
       "-m",
       `Adopt improvement run ${record.run}: ${what} (${gains.join(", ")})`,
-      branch,
+      commit,
     ],
     repo,
   );

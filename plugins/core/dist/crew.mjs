@@ -7175,7 +7175,7 @@ function dueStage(round) {
   return STAGES.find((s) => !round.stages.some((r) => r.stage === s.stage)) ?? null;
 }
 var NO_SCOPE = "not given";
-var FINDING_LABEL = /^F-\d+\b/;
+var FINDING_LINE = /^(?:[^\p{L}]|\[[xX]\])*[Ff]-\d+(?![\p{L}\d])/u;
 var FOUR_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+?) · (.+)$/;
 var THREE_FIELDS = /^- F-\d+ · (Blocker|Major|Nit) · (.+)$/;
 function parseSpecAnswer(answer) {
@@ -7196,7 +7196,8 @@ function parseSpecAnswer(answer) {
   lines.forEach((raw, i) => {
     const line = heading + i;
     const text = raw.trim();
-    if (raw.startsWith("- ") && FINDING_LABEL.test(raw.slice(2))) {
+    const finding = FINDING_LINE.test(raw);
+    if (finding && raw.startsWith("- ")) {
       const four = FOUR_FIELDS.exec(text);
       const three = four ? null : THREE_FIELDS.exec(text);
       if (four)
@@ -7216,12 +7217,12 @@ function parseSpecAnswer(answer) {
       findings.push(open);
       return;
     }
-    const bare = text.replace(/^[-*] /, "").trim();
-    if (FINDING_LABEL.test(bare)) {
+    if (finding) {
       open = null;
       off.push({ line, text });
       return;
     }
+    const bare = text.replace(/^[-*] /, "").trim();
     if (open && text !== "" && /^[ \t]/.test(raw)) {
       open.text = `${open.text} ${bare}`;
       mended.push({ line, kind: "joined" });
@@ -13522,7 +13523,7 @@ ${text ?? "missing"}
   }
   return hash.digest("hex");
 }
-var FINDING_LINE = /^- F-\d+ · (?:defect|advisory) · /gm;
+var FINDING_LINE2 = /^- F-\d+ · (?:defect|advisory) · /gm;
 function auditState(paths, work) {
   const dir = join41(workDir(paths, work.id), "audit");
   const run = readJson(join41(dir, "runs.json"));
@@ -13532,7 +13533,7 @@ function auditState(paths, work) {
   for (const section of AUDIT_SECTIONS) {
     const text = readText(join41(dir, `${section}.findings.md`));
     if (text !== null)
-      filed[section] = (text.match(FINDING_LINE) ?? []).length;
+      filed[section] = (text.match(FINDING_LINE2) ?? []).length;
   }
   const report = readJson(join41(dir, "report.json"));
   const reportCurrent = report !== null && report.hash === reportHash(dir);

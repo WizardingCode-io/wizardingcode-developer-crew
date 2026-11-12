@@ -442,3 +442,43 @@ test("2026-11-12-001 AC-11: findings 236 and 237 read fixed, with what was done 
   ])
     expect(outcome(237), said).toContain(said);
 });
+
+test("2026-11-12-002 AC-3: finding 240 is recorded with its four points and reads fixed, each point with what was done or why nothing was", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = sectionIn(text, 240);
+  expect(section).toContain("- Date: 2026-11-12.");
+  expect(section).toContain("2026-11-12-001");
+  for (const part of ["What happened", "Expected", "Evidence", "Outcome"])
+    expect(section, part).toMatch(new RegExp(`\\n- ${part}: \\S.{20,}`));
+  const happened = section.split("\n").find((l) => l.startsWith("- What happened: ")) ?? "";
+  for (const point of ["(1)", "(2)", "(3)", "(4)"]) expect(happened, point).toContain(point);
+  const outcome = section.split("\n").find((l) => l.startsWith("- Outcome: ")) ?? "";
+  expect(outcome).toStartWith("- Outcome: fixed in 2026-11-12-002");
+  // The parser reads the words after the last semicolon: the outcome holds none.
+  expect(outcome).not.toContain(";");
+  expect(openFindings(text)).not.toContain(240);
+  for (const said of [
+    // (1) one commit, read before the gate.
+    "(1)",
+    "`adoption/commit`",
+    "before its gate",
+    "does not resolve to a commit",
+    // (2) the rule by class, and the limit it has by its own definition.
+    "(2)",
+    "every leading character that is not a letter",
+    "refuses the answer",
+    "a line whose first word is another word",
+    "`- Finding F-2 · …`",
+    // (3) nothing to tell apart, no word lost, and what the settled guard sees.
+    "(3)",
+    "the shape of a line of four fields",
+    "no word is lost",
+    "scope is the text's first words and not `not given`",
+    "`settled` still needs an equal scope on an earlier closed finding",
+    // (4) the closed item's text stands.
+    "(4)",
+    "seven reviewers",
+    "stays as answered",
+  ])
+    expect(outcome, said).toContain(said);
+});

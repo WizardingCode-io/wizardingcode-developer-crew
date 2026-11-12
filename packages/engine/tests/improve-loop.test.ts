@@ -3352,3 +3352,101 @@ test("2026-11-12-001 AC-16: the adoption writes the commit its patch is taken fr
   expect(moved).toMatch(/^[0-9a-f]{40}$/);
   expect(moved).not.toBe(commit);
 });
+
+test("2026-11-12-002 AC-5: the adoption reads its branch's commit once, before its gate, and names it by its id in the gate's paths, the patch and the merge; a branch that moved is merged at the commit read; a branch that does not resolve ends the adoption", async () => {
+  const branch = "improve/2026-10-25-1";
+  const input = (repo: string, folder: string, run = "2026-10-25-1") => ({
+    repo,
+    folder,
+    record: keptRecord(run),
+    provider: claude,
+    judgeSystemPrompt: "# Judge\n\nYou decide on evidence.",
+  });
+  /** The fixture's git with its calls kept, and something done right after a call answers. */
+  const recorded = (
+    deps: ReturnType<typeof adoptDeps>["deps"],
+    after?: (args: string[], cwd: string) => void,
+    answer?: (args: string[]) => { status: number; stdout: string; stderr: string } | null,
+  ) => {
+    const calls: string[][] = [];
+    return {
+      calls,
+      deps: {
+        ...deps,
+        git: (args: string[], cwd: string) => {
+          calls.push(args);
+          const out = answer?.(args) ?? deps.git(args, cwd);
+          after?.(args, cwd);
+          return out;
+        },
+      },
+    };
+  };
+  const names = (calls: string[][]) => calls.filter((c) => c.some((w) => w.includes(branch)));
+
+  // (a) One read of the branch, first; every call after names the commit that was written.
+  const a = adoptionFixture();
+  const first = recorded(adoptDeps(holdsJson).deps);
+  const out = await adoptRun(input(a.repo, a.folder), first.deps);
+  expect(out).toEqual({ released: "0.15.1", reason: null });
+  const commit = readFileSync(join(a.folder, "adoption/commit"), "utf8").trim();
+  expect(commit).toMatch(/^[0-9a-f]{40}$/);
+  expect(first.calls[0]).toEqual(["rev-parse", branch]);
+  // After it, the branch is named by the push that deletes it once the release has finished, alone.
+  expect(names(first.calls.slice(1))).toEqual([["push", "-q", "origin", "--delete", branch]]);
+  expect(first.calls).toContainEqual(["diff", "--name-only", "--no-renames", `main...${commit}`]);
+  expect(first.calls).toContainEqual(["diff", `main...${commit}`]);
+  expect(first.calls.filter((c) => c[0] === "merge")).toEqual([
+    [
+      "merge",
+      "--no-ff",
+      "-q",
+      "-m",
+      "Adopt improvement run 2026-10-25-1: P-1 (t 0.50 → 0.90)",
+      commit,
+    ],
+  ]);
+
+  // (b) The branch gains a commit right after it was read: what is merged is the commit read.
+  const b = adoptionFixture();
+  const moved = recorded(adoptDeps(holdsJson).deps, (args, cwd) => {
+    if (args[0] !== "rev-parse") return;
+    git(cwd, "checkout", "-q", branch);
+    writeFileSync(join(cwd, "plugins/core/agents/judge.md"), "# Judge\n\nAfter the read.\n");
+    git(cwd, "commit", "-q", "-am", "pushed after the read");
+    git(cwd, "checkout", "-q", "main");
+  });
+  expect((await adoptRun(input(b.repo, b.folder), moved.deps)).released).toBe("0.15.1");
+  const read = readFileSync(join(b.folder, "adoption/commit"), "utf8").trim();
+  expect(git(b.repo, "rev-parse", branch).trim()).not.toBe(read);
+  expect(git(b.repo, "rev-parse", "main^2").trim()).toBe(read);
+  expect(readFileSync(join(b.repo, "plugins/core/agents/judge.md"), "utf8")).toBe("# Judge\n");
+
+  // (c) A branch that does not resolve: nothing gated, judged or merged, no adoption file.
+  const unresolved = async (
+    run: string,
+    answer?: (args: string[]) => { status: number; stdout: string; stderr: string } | null,
+  ) => {
+    const c = adoptionFixture();
+    const inner = adoptDeps(holdsJson);
+    const kept = recorded(inner.deps, undefined, answer);
+    const folder = join(c.repo, "docs/improve", run);
+    const ended = await adoptRun(input(c.repo, folder, run), kept.deps);
+    expect(ended).toEqual({
+      released: null,
+      reason: `the branch improve/${run} does not resolve to a commit`,
+    });
+    expect(inner.seen.log.join("\n")).toContain(
+      `adoption of ${run}: the branch improve/${run} does not resolve to a commit`,
+    );
+    expect(inner.seen.judge).toEqual([]);
+    expect(inner.seen.probes).toEqual([]);
+    expect(kept.calls.map((x) => x[0])).toEqual(["rev-parse"]);
+    expect(existsSync(join(folder, "adoption"))).toBe(false);
+  };
+  await unresolved("2026-10-25-8");
+  // An exit of 0 with a short id is no commit either.
+  await unresolved("2026-10-25-1", (args) =>
+    args[0] === "rev-parse" ? { status: 0, stdout: "abc1234\n", stderr: "" } : null,
+  );
+});
