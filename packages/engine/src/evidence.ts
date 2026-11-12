@@ -123,7 +123,7 @@ export function emptyEvidence(): Evidence {
     tdd: [],
     runs: [],
     verdict: "unproven",
-    unproven: ["gates have not run"],
+    unproven: [GATES_NOT_RUN],
   };
 }
 
@@ -850,6 +850,13 @@ export function renderReport(
     );
     for (const v of work.validations)
       lines.push(`| ${v.what} | ${v.by} | ${v.verdict} | ${v.returns} | ${v.round} | ${v.file} |`);
+    // A lead's file taken with no content check, in the words the record's command printed.
+    const unchecked = work.validations.filter((v) => v.contentChecked === false);
+    if (unchecked.length) lines.push("");
+    for (const v of unchecked)
+      lines.push(
+        `- ${v.what} by ${v.by}, round ${v.round}: taken with no content check (its record predates the content hash)`,
+      );
   }
   const decisions = work.decisions ?? [];
   if (decisions.length || work.debate) {

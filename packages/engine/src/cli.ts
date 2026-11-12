@@ -45,7 +45,7 @@ import {
   validateAnswers,
 } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
-import { continuationsView } from "./continuations.ts";
+import { continuationsView, isEngineEntry } from "./continuations.ts";
 import {
   appendDecision,
   type DecisionEntry,
@@ -1159,7 +1159,10 @@ function continueOrRefuse(
   round: number,
   refusal: string,
 ): Outcome | null {
-  const mine = (work.continued ?? []).filter((c) => c.what === what && c.task === task);
+  // An entry no writer of the engine makes grants nothing (finding 241): read by the rule the status reads it by.
+  const mine = (work.continued ?? [])
+    .filter(isEngineEntry)
+    .filter((c) => c.what === what && c.task === task);
   const grants = mine.filter((c) => decisionCounts(env.policy, c.by)).length;
   if (round < cap + grants) return null;
   if (env.policy.team.continuations !== "granted") return refuse(refusal);
@@ -1636,8 +1639,7 @@ function deliver(env: Env, opened: OpenedForChange, evidence: Evidence): string 
 
 /** Whether a role record is the answer of the lead `by` names: a tech lead's, of that lead's team (a headless answer has no team). */
 function isLeadsAnswer(record: RoleRecord, by: string): boolean {
-  const techLead = record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
-  return techLead && record.team !== undefined && `lead-${record.team}` === by;
+  return isTechLead(record) && record.team !== undefined && `lead-${record.team}` === by;
 }
 
 /**
@@ -2981,8 +2983,16 @@ function gateSummary(
 
 /** `answers filed by the session: <agents>` when any role record was the session's (SP6 Task 4 AC-5); empty otherwise. */
 function sessionFiledLine(roles: readonly RoleRecord[]): string {
-  const agents = [...new Set(roles.filter((r) => r.filedBy === "session").map((r) => r.agent))];
+  // Every lead is the agent tech-lead: its team is what tells two leads apart (finding 241's item).
+  const named = (r: RoleRecord): string =>
+    isTechLead(r) && r.team !== undefined ? `${r.agent} (${r.team})` : r.agent;
+  const agents = [...new Set(roles.filter((r) => r.filedBy === "session").map(named))];
   return agents.length ? `answers filed by the session: ${agents.join(", ")}` : "";
+}
+
+/** Whether a role record is a tech lead's: the agent `tech-lead`, or `tech-lead-<n>` for an answer with no heading. */
+function isTechLead(record: RoleRecord): boolean {
+  return record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
 }
 
 /** A hook answer's `systemMessage` the runtime could not carry, left as a notice for the session's next context; nothing when no context can be built. */
@@ -6333,6 +6343,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           hash,
           fileHash: contentHash,
           at: nowIso(),
+          // Taken on a role record with no content hash: kept, so the report names it.
+          ...(contentChecked ? {} : { contentChecked: false as const }),
         },
       ];
       if (what === "spec" && newRound)

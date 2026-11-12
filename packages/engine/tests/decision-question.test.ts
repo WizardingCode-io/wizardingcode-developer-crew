@@ -1,5 +1,24 @@
 import { expect, test } from "bun:test";
+import { listDecisions } from "../src/decisions.ts";
 import { item } from "./decision-fixtures.ts";
+
+test("2026-11-12-003 AC-1 (finding 182): crew decision add refuses a text that is a placeholder whole, names the gap round's word and records nothing", async () => {
+  const { run, id, paths, work } = await item();
+  const before = listDecisions(paths).length;
+  for (const text of ["none", "None.", '"n/a"', "N/A", "NA", "na.", "-", "...", " — ", "'none'"]) {
+    const refused = await run("decision", id, "add", text);
+    expect(refused.code, text).toBe(1);
+    expect(refused.out, text).toBe("");
+    expect(refused.err.trim(), text).toBe(
+      `"${text.trim()}" is no decision: under the gap round's heading "Decisions only the user can make" the word none means there is no decision, and nothing is recorded for it; a decision is a question only the user can answer`,
+    );
+  }
+  expect(work().decisions ?? []).toEqual([]);
+  expect(listDecisions(paths).length).toBe(before);
+  // The placeholder is refused with its flags too: a default does not make it a question.
+  expect((await run("decision", id, "add", "none", "--default", "keep it")).code).toBe(1);
+  expect(work().decisions ?? []).toEqual([]);
+});
 
 test("2026-11-12-003 AC-2: a question that holds the word among others, one with no ASCII letter and one whose default is none are filed as before", async () => {
   const { run, id, work } = await item();

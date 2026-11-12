@@ -16236,7 +16236,7 @@ function emptyEvidence() {
     tdd: [],
     runs: [],
     verdict: "unproven",
-    unproven: ["gates have not run"]
+    unproven: [GATES_NOT_RUN]
   };
 }
 function evidencePath(paths, id) {
@@ -16625,6 +16625,11 @@ function renderReport(work, evidence, policy, options = {}) {
     lines.push("", "## Validations", "", "| What | By | Verdict | Returns | Round | File |", "| :- | :- | :- | -: | -: | :- |");
     for (const v of work.validations)
       lines.push(`| ${v.what} | ${v.by} | ${v.verdict} | ${v.returns} | ${v.round} | ${v.file} |`);
+    const unchecked = work.validations.filter((v) => v.contentChecked === false);
+    if (unchecked.length)
+      lines.push("");
+    for (const v of unchecked)
+      lines.push(`- ${v.what} by ${v.by}, round ${v.round}: taken with no content check (its record predates the content hash)`);
   }
   const decisions = work.decisions ?? [];
   if (decisions.length || work.debate) {
@@ -17589,42 +17594,83 @@ function setConfigValue(config, key, value) {
 
 // packages/engine/src/continuations.ts
 var STANDING = "the standing grant";
-function continuationsView(work, policy) {
-  const granted = policy.team.continuations === "granted";
+var WHATS = ["judgement", "validation", "gate"];
+var TASK = /^T-\d+$/;
+function isEngineEntry(entry) {
+  if (typeof entry !== "object" || entry === null)
+    return false;
+  const e = entry;
+  if (typeof e.what !== "string" || !WHATS.includes(e.what))
+    return false;
+  const taskFits = e.what === "gate" ? typeof e.task === "string" && TASK.test(e.task) : e.task === undefined;
+  const standing = e.standing === true;
+  if (!taskFits || e.standing !== undefined && !standing)
+    return false;
+  if (typeof e.by !== "object" || e.by === null)
+    return false;
+  const by = e.by;
+  if (by.rule !== undefined)
+    return false;
+  if (by.by === "user")
+    return by.mode === undefined;
+  return by.by === "agent" && isPermissionMode(by.mode) && by.relayed === undefined && !standing;
+}
+function continuationGroups(work, policy) {
   const groups = [];
+  let offShape = 0;
   for (const entry of work.continued ?? []) {
-    const what = oneLine(String(entry.what));
-    const task = entry.task === undefined ? undefined : oneLine(String(entry.task));
+    if (!isEngineEntry(entry)) {
+      offShape++;
+      continue;
+    }
     const standing = entry.standing === true;
     const by = standing ? STANDING : oneLine(whoDecides(entry.by));
-    const found = groups.find((g) => g.what === what && g.task === task && g.by === by);
+    const found = groups.find((g) => g.what === entry.what && g.task === entry.task && g.by === by);
     if (found)
       found.rounds++;
     else
       groups.push({
-        what,
-        ...task === undefined ? {} : { task },
+        what: entry.what,
+        ...entry.task === undefined ? {} : { task: entry.task },
         by,
         standing,
         counted: decisionCounts(policy, entry.by),
         rounds: 1
       });
   }
-  if (!groups.length && !granted)
+  return { groups, offShape, entries: work.continued?.length ?? 0 };
+}
+function continuationsLine(grouped, policy) {
+  const granted = policy === "granted";
+  const { entries } = grouped;
+  if (!entries && !granted)
     return null;
   const targetOf = (g) => g.task === undefined ? g.what : `${g.what} ${g.task}`;
-  const targets = [...new Set(groups.map(targetOf))];
+  const targets = [...new Set(grouped.groups.map(targetOf))];
   const parts = targets.map((target) => {
-    const mine = groups.filter((g) => targetOf(g) === target).map(groupText);
+    const mine = grouped.groups.filter((g) => targetOf(g) === target).map(groupText);
     return `${target}: ${mine.join(", ")}`;
   });
-  if (!parts.length)
+  if (grouped.offShape)
+    parts.push(`${grouped.offShape} ${grouped.offShape === 1 ? "entry" : "entries"} off the shape the engine writes`);
+  if (!entries)
     parts.push("none on record");
   if (granted)
     parts.push("team.continuations is granted: a round past a cap needs no crew continue");
+  return `  continuations: ${parts.join("; ")}`;
+}
+function continuationsView(work, policy) {
+  const grouped = continuationGroups(work, policy);
+  const line = continuationsLine(grouped, policy.team.continuations);
+  if (line === null)
+    return null;
   return {
-    line: `  continuations: ${parts.join("; ")}`,
-    data: { policy: policy.team.continuations, onRecord: groups }
+    line,
+    data: {
+      policy: policy.team.continuations,
+      onRecord: grouped.groups,
+      ...grouped.offShape ? { offShape: grouped.offShape } : {}
+    }
   };
 }
 function groupText(group) {
@@ -23401,7 +23447,7 @@ function waysPastCap(id, what) {
   return `the user continues it once with crew continue ${id} ${what}, or sets the standing grant once with crew policy set team.continuations granted, or decides`;
 }
 function continueOrRefuse(env, work, what, task, cap, round, refusal) {
-  const mine = (work.continued ?? []).filter((c) => c.what === what && c.task === task);
+  const mine = (work.continued ?? []).filter(isEngineEntry).filter((c) => c.what === what && c.task === task);
   const grants = mine.filter((c) => decisionCounts(env.policy, c.by)).length;
   if (round < cap + grants)
     return null;
@@ -23692,8 +23738,7 @@ function deliver2(env, opened, evidence) {
   return refused;
 }
 function isLeadsAnswer(record, by) {
-  const techLead = record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
-  return techLead && record.team !== undefined && `lead-${record.team}` === by;
+  return isTechLead(record) && record.team !== undefined && `lead-${record.team}` === by;
 }
 function verdictAfterRecord(env, opened) {
   const work = opened.work;
@@ -24603,8 +24648,12 @@ function gateSummary(work, verdict, unproven, runs) {
 `);
 }
 function sessionFiledLine(roles) {
-  const agents = [...new Set(roles.filter((r) => r.filedBy === "session").map((r) => r.agent))];
+  const named = (r) => isTechLead(r) && r.team !== undefined ? `${r.agent} (${r.team})` : r.agent;
+  const agents = [...new Set(roles.filter((r) => r.filedBy === "session").map(named))];
   return agents.length ? `answers filed by the session: ${agents.join(", ")}` : "";
+}
+function isTechLead(record) {
+  return record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
 }
 function leaveNoticeFor(payload, env, text) {
   try {
@@ -27245,7 +27294,8 @@ test-first not credited: ${out.uncredited}` : "";
           file: name,
           hash,
           fileHash: contentHash,
-          at: nowIso()
+          at: nowIso(),
+          ...contentChecked ? {} : { contentChecked: false }
         }
       ];
       if (what === "spec" && newRound)

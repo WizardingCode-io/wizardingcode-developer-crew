@@ -256,7 +256,7 @@ test("2026-11-12-005 AC-13: the answers a role filed are recorded as today: the 
   expect(bySession.out.trim().split("\n")).toEqual([
     "validation of spec by lead-security: validated (round 1)",
     expect.stringMatching(/^Not proven: /),
-    "answers filed by the session: tech-lead",
+    "answers filed by the session: tech-lead (security)",
   ]);
   // A record from before the content hash: taken by its file name, and said.
   const delivery = filedLead(env, root, id, leadAnswerText(id, "lead-qa", "delivery"));

@@ -74,6 +74,7 @@ import { adoptRecord, applyChangedFields, loadWork, saveWork } from "../src/work
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
 import {
   makeRepo as bareRepo,
+  filedLead,
   filedRuling,
   git,
   hookContext,
@@ -2676,9 +2677,11 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
 });
 
 /**
- * A lead's answer for `crew validation record --file`, at the place and under the name the row
- * gives it, put on record as the answer a role filed (finding 242, `registerFiled`): the rows of
- * this file pin those names in the engine's lines.
+ * A lead's answer for `crew validation record --file` (finding 242). With no body it is the
+ * lead's plain `validated` answer for the spec, filed through the hook's own filing, which saves
+ * it as `conclave/<lead>.md`, the name the rows of this file pin. An answer a row gives in a shape
+ * or under a name of its own is written there and put on record as filed (`registerFiled`).
+ * Either way the path returned is the one from the repository's root, as the rows pass it on.
  */
 function leadFile(
   env: NodeJS.ProcessEnv,
@@ -2687,8 +2690,12 @@ function leadFile(
   lead: string,
   body?: string,
 ): string {
+  if (body === undefined)
+    return relative(root, filedLead(env, root, id, leadAnswerText(id, lead, "spec")))
+      .split(sep)
+      .join("/");
   const file = `.crew/work/${id}/conclave/${lead}.md`;
-  write(root, file, body ?? leadAnswerText(id, lead, "spec"));
+  write(root, file, body);
   registerFiled(env, root, id, file);
   return file;
 }
@@ -3173,7 +3180,8 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     "| delivery | lead-qa | validated | 0 | 1 | conclave/lead-qa.delivery.md |",
   );
   expect(report).toContain(
-    "| spec | lead-security | returned | 1 | 1 | conclave/lead-security.md |",
+    // The security lead answered again through the hook, which keeps the returned answer under its round's name.
+    "| spec | lead-security | returned | 1 | 1 | conclave/lead-security.round2.md |",
   );
   expect(
     (
@@ -9296,7 +9304,7 @@ test("SP6-T4 AC-5: crew answer file files a role's answer as the hook does, mark
     join(root, ".crew", "work", first, "conclave", "lead-qa.md"),
   );
   expect(validated.out).toContain(
-    "answers filed by the session: review-security, expert-1, judge, tech-lead",
+    "answers filed by the session: review-security, expert-1, judge, tech-lead (qa)",
   );
   const closed = loadWork(repoPaths(root, env), first).work;
   if (!closed) throw new Error("no work");

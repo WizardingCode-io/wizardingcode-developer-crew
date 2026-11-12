@@ -93,7 +93,9 @@ function openFindings(text: string): number[] {
 // (what the leads of 2026-11-12-003 left on the continuations line) and 242 (crew validation record takes a
 // lead's file no role filed), both for the next item of the consolidation.
 // 242 (a lead's file no role filed) fixed by 2026-11-12-005, with the two lines 2026-11-12-004 left on the same records.
-const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 241];
+// 241 (the continuations line on a record no writer makes, and what its leads left) fixed by 2026-11-12-006, which
+// recorded 243 (a script the session writes and runs can call crew hook and file a role's answer) from a probe.
+const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 243];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
@@ -500,7 +502,7 @@ test("2026-11-12-003 AC-5: findings 182 and 216 read fixed by the item, each nam
   expect(openFindings(text)).not.toContain(216);
 });
 
-test("2026-11-12-004 AC-12: finding 209 reads fixed by the item, and findings 241 and 242 are recorded, 241 open", () => {
+test("2026-11-12-004 AC-12: finding 209 reads fixed by the item, and findings 241 and 242 are recorded", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const sectionOf = (n: number) =>
     text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
@@ -510,7 +512,6 @@ test("2026-11-12-004 AC-12: finding 209 reads fixed by the item, and findings 24
   expect(openFindings(text)).not.toContain(209);
   expect(sectionOf(241)).toContain("2026-11-12-003");
   expect(sectionOf(242)).toContain("`crew validation record`");
-  expect(openFindings(text)).toContain(241);
 });
 
 test("2026-11-12-005 AC-8: finding 242 reads fixed by the item, naming the role record and its content hash", () => {
@@ -520,4 +521,32 @@ test("2026-11-12-005 AC-8: finding 242 reads fixed by the item, naming the role 
   expect(outcome).toStartWith("fixed in 2026-11-12-005");
   expect(outcome).toContain("`fileHash`");
   expect(openFindings(text)).not.toContain(242);
+});
+
+test("2026-11-12-006 AC-13: finding 241 reads fixed with every point named, and finding 243 is recorded open as false-proof, of high severity, with its probe", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const sectionOf = (n: number) =>
+    text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+  const outcome = /\n- Outcome:(.*)/.exec(sectionOf(241))?.[1]?.trim() ?? "";
+  expect(outcome).toStartWith("fixed in 2026-11-12-006");
+  // Each point of the finding, with what was done or why nothing was.
+  for (const point of [
+    "(1)",
+    "(2)",
+    "(3)",
+    "(4)",
+    "`continuationsView`",
+    "of any script",
+    "`decision-question.test.ts`",
+    "`contentChecked`",
+  ])
+    expect(outcome, point).toContain(point);
+  expect(openFindings(text)).not.toContain(241);
+  const probe = sectionOf(243);
+  expect(probe).toContain("Category: `false-proof`. Severity: high.");
+  expect(probe).toContain("probes/hook-in-a-script.md");
+  expect(probe).toContain("`crew hook subagent-stop`");
+  expect(probe).toContain("no record of the item tells");
+  expect(probe).toContain("finding 213");
+  expect(openFindings(text)).toContain(243);
 });

@@ -105,6 +105,11 @@ export interface Validation {
    */
   fileHash?: string;
   at: string;
+  /**
+   * False when the lead's file was taken with no content check, its role record being from before
+   * the content hash (finding 242); absent on a checked record and on one from before this field.
+   */
+  contentChecked?: false;
 }
 
 /** The `team` block of `policy.json` (SP7 §6.1): a template, teams added beyond the route, and caps that only tighten. */

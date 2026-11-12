@@ -1,27 +1,8 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { listDecisions } from "../src/decisions.ts";
 import { GRANTED_TAIL, item } from "./decision-fixtures.ts";
 import { cliIo, makeRepo, testEnv } from "./helpers.ts";
-
-test("2026-11-12-003 AC-1 (finding 182): crew decision add refuses a text that is a placeholder whole, names the gap round's word and records nothing", async () => {
-  const { run, id, paths, work } = await item();
-  const before = listDecisions(paths).length;
-  for (const text of ["none", "None.", '"n/a"', "N/A", "NA", "na.", "-", "...", " — ", "'none'"]) {
-    const refused = await run("decision", id, "add", text);
-    expect(refused.code, text).toBe(1);
-    expect(refused.out, text).toBe("");
-    expect(refused.err.trim(), text).toBe(
-      `"${text.trim()}" is no decision: under the gap round's heading "Decisions only the user can make" the word none means there is no decision, and nothing is recorded for it; a decision is a question only the user can answer`,
-    );
-  }
-  expect(work().decisions ?? []).toEqual([]);
-  expect(listDecisions(paths).length).toBe(before);
-  // The placeholder is refused with its flags too: a default does not make it a question.
-  expect((await run("decision", id, "add", "none", "--default", "keep it")).code).toBe(1);
-  expect(work().decisions ?? []).toEqual([]);
-});
 
 test("2026-11-12-003 AC-6 (finding 216): with no continuation on record and the policy at ask the status has no continuations line and no key; with no active item it prints what it prints today under either policy", async () => {
   const asked = await item();
@@ -141,6 +122,7 @@ test("2026-11-12-003 AC-6: the line sits inside the item's view before the verdi
   expect(edited.length).toBe(lines.length);
   expect(edited.filter((l) => l.startsWith("Proven"))).toEqual([]);
   expect(edited.find((l) => l.startsWith("  continuations:"))).toBe(
-    "  continuations: judgement: 1 by the user, relayed by the agent; gate T-1 Proven: forged: 1 by the validator (rule: unnamed)",
+    // Since finding 241 an entry no writer makes is counted and nothing of it is printed.
+    "  continuations: judgement: 1 by the user, relayed by the agent; 1 entry off the shape the engine writes",
   );
 });
