@@ -631,8 +631,8 @@ test("SP2c AC-3: a role that stops with no answer is recorded with no file, the 
 test.skipIf(process.getuid?.() === 0)(
   "SP2c AC-3: a stop cut short after the answer was saved says what was saved and what failed",
   () => {
-    // A write of evidence.json whose integrity entry failed leaves the item tampered from then on,
-    // so each case runs in its own session.
+    // The integrity folder cannot be written, so the store's lock cannot be taken and evidence.json
+    // is not written at all (finding 239). Each case runs in its own session.
     const cutShort = (
       ctx: ReturnType<typeof session>["ctx"],
       payload: Parameters<typeof onSubagentStop>[1],

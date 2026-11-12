@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { breakStale, LockBusy, withLock } from "../src/lock.ts";
+import { breakStale, LockBusy, readUnderLock, readWaitSpent, withLock } from "../src/lock.ts";
 import { tempDir } from "./helpers.ts";
 
 /** A folder whose lock is held, dated as the test says. */
@@ -86,3 +86,80 @@ withLock(dir, () => {
   expect(() => withLock(breaking.dir, () => "never", { waitMs: 300 })).toThrow(LockBusy);
   expect(existsSync(breaking.lock)).toBe(true);
 }, 30_000);
+
+test("2026-11-11-005 AC-8: a stale lock that cannot be removed ends in LockBusy within the wait, with no spin", () => {
+  // A lock twenty seconds old that holds a file: stale, and rmdir fails on it.
+  const { dir, lock } = held(new Date(Date.now() - 20_000));
+  writeFileSync(join(lock, "left-inside"), "");
+  utimesSync(lock, new Date(Date.now() - 20_000), new Date(Date.now() - 20_000));
+  // In a child with a bound of its own: a taker that spins never returns, and no test's time limit
+  // interrupts a synchronous loop.
+  const script = join(tempDir(), "taker.ts");
+  writeFileSync(
+    script,
+    `import { LockBusy, withLock } from "${join(import.meta.dir, "../src/lock.ts")}";
+const started = Date.now();
+let ran = false;
+let outcome = "returned";
+try {
+  withLock(process.argv[2], () => { ran = true; }, { waitMs: 300 });
+} catch (error) {
+  outcome = error instanceof LockBusy ? "LockBusy" : String(error);
+}
+console.log(JSON.stringify({ outcome, ran, ms: Date.now() - started }));
+`,
+  );
+  const run = Bun.spawnSync(["bun", "run", script, dir], { timeout: 5_000 });
+  expect(run.exitCode).toBe(0); // null when the bound killed a taker that never returned
+  const said = JSON.parse(run.stdout.toString().trim()) as {
+    outcome: string;
+    ran: boolean;
+    ms: number;
+  };
+  expect(said).toMatchObject({ outcome: "LockBusy", ran: false });
+  expect(said.ms).toBeGreaterThanOrEqual(300);
+  expect(said.ms).toBeLessThan(2_000);
+  expect(existsSync(lock)).toBe(true);
+}, 30_000);
+
+test("2026-11-11-005 AC-7 (the read under a lock): what the read itself throws once the lock is taken is thrown, the lock released and no wait spent; and the tests' own guard fails a row that spends the process's one wait", () => {
+  const dir = tempDir();
+  // The lock is free: the read runs under it, and its own failure is the caller's to see.
+  expect(() =>
+    readUnderLock(dir, "first", () => {
+      throw new Error("the file cannot be read");
+    }),
+  ).toThrow("the file cannot be read");
+  expect(existsSync(join(dir, ".lock"))).toBe(false);
+  expect(readUnderLock(dir, "first", () => "read again")).toBe("read again");
+  expect(readWaitSpent()).toBe(false);
+  // The guard of preload.ts, in a run of its own: a row that makes a read fail to take a lock in
+  // the tests' process fails by name, and the row after it does not.
+  const fixture = tempDir("crew-guard-");
+  writeFileSync(
+    join(fixture, "spends.test.ts"),
+    `import { expect, test } from "bun:test";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { readUnderLock, readWaitSpent } from "${join(import.meta.dir, "../src/lock.ts")}";
+test("spends the wait", () => {
+  mkdirSync(join(import.meta.dir, ".lock"));
+  expect(readUnderLock(import.meta.dir, "first", () => "second", { waitMs: 50 })).toBe("first");
+  expect(readWaitSpent()).toBe(true);
+});
+test("runs after it", () => {
+  expect(readUnderLock(import.meta.dir, "kept", () => "second")).toBe("kept");
+});
+`,
+  );
+  const run = Bun.spawnSync(
+    ["bun", "test", "--preload", join(import.meta.dir, "preload.ts"), "spends.test.ts"],
+    { cwd: fixture, timeout: 30_000 },
+  );
+  const said = `${run.stdout}${run.stderr}`;
+  expect(run.exitCode).toBe(1);
+  expect(said).toContain("make that read in a child process");
+  expect(said).toContain("(fail) spends the wait");
+  // One row failed and one passed: the row after it is not failed for the first one's wait.
+  expect(said).toMatch(/\n 1 pass\n 1 fail\n/);
+}, 60_000);

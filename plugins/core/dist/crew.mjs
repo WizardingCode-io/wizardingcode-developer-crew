@@ -937,14 +937,14 @@ function breakStale(lock) {
     try {
       rmdirSync(lock);
     } catch {}
-    return true;
+    return ageOf(lock) === null;
   } finally {
     try {
       rmdirSync(breaker);
     } catch {}
   }
 }
-
+var readWait = false;
 class LockBusy extends Error {
 }
 function withLock(dir, fn, options = {}) {
@@ -974,6 +974,22 @@ function withLock(dir, fn, options = {}) {
     try {
       rmdirSync(lock);
     } catch {}
+  }
+}
+function readUnderLock(dir, first, read, options = {}) {
+  if (readWait)
+    return first;
+  let taken = false;
+  try {
+    return withLock(dir, () => {
+      taken = true;
+      return read();
+    }, options);
+  } catch (error) {
+    if (taken)
+      throw error;
+    readWait = true;
+    return first;
   }
 }
 
@@ -4102,26 +4118,28 @@ function rememberIn(file, key, text) {
   integrity[key] = sha256(text);
   writeJson(file, integrity);
 }
-function remember(paths, absPath, text) {
-  const file = paths.integrityFile;
-  withLock(dirname4(file), () => rememberIn(file, rel(paths, absPath), text), {
-    what: "integrity record"
-  });
+var STORE_LOCK = { what: "integrity record" };
+function withStoreLock(paths, fn) {
+  return withLock(dirname4(paths.integrityFile), fn, STORE_LOCK);
 }
 function writeProtectedText(paths, absPath, text) {
-  writeText(absPath, text);
-  remember(paths, absPath, text);
+  withStoreLock(paths, () => {
+    writeText(absPath, text);
+    rememberIn(paths.integrityFile, rel(paths, absPath), text);
+  });
 }
 function writeProtectedJson(paths, absPath, data) {
   writeProtectedText(paths, absPath, `${JSON.stringify(data, null, 2)}
 `);
 }
 function recordIntegrity(paths, absPath) {
-  const text = readText(absPath);
-  if (text === null)
-    return false;
-  remember(paths, absPath, text);
-  return true;
+  return withStoreLock(paths, () => {
+    const text = readText(absPath);
+    if (text === null)
+      return false;
+    rememberIn(paths.integrityFile, rel(paths, absPath), text);
+    return true;
+  });
 }
 function readProtected(integrityFile, key, absPath, handWritten) {
   let text;
@@ -4141,13 +4159,17 @@ function readProtected(integrityFile, key, absPath, handWritten) {
     return { data: null, tampered: true, text };
   }
 }
-function readProtectedJson(paths, absPath) {
-  const { data, tampered } = readProtectedText(paths, absPath);
+function readProtectedJson(paths, absPath, waitMs) {
+  const { data, tampered } = readProtectedText(paths, absPath, waitMs);
   return { data, tampered };
 }
-function readProtectedText(paths, absPath) {
+function readProtectedText(paths, absPath, waitMs) {
   const key = rel(paths, absPath);
-  return readProtected(paths.integrityFile, key, absPath, key === HAND_WRITTEN);
+  const read = () => readProtected(paths.integrityFile, key, absPath, key === HAND_WRITTEN);
+  const first = read();
+  if (!first.tampered)
+    return first;
+  return readUnderLock(dirname4(paths.integrityFile), first, read, { ...STORE_LOCK, waitMs });
 }
 function writeProtectedJsonAt(integrityFile, absPath, data) {
   const text = `${JSON.stringify(data, null, 2)}
@@ -10365,6 +10387,7 @@ function mailbox(userDir, workspace, project) {
 function boxFile(dir, name) {
   return join26(dir, `${name}.json`);
 }
+var MAILBOX_LOCK = "mailbox";
 function readBoxHeld(dir, which) {
   const file = boxFile(dir, which);
   if (existsSync14(file))
@@ -10377,19 +10400,13 @@ function readBox(dir, which, waitMs) {
   const first = readBoxHeld(dir, which);
   if (!first.tampered)
     return first;
-  try {
-    return withMailLock(dir, () => readBoxHeld(dir, which), { waitMs });
-  } catch (error) {
-    if (!(error instanceof LockBusy))
-      throw error;
-    return first;
-  }
+  return readUnderLock(dir, first, () => readBoxHeld(dir, which), { waitMs, what: MAILBOX_LOCK });
 }
 function writeBox(dir, which, box) {
   writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
 }
 function withMailLock(dir, fn, options = {}) {
-  return withLock(dir, fn, { ...options, what: "mailbox" });
+  return withLock(dir, fn, { ...options, what: MAILBOX_LOCK });
 }
 function acceptBox(ctx, which) {
   const { mail } = effectiveMailPolicy(ctx.paths.root, ctx.policy, ctx.env);

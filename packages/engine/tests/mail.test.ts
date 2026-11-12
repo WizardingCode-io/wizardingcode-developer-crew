@@ -1767,14 +1767,44 @@ test("2026-11-11-004 AC-5: a box a hand changed is still refused and left as it 
   expect(toForged.out).toMatchObject({ refused: tamperedBox("crm", "inbox") });
   expect(toForged.ms).toBeLessThan(bound);
   expect(readFileSync(inboxFile, "utf8")).toBe(forgedInbox);
-  // The mailbox's lock held by another, fresh, past the wait: the first answer, after the wait, nothing thrown.
+  // A read that cannot take the mailbox's lock keeps its first answer and throws nothing. Each
+  // such read is made in a child: it spends the one wait of its process (2026-11-11-005 AC-7).
+  const reader = join(tempDir("crew-box-reader-"), "reader.ts");
+  writeFileSync(
+    reader,
+    `import { readBox } from "${join(import.meta.dir, "../src/mail.ts")}";
+const started = Date.now();
+let out;
+try {
+  out = { tampered: readBox(process.argv[2], "inbox", 300).tampered };
+} catch (error) {
+  out = { thrown: String(error) };
+}
+console.log(JSON.stringify({ ...out, ms: Date.now() - started }));
+`,
+  );
+  const readInChild = (): { tampered?: boolean; thrown?: string; ms: number } => {
+    const run = Bun.spawnSync(["bun", "run", reader, crmDir], { env: childEnv() });
+    if (run.exitCode !== 0) throw new Error(`the reader exited ${run.exitCode}: ${run.stderr}`);
+    return JSON.parse(run.stdout.toString().trim());
+  };
+  // The lock held by another, fresh, past the wait: the first answer, after the wait.
   const lock = join(crmDir, ".lock");
   mkdirSync(lock);
-  const busy = timed(() => readBox(crmDir, "inbox", 300));
+  const busy = readInChild();
   rmdirSync(lock);
-  expect(busy.out.tampered).toBe(true);
+  expect(busy).toMatchObject({ tampered: true });
   expect(busy.ms).toBeGreaterThanOrEqual(300);
   expect(busy.ms).toBeLessThan(bound);
+  // The mailbox's folder not writable, so the lock cannot be made: the same (root ignores the mode).
+  if (process.getuid?.() !== 0) {
+    chmodSync(crmDir, 0o555);
+    try {
+      expect(readInChild()).toMatchObject({ tampered: true });
+    } finally {
+      chmodSync(crmDir, 0o755);
+    }
+  }
   // The sync of a project whose own inbox a hand changed: it holds its own lock and waits for none.
   const forgedOwn = byHand(join(ownDir, "inbox.json"));
   const synced = timed(() => syncMail(w.a.ctx, w.a.paths));

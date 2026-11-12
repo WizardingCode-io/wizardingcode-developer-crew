@@ -36,7 +36,8 @@ export function lockHeld(dir: string): boolean {
  * both read the lock as stale would otherwise both remove it, the second removing the fresh lock
  * the first had just taken. The breaker reads the age again and removes the lock only when it is
  * still stale. A breaker older than the stale age was left by a process that died while breaking
- * and is removed; a live one is another process breaking, waited for. True when the lock is gone.
+ * and is removed; a live one is another process breaking, waited for. True when the lock is gone,
+ * and only then: a stale lock that cannot be removed is false.
  */
 export function breakStale(lock: string): boolean {
   const breaker = `${lock}.break`;
@@ -61,9 +62,11 @@ export function breakStale(lock: string): boolean {
     try {
       rmdirSync(lock);
     } catch {
-      // gone already
+      // gone already, or it cannot be removed (not empty, no permission)
     }
-    return true;
+    // Only a lock that is gone can be taken (finding 239): one that could not be removed sends
+    // the taker on to its wait and `LockBusy`, never back to try again at once and without end.
+    return ageOf(lock) === null;
   } finally {
     try {
       rmdirSync(breaker);
@@ -71,6 +74,14 @@ export function breakStale(lock: string): boolean {
       // already removed
     }
   }
+}
+
+/** Whether this process has waited for a lock on a read and not taken it: its one such wait. */
+let readWait = false;
+
+/** Whether this process has spent its one wait for a lock on a read (`readUnderLock`). The engine does not read it; its tests do, to keep every such wait in a process of its own. */
+export function readWaitSpent(): boolean {
+  return readWait;
 }
 
 /** The lock was still held after the wait: the one failure of `withLock` a caller may pass by. */
@@ -117,5 +128,42 @@ export function withLock<T>(
     } catch {
       // already released
     }
+  }
+}
+
+/**
+ * A read made again under a folder's lock (findings 238 and 239). Two files that a writer writes
+ * one after the other under that lock, a file and its hash, can be read apart by a reader that
+ * holds none; a read that found them apart, `first`, is made again here, where no writer is
+ * between its two writes. The one place a read takes a lock, so its three rules are kept once:
+ *
+ * - When the lock cannot be taken, held past the wait or its folder not writable, `first` is the
+ *   answer and nothing is thrown. `first` says the files are apart, so the read fails closed.
+ * - A process waits for a lock on a read at most once: after one lock not taken, every later call
+ *   answers `first` at once. A hook makes several such reads and is killed at five seconds; a
+ *   holder of another lock must not be carried to the stale age by them.
+ * - What `read` itself throws, once the lock is taken, is thrown.
+ */
+export function readUnderLock<T>(
+  dir: string,
+  first: T,
+  read: () => T,
+  options: { waitMs?: number; what?: string } = {},
+): T {
+  if (readWait) return first;
+  let taken = false;
+  try {
+    return withLock(
+      dir,
+      () => {
+        taken = true;
+        return read();
+      },
+      options,
+    );
+  } catch (error) {
+    if (taken) throw error;
+    readWait = true;
+    return first;
   }
 }

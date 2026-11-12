@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
 import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
-import { COMMAND_LOCK_WAIT_MS, LockBusy, withLock } from "./lock.ts";
+import { COMMAND_LOCK_WAIT_MS, LockBusy, readUnderLock, withLock } from "./lock.ts";
 import {
   decidedPriority,
   insidePath,
@@ -488,6 +488,9 @@ function boxFile(dir: string, name: "inbox" | "outbox" | "integrity"): string {
   return join(dir, `${name}.json`);
 }
 
+/** How a busy mailbox's lock is named in its report. */
+const MAILBOX_LOCK = "mailbox";
+
 /**
  * One read of a box and of its hash, for a caller that holds the mailbox's lock: under it no writer
  * is between its two writes, so the two belong together. With no lock held, `readBox`.
@@ -511,9 +514,10 @@ export function readBoxHeld(
  * hash, and a writer holds the mailbox's lock over both writes: a read with no lock can meet the
  * two apart and take a writer's moment for a hand's change. So a read that says `tampered` is made
  * again under the mailbox's lock, where no writer is between its two writes and `tampered` means
- * a hand. When the lock stays held past `waitMs` the first answer is kept and nothing is thrown:
- * the callers are hooks and status lines as well as commands. A caller that holds the mailbox's
- * lock reads with `readBoxHeld`: the lock is not re-entrant.
+ * a hand. When the lock cannot be taken, held past `waitMs` or its folder not writable, the first
+ * answer is kept and nothing is thrown, and a process waits so at most once (`readUnderLock`): the
+ * callers are hooks and status lines as well as commands. A caller that holds the mailbox's lock
+ * reads with `readBoxHeld`: the lock is not re-entrant.
  */
 export function readBox(
   dir: string,
@@ -522,12 +526,7 @@ export function readBox(
 ): { box: Mailbox; tampered: boolean } {
   const first = readBoxHeld(dir, which);
   if (!first.tampered) return first;
-  try {
-    return withMailLock(dir, () => readBoxHeld(dir, which), { waitMs });
-  } catch (error) {
-    if (!(error instanceof LockBusy)) throw error;
-    return first;
-  }
+  return readUnderLock(dir, first, () => readBoxHeld(dir, which), { waitMs, what: MAILBOX_LOCK });
 }
 
 export function writeBox(dir: string, which: "inbox" | "outbox", box: Mailbox): void {
@@ -536,7 +535,7 @@ export function writeBox(dir: string, which: "inbox" | "outbox", box: Mailbox): 
 
 /** The mailbox's lock: `withLock` on the mailbox folder, reported as the mailbox. */
 export function withMailLock<T>(dir: string, fn: () => T, options: { waitMs?: number } = {}): T {
-  return withLock(dir, fn, { ...options, what: "mailbox" });
+  return withLock(dir, fn, { ...options, what: MAILBOX_LOCK });
 }
 
 /**

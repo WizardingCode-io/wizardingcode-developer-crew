@@ -1,6 +1,6 @@
 import { basename, dirname, relative } from "node:path";
 import { readText, sha256, writeJson, writeText } from "./fs.ts";
-import { withLock } from "./lock.ts";
+import { readUnderLock, withLock } from "./lock.ts";
 import type { CrewPaths } from "./paths.ts";
 
 type Integrity = Record<string, string>;
@@ -45,34 +45,48 @@ function rememberIn(file: string, key: string, text: string): void {
   writeJson(file, integrity);
 }
 
+const STORE_LOCK = { what: "integrity record" };
+
 /**
- * A repository's hash recorded under the store's lock (finding 29): `withLock` on the integrity
- * file's folder, so two writers never lose each other's hash; a lock held past the wait throws
- * `LockBusy` and nothing is written unlocked. The `At` writers need no lock of their own: a
- * mailbox's integrity file sits in the mailbox folder, whose lock every writer of a box holds.
+ * The store's lock: `withLock` on the integrity file's folder (finding 29), held over a protected
+ * file's write and its hash's, so that the two always belong together (finding 239). A lock that
+ * cannot be taken throws, `LockBusy` when it stays held past the wait, and nothing is written.
+ * The `At` writers need no lock of their own: a mailbox's integrity file sits in the mailbox
+ * folder, whose lock every writer of a box holds. No caller holds this lock when it calls into the
+ * store, so it is never asked for twice by one process.
  */
-function remember(paths: CrewPaths, absPath: string, text: string): void {
-  const file = paths.integrityFile;
-  withLock(dirname(file), () => rememberIn(file, rel(paths, absPath), text), {
-    what: "integrity record",
-  });
+function withStoreLock<T>(paths: CrewPaths, fn: () => T): T {
+  return withLock(dirname(paths.integrityFile), fn, STORE_LOCK);
 }
 
+/**
+ * A protected file written with its hash, both under the store's lock: a reader never finds one
+ * writer's file beside another's hash, and a write that cannot take the lock leaves the file as
+ * it was.
+ */
 export function writeProtectedText(paths: CrewPaths, absPath: string, text: string): void {
-  writeText(absPath, text);
-  remember(paths, absPath, text);
+  withStoreLock(paths, () => {
+    writeText(absPath, text);
+    rememberIn(paths.integrityFile, rel(paths, absPath), text);
+  });
 }
 
 export function writeProtectedJson(paths: CrewPaths, absPath: string, data: unknown): void {
   writeProtectedText(paths, absPath, `${JSON.stringify(data, null, 2)}\n`);
 }
 
-/** Records the current content of a file the user accepted, such as a hand-edited policy.json. */
+/**
+ * Records the current content of a file the user accepted, such as a hand-edited policy.json. The
+ * file is read under the store's lock, so the hash recorded is that of the text it holds then,
+ * whatever a writer did while the lock was waited for.
+ */
 export function recordIntegrity(paths: CrewPaths, absPath: string): boolean {
-  const text = readText(absPath);
-  if (text === null) return false;
-  remember(paths, absPath, text);
-  return true;
+  return withStoreLock(paths, () => {
+    const text = readText(absPath);
+    if (text === null) return false;
+    rememberIn(paths.integrityFile, rel(paths, absPath), text);
+    return true;
+  });
 }
 
 export interface Protected<T> {
@@ -115,8 +129,12 @@ function readProtected<T>(
 }
 
 /** A protected file of a repository, keyed by its path from the root in the repository's integrity file; the policy may be hand-written. */
-export function readProtectedJson<T>(paths: CrewPaths, absPath: string): Protected<T> {
-  const { data, tampered } = readProtectedText<T>(paths, absPath);
+export function readProtectedJson<T>(
+  paths: CrewPaths,
+  absPath: string,
+  waitMs?: number,
+): Protected<T> {
+  const { data, tampered } = readProtectedText<T>(paths, absPath, waitMs);
   return { data, tampered };
 }
 
@@ -124,9 +142,16 @@ export function readProtectedJson<T>(paths: CrewPaths, absPath: string): Protect
 export function readProtectedText<T>(
   paths: CrewPaths,
   absPath: string,
+  waitMs?: number,
 ): Protected<T> & { text: string | null } {
   const key = rel(paths, absPath);
-  return readProtected<T>(paths.integrityFile, key, absPath, key === HAND_WRITTEN);
+  const read = () => readProtected<T>(paths.integrityFile, key, absPath, key === HAND_WRITTEN);
+  // With no lock first. A read that finds the file and its hash apart may have met a writer
+  // between its two writes: it is made again under the store's lock, where `tampered` means a hand
+  // (finding 239). `waitMs` is how long that lock is waited for; the lock's own wait when not given.
+  const first = read();
+  if (!first.tampered) return first;
+  return readUnderLock(dirname(paths.integrityFile), first, read, { ...STORE_LOCK, waitMs });
 }
 
 /**

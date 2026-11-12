@@ -86,9 +86,9 @@ function openFindings(text: string): number[] {
 // 236 (a document reviewer's whole answer refused for one off-shape line) and 237 (what 2026-11-11-002's delivery left) recorded by 2026-11-11-003,
 // with 238 (the mail lock row's one failure in a whole-suite run).
 // 238 fixed by 2026-11-11-004 (a read of a box with no lock between a writer's two writes), which recorded 239 (the same window in the repository's own store).
+// 239 fixed by 2026-11-11-005 (the store's write under its lock over the file and its hash, a read confirmed under it).
 const OPEN = [
   77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 221, 222, 224, 236, 237,
-  239,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -322,7 +322,7 @@ test("2026-11-11-003 AC-2: finding 238 records the one failure of the mail lock 
   // Whether 238 reads open or fixed is not this row's to say: the row of the item that fixed it asserts the outcome.
 });
 
-test("2026-11-11-004 AC-4: finding 238 reads fixed with its cause and the measure, and finding 239 records the same window in the repository's own store, open", () => {
+test("2026-11-11-004 AC-4: finding 238 reads fixed with its cause and the measure, and finding 239 records the same window in the repository's own store", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionIn(text, n))?.[1]?.trim() ?? "";
   expect(outcomeOf(238)).toStartWith("fixed in 2026-11-11-004");
@@ -348,5 +348,31 @@ test("2026-11-11-004 AC-4: finding 238 reads fixed with its cause and the measur
   ])
     expect(store, said).toContain(said);
   expect(store).toMatch(/\n- What happened: \S.{20,}/);
-  expect(openFindings(text)).toContain(239);
+  // Whether 239 reads open or fixed is the row's of the item that fixed it.
+});
+
+test("2026-11-11-005 AC-6: finding 239 reads fixed with its two causes, the measures before and after, and what is not fixed", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const outcome = /\n- Outcome:(.*)/.exec(sectionIn(text, 239))?.[1]?.trim() ?? "";
+  expect(outcome).toStartWith("fixed in 2026-11-11-005");
+  for (const said of [
+    // the two causes
+    "between its two writes",
+    "crossed",
+    // the measures
+    "3778 of 8000",
+    "one run of eight",
+    "none in 18 000",
+    "probes/window.md",
+    "probes/after.md",
+    // the fix
+    "writeProtectedText",
+    "readUnderLock",
+    "breakStale",
+    // what is not fixed
+    "older engine",
+    "crew accept",
+  ])
+    expect(outcome, said).toContain(said);
+  expect(openFindings(text)).not.toContain(239);
 });

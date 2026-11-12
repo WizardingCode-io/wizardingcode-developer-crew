@@ -1,6 +1,7 @@
-import { afterAll } from "bun:test";
+import { afterAll, afterEach } from "bun:test";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { readWaitSpent } from "../src/lock.ts";
 import { enterRun, removeTempDirs, runsHome, sweepDeadRuns } from "./helpers.ts";
 
 // Named by both bunfig.toml files (the root's and the engine's). Every run of the tests gets a
@@ -18,4 +19,17 @@ const run = enterRun(home);
 afterAll(() => {
   removeTempDirs();
   run.leave();
+});
+
+// A process waits for a lock on a read at most once (finding 239, `readUnderLock`), and the files
+// of a run share this process: a row that makes a read fail to take a lock here would leave every
+// later row with reads that are never made again under a lock. So such a read belongs in a child
+// process, and the row that makes one here fails, once, by name.
+let spentReported = false;
+afterEach(() => {
+  if (spentReported || !readWaitSpent()) return;
+  spentReported = true;
+  throw new Error(
+    "this row made a read fail to take a lock in the tests' own process, which spends the one wait every later row shares: make that read in a child process",
+  );
 });
