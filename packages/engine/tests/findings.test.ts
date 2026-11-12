@@ -89,7 +89,10 @@ function openFindings(text: string): number[] {
 // 239 fixed by 2026-11-11-005 (the store's write under its lock over the file and its hash, a read confirmed under it).
 // 182 (crew decision add took none as a question) and 216 (crew status printed no continuation) fixed by 2026-11-12-003,
 // the first item of the consolidation the user approved on 2026-11-12 from the inventory of the eighteen open findings.
-const OPEN = [77, 114, 177, 178, 181, 183, 206, 209, 210, 212, 213, 214, 215, 221, 222, 224];
+// 209 (Proven on a route with leads before a lead read anything) fixed by 2026-11-12-004, which recorded 241
+// (what the leads of 2026-11-12-003 left on the continuations line) and 242 (crew validation record takes a
+// lead's file no role filed), both for the next item of the consolidation.
+const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 241, 242];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
@@ -494,4 +497,18 @@ test("2026-11-12-003 AC-5: findings 182 and 216 read fixed by the item, each nam
   expect(outcomeOf(216)).toContain("`continuations`");
   expect(openFindings(text)).not.toContain(182);
   expect(openFindings(text)).not.toContain(216);
+});
+
+test("2026-11-12-004 AC-12: finding 209 reads fixed by the item, and findings 241 and 242 are recorded open", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const sectionOf = (n: number) =>
+    text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+  const outcomeOf = (n: number) => /\n- Outcome:(.*)/.exec(sectionOf(n))?.[1]?.trim() ?? "";
+  expect(outcomeOf(209)).toStartWith("fixed in 2026-11-12-004");
+  expect(outcomeOf(209)).toContain("`leadsMissing`");
+  expect(openFindings(text)).not.toContain(209);
+  expect(sectionOf(241)).toContain("2026-11-12-003");
+  expect(sectionOf(242)).toContain("`crew validation record`");
+  expect(openFindings(text)).toContain(241);
+  expect(openFindings(text)).toContain(242);
 });

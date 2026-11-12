@@ -44,6 +44,7 @@ import type {
 } from "./types.ts";
 import { partyLabel } from "./types.ts";
 import { safeText, type UiEvidence } from "./ui.ts";
+import { leadsMissing } from "./validation.ts";
 import { decisionMarkText } from "./verify.ts";
 import { currentCriterion, isSkipped, kindOfItem, tddDone } from "./work.ts";
 
@@ -230,6 +231,8 @@ export interface VerdictInput {
   audit?: { run: boolean; runAtHead: boolean; report: boolean; reportCurrent: boolean };
   /** Why a new site is not yet at the bar (item 2026-10-30-005, D-5): the design's reasons, already worked out. */
   design?: readonly string[];
+  /** `spec.md` as it stands, null or absent when the item has none: what a lead's validation of the spec is read against (finding 209). */
+  specText?: string | null;
 }
 
 /** An audit as the report shows it (SP8 Task 5): the run's summary, the findings' counts, the report's files, the signature. */
@@ -340,6 +343,11 @@ export function computeVerdict(input: VerdictInput): {
       unproven.push(`judgement gate ${gate} not run: ${record.reason ?? "no reason given"}`);
   }
   unproven.push(...(input.design ?? []));
+  // The leads the route seats (finding 209): the item is not proven while one of them has no
+  // current validation of the spec as it stands and of the delivery on the last gate run's
+  // evidence. The phases ask the same on the way; the verdict asks it wherever the item is.
+  const subject = { specText: input.specText ?? null, evidence };
+  unproven.push(...leadsMissing(work, subject, "spec"), ...leadsMissing(work, subject, "delivery"));
   // A blocking objection is a reason of its own: open, or bound to a criterion not yet proven (SP2 §8).
   if (input.ledger) {
     for (const o of blockingObjections(input.ledger, work, evidence, policy, ["open", "bound"]))

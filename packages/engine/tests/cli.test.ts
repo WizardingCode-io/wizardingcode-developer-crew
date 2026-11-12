@@ -1754,6 +1754,8 @@ test("SP2a: an item in specify moves to conclave, and plan asks for conclave.md 
   // SP7a: the plan also waits for the leads' validation of the spec.
   const blockedByLeads = await c.run("phase", id, "next");
   expect(blockedByLeads.err).toContain("validation of spec by lead-qa");
+  // A lead validates a text (finding 209): the spec is written before the leads are recorded.
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
   await validateLeads(c, root, id);
   expect((await c.json("phase", id, "next")).data.phase).toBe("plan");
 });
@@ -2962,7 +2964,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--file",
         leadFile(root, id, "lead-qa"),
       )
-    ).out.trim(),
+    ).out.split("\n")[0],
   ).toBe("validation of spec by lead-qa: validated (round 1)");
   const returned = `# security lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:4 · AC-1 is not observable\n## Notes\n- none\n`;
   expect(
@@ -2978,7 +2980,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--file",
         leadFile(root, id, "lead-security", returned),
       )
-    ).out.trim(),
+    ).out.split("\n")[0],
   ).toBe("validation of spec by lead-security: returned, 1 return (round 1)");
   expect((await c.run("phase", id, "next")).err).toContain(
     "validation of spec by lead-security: returned 1 return",
@@ -3008,7 +3010,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
           `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as b\n`,
         ),
       )
-    ).out.trim(),
+    ).out.split("\n")[0],
   ).toBe("validation of spec by lead-qa: validated (round 2)");
   expect(
     (
@@ -3074,7 +3076,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
           `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as c\n`,
         ),
       )
-    ).out.trim(),
+    ).out.split("\n")[0],
   ).toBe("validation of spec by lead-qa: validated (round 3)");
   // Plan and delivery validations carry their own round by hash and spend no spec round.
   const planFile = (n: number) =>
@@ -3097,7 +3099,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--file",
         planFile(1),
       )
-    ).out.trim(),
+    ).out.split("\n")[0],
   ).toBe("validation of plan by lead-qa: validated (round 1)");
   write(root, `.crew/work/${id}/plan.md`, "# Plan\n\n1. AC-1\n");
   expect(
@@ -3113,7 +3115,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--file",
         planFile(2),
       )
-    ).out.trim(),
+    ).out.split("\n")[0],
   ).toBe("validation of plan by lead-qa: validated (round 2)");
   const deliveryFile = leadFile(
     root,
@@ -3133,7 +3135,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
       "--file",
       deliveryFile,
     );
-  expect((await delivery()).out.trim()).toBe(
+  expect((await delivery()).out.split("\n")[0]).toBe(
     "validation of delivery by lead-qa: validated (round 1)",
   );
   // The same answer again is the round-1 answer (finding 119): refused, naming the reply file.
@@ -4199,11 +4201,17 @@ test("SP7b-T5 AC-2 (validation), 2026-10-27-007 AC-1: under the standing grant t
         `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for version ${n}\n`,
       ),
     );
-  expect((await validate(1)).out.trim()).toBe("validation of spec by lead-qa: validated (round 1)");
+  expect((await validate(1)).out.split("\n")[0]).toBe(
+    "validation of spec by lead-qa: validated (round 1)",
+  );
   spec(2);
-  expect((await validate(2)).out.trim()).toBe("validation of spec by lead-qa: validated (round 2)");
+  expect((await validate(2)).out.split("\n")[0]).toBe(
+    "validation of spec by lead-qa: validated (round 2)",
+  );
   spec(3);
-  expect((await validate(3)).out.trim()).toBe("validation of spec by lead-qa: validated (round 3)");
+  expect((await validate(3)).out.split("\n")[0]).toBe(
+    "validation of spec by lead-qa: validated (round 3)",
+  );
   const continued = () => loadWork(repoPaths(root, env), id).work?.continued ?? [];
   expect(continued()).toMatchObject([{ what: "validation", by: { by: "user" }, standing: true }]);
   expect(register(root).at(-1)).toMatchObject({
@@ -4212,10 +4220,14 @@ test("SP7b-T5 AC-2 (validation), 2026-10-27-007 AC-1: under the standing grant t
     by: "the user",
   });
   spec(4);
-  expect((await validate(4)).out.trim()).toBe("validation of spec by lead-qa: validated (round 4)");
+  expect((await validate(4)).out.split("\n")[0]).toBe(
+    "validation of spec by lead-qa: validated (round 4)",
+  );
   expect(continued().filter((e) => e.standing).length).toBe(2);
   spec(5);
-  expect((await validate(5)).out.trim()).toBe("validation of spec by lead-qa: validated (round 5)");
+  expect((await validate(5)).out.split("\n")[0]).toBe(
+    "validation of spec by lead-qa: validated (round 5)",
+  );
   expect(continued().filter((e) => e.standing).length).toBe(3);
   expect(register(root).at(-1)).toMatchObject({
     kind: "continue",
@@ -7483,21 +7495,21 @@ async function specAtValidation(team: Record<string, unknown>) {
 
 test("SP6-T1 AC-1: a validation round is counted per revision each lead read, not per record; the record that would open round three is refused when continuations are asked, and crew continue lets it through once", async () => {
   const { c, id, record, revise, rounds } = await specAtValidation({ continuations: "ask" });
-  expect((await record("lead-qa")).out.trim()).toBe(
+  expect((await record("lead-qa")).out.split("\n")[0]).toBe(
     "validation of spec by lead-qa: validated (round 1)",
   );
   // The spec changes after lead-qa read it and before lead-security's first record lands (finding 106).
   revise(2);
-  expect((await record("lead-security")).out.trim()).toBe(
+  expect((await record("lead-security")).out.split("\n")[0]).toBe(
     "validation of spec by lead-security: validated (round 1)",
   );
   expect(rounds()).toMatchObject({ validation: 1 });
   // A revision both leads read again: each opens its round 2; the item's round is 2.
   revise(3);
-  expect((await record("lead-qa")).out.trim()).toBe(
+  expect((await record("lead-qa")).out.split("\n")[0]).toBe(
     "validation of spec by lead-qa: validated (round 2)",
   );
-  expect((await record("lead-security")).out.trim()).toBe(
+  expect((await record("lead-security")).out.split("\n")[0]).toBe(
     "validation of spec by lead-security: validated (round 2)",
   );
   expect(rounds()).toMatchObject({ validation: 2 });
@@ -7517,11 +7529,11 @@ test("SP6-T1 AC-1: a validation round is counted per revision each lead read, no
   );
   expect(rounds()).toMatchObject({ validation: 2 });
   expect((await c.run("continue", id, "validation")).code).toBe(0);
-  expect((await record("lead-qa")).out.trim()).toBe(
+  expect((await record("lead-qa")).out.split("\n")[0]).toBe(
     "validation of spec by lead-qa: validated (round 3)",
   );
   // The other lead on the same revision joins round 3 without a second grant.
-  expect((await record("lead-security")).out.trim()).toBe(
+  expect((await record("lead-security")).out.split("\n")[0]).toBe(
     "validation of spec by lead-security: validated (round 3)",
   );
   expect(rounds()).toMatchObject({ validation: 3 });
@@ -7531,11 +7543,11 @@ test("SP6-T1 AC-1: under team.continuations granted the record that would open r
   const { root, env, record, revise, rounds } = await specAtValidation({
     continuations: "granted",
   });
-  expect((await record("lead-qa")).out.trim()).toBe(
+  expect((await record("lead-qa")).out.split("\n")[0]).toBe(
     "validation of spec by lead-qa: validated (round 1)",
   );
   revise(2);
-  expect((await record("lead-security")).out.trim()).toBe(
+  expect((await record("lead-security")).out.split("\n")[0]).toBe(
     "validation of spec by lead-security: validated (round 1)",
   );
   revise(3);
@@ -7545,7 +7557,7 @@ test("SP6-T1 AC-1: under team.continuations granted the record that would open r
   revise(4);
   const third = await record("lead-qa");
   expect(third.code, third.err).toBe(0);
-  expect(third.out.trim()).toBe("validation of spec by lead-qa: validated (round 3)");
+  expect(third.out.split("\n")[0]).toBe("validation of spec by lead-qa: validated (round 3)");
   expect(rounds()).toMatchObject({ validation: 3 });
   expect(
     listDecisions(repoPaths(root, env)).filter(
@@ -9245,6 +9257,7 @@ test("SP6-T4 AC-5: crew answer file files a role's answer as the hook does, mark
   expect(
     (await c.run("answer", "file", first, "--role", "tech-lead", "--file", lead)).out,
   ).toContain("filed as conclave/lead-qa.md (by the session)");
+  write(root, `.crew/work/${first}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
   const validated = await c.run(
     "validation",
     first,
@@ -11077,7 +11090,11 @@ test("DEBT-AC-15-seat: crew team <id> seat <gate> --reason seats an unplanned ju
   );
   const recorded = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(recorded.err).not.toContain("not planned");
-  expect(recorded.code, recorded.err).toBe(0);
+  // The ruling is taken and every gate is proven; the item waits for its leads alone (finding 209).
+  expect(recorded.code, recorded.err).toBe(1);
+  const left = (await c.json("status")).data.unproven as string[];
+  expect(left.length).toBeGreaterThan(0);
+  expect(left.filter((reason) => !reason.startsWith("validation of "))).toEqual([]);
   const judgement = (await c.json("status")).data.judgement as { gate: string; status: string }[];
   expect(judgement.find((j) => j.gate === "security")?.status).toBe("proven");
 });
@@ -14304,4 +14321,69 @@ test("2026-11-12-001 AC-5: crew tdd green with nothing after -- prints its red's
   const json = await c.json("tdd", "green", id, "AC-1");
   expect(json.code).toBe(0);
   expect((json.data.record as { command: string }).command).toBe("sh tests/own.test.sh");
+});
+
+test("2026-11-12-004 AC-9 (finding 209): a task's child on a route with leads replies blocked with the leads owed while they have not validated", async () => {
+  const { env, b, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const mid = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "change-request", "Add the field")).out,
+  )?.[1] as string;
+  const pb = repoPaths(b, env);
+  const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const child = (
+    await cb.json(
+      "start",
+      "Add the field",
+      "--answers",
+      standard,
+      "--origin",
+      mid,
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  const work = loadWork(pb, child).work as WorkItem;
+  expect(work.route).toBe("standard");
+  work.phase = "build";
+  saveWork(pb, work);
+  write(b, `.crew/work/${child}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 a\n");
+  write(b, "src/a.ts", "x = 1");
+  expect((await cb.run("tdd", "red", child, "AC-1", "--", RED)).code).toBe(0);
+  expect((await cb.run("tdd", "green", child, "AC-1", "--", GREEN)).code).toBe(0);
+  await cb.run("skip", child, "gate:e2e", "--reason", "no environment in the fixture");
+  expect((await cb.run("profile", "set", "test", GREEN)).code).toBe(0);
+  const file = join(b, "ruling.json");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      rulings: ["code-quality", "test-quality"].map((gate) => ({
+        gate,
+        verdict: "proven",
+        findings: [],
+      })),
+    }),
+  );
+  await cb.run("gate", "run", child);
+  const judged = await cb.run(
+    "judgement",
+    child,
+    "record",
+    "--ruling",
+    judgeFiled(cb, child, file),
+  );
+  expect(judged.out).toContain("code-quality: proven");
+  // Every gate and ruling is in; the child's recorded verdict still waits for its leads.
+  const left = loadEvidence(pb, child).evidence.unproven ?? [];
+  expect(left, left.join(" | ")).toHaveLength(4);
+  expect(left.every((reason) => reason.startsWith("validation of "))).toBe(true);
+  const replied = await cb.run("mail", "reply", mid, "Built", "--item", child);
+  expect(replied.code).toBe(0);
+  const original = readBox(mailbox(pb.userDir, "w", "crm").dir, "inbox").box.messages.find(
+    (m) => m.id === mid,
+  );
+  expect(original?.status).toBe("blocked");
+  expect(JSON.stringify(original)).toContain("unproven: validation of spec by lead-qa");
+  expect(JSON.stringify(original)).toContain("validation of spec by lead-security");
 });

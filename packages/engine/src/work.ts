@@ -1033,8 +1033,8 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
       const reasons = ctx.unproven.map((reason) => `not proven: ${reason}`);
       missing.push(...(reasons.length ? reasons : ["not proven: run crew gate run <id>"]));
     }
-    // The leads validate the delivery against the evidence the report vouches for (SP7 §6.4).
-    missing.push(...leadsMissing(work, ctx, "delivery"));
+    // No line here for the leads' validation of the delivery (SP7 §6.4): the verdict carries it,
+    // and a second reading of the same record would name each lead owed twice.
   } else if (next === "learn") {
     // The proof as it stands now is the ticket into the base (SP4 Task 4, the security lead's
     // return): a verdict taken on earlier code learns nothing until the gates run again.

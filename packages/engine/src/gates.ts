@@ -878,6 +878,7 @@ export async function runGates(
       ledger,
       currentFingerprint,
       tampered,
+      specText: specTextOf(paths, work),
       design: designReasons(
         readSurface(paths, work.id),
         readScore(paths, work.id),
@@ -936,6 +937,8 @@ export interface Assessment {
   tampered: boolean;
   /** The project's standing e2e skip as it stands (finding 223). */
   standing: StandingState;
+  /** `spec.md` as it stands, null when the item has none (finding 209). */
+  specText: string | null;
 }
 
 /**
@@ -953,6 +956,11 @@ export function itemJudgement(
     if (!planned.some((p) => p.gate === seated.gate))
       planned.push({ gate: seated.gate, reason: `seated: ${seated.reason}` });
   return planned;
+}
+
+/** The item's `spec.md` as it stands, null when it has none: what the leads' validations of the spec are read against. */
+function specTextOf(paths: CrewPaths, work: WorkItem): string | null {
+  return readTextQuietly(join(workDir(paths, work.id), "spec.md"));
 }
 
 /** Read-only: what the evidence says about the code as it is right now. Fast enough for a hook. */
@@ -994,6 +1002,7 @@ export function assess(
       ledger: led.ledger,
       tampered: tampered || read.tampered || led.tampered,
       standing: standingState(policy, profile),
+      specText: specTextOf(paths, work),
       design: designReasons(
         readSurface(paths, work.id),
         readScore(paths, work.id),
@@ -1031,6 +1040,7 @@ export function reassess(a: AssessmentInputs, work: WorkItem, policy: Policy): A
     tampered: a.tampered,
     audit: a.audit,
     policy,
+    specText: a.specText,
     ...(a.design ? { design: a.design } : {}),
   });
   return { ...a, ...verdict };

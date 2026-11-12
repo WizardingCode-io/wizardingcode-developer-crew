@@ -15,7 +15,7 @@ The engine runs what the route requires: the project's build, tests, lint and ty
 - **The route was raised:** the diff touched a risk path. The engine says which. The guards of the new route now apply; `crew phase <id> next` lists what is missing.
 - **Unconfirmed command:** a command the detector only guessed ran (two lockfiles and no `packageManager` field). Say which guess it was; once the user says it is right, `crew profile confirm <gate>`; until then the work is not proven.
 
-`crew gate run <id> --only test` runs a subset while you iterate; the verdict still needs every gate. A gate run that proves the work writes the report and moves the item to the deliver phase.
+`crew gate run <id> --only test` runs a subset while you iterate; the verdict still needs every gate. A gate run that proves the work writes the report and moves the item to the deliver phase. On a route with leads the item is proven once every seated lead has validated the spec as it stands and the delivery: until then the gate run and the judgement record say `Not proven` and name each lead owed, and the record of the last validation is the step that proves and delivers.
 
 - **A blocking objection is open or bound to an unproven criterion:** the verdict says "blocking objection O-n open" or "bound". Prove the criterion it is bound to, bind it (`crew objection <id> resolve O-n --criterion AC-k`), or let the user waive it (`crew objection <id> waive O-n --reason "<why>"`, which asks them). The verdict line of the report then says how many were waived.
 

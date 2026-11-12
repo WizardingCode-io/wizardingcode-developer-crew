@@ -11,7 +11,7 @@ import { strategyHash } from "../src/strategy.ts";
 import { plannedSeats } from "../src/team.ts";
 import type { Evidence, ObjectionLedger, RunRecord, WorkItem } from "../src/types.ts";
 import { PHASE_ORDER } from "../src/types.ts";
-import { validationHash } from "../src/validation.ts";
+import { leadsMissing, validationHash } from "../src/validation.ts";
 import {
   activeWork,
   addCriterion,
@@ -574,12 +574,18 @@ test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' va
   // The delivery waits for the leads too, against the evidence fingerprint.
   work.phase = "gate";
   const evidence = { ...emptyEvidence(), fingerprint: "sha256:feed", verdict: "proven" as const };
-  const toDeliver = advancePhase(work, { ...ctx, evidence, proven: true });
+  // Since finding 209 the verdict carries the leads' reasons and the guard into Deliver reads them
+  // from it, each once: the context is given the verdict's reading of the delivery, as `assess` gives it.
+  const judgedBy = (of: typeof evidence) => {
+    const unproven = leadsMissing(work, { specText: ctx.specText, evidence: of }, "delivery");
+    return { ...ctx, evidence: of, proven: unproven.length === 0, unproven };
+  };
+  const toDeliver = advancePhase(work, judgedBy(evidence));
   expect(toDeliver.ok).toBe(false);
   if (!toDeliver.ok)
     expect(toDeliver.missing).toEqual([
-      "validation of delivery by lead-qa (crew validation <id> record --what delivery --by lead-qa --file conclave/lead-qa.delivery.md)",
-      "validation of delivery by lead-security (crew validation <id> record --what delivery --by lead-security --file conclave/lead-security.delivery.md)",
+      "not proven: validation of delivery by lead-qa (crew validation <id> record --what delivery --by lead-qa --file conclave/lead-qa.delivery.md)",
+      "not proven: validation of delivery by lead-security (crew validation <id> record --what delivery --by lead-security --file conclave/lead-security.delivery.md)",
     ]);
   // Delivery validations against the evidence fingerprint open Deliver; another fingerprint is stale.
   const delivery = (by: string, verdict: "validated" | "returned", h: string) => ({
@@ -598,29 +604,29 @@ test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' va
     delivery("lead-qa", "validated", "sha256:feed"),
     delivery("lead-security", "validated", "sha256:feed"),
   ];
-  expect(advancePhase(work, { ...ctx, evidence, proven: true })).toEqual({
+  expect(advancePhase(work, judgedBy(evidence))).toEqual({
     ok: true,
     phase: "deliver",
   });
   work.phase = "gate";
   const changed = { ...evidence, fingerprint: "sha256:other" };
-  const staleDelivery = advancePhase(work, { ...ctx, evidence: changed, proven: true });
+  const staleDelivery = advancePhase(work, judgedBy(changed));
   expect(staleDelivery.ok).toBe(false);
   if (!staleDelivery.ok)
     expect(staleDelivery.missing).toEqual([
-      "validation of delivery by lead-qa: stale (the evidence changed); record the lead again",
-      "validation of delivery by lead-security: stale (the evidence changed); record the lead again",
+      "not proven: validation of delivery by lead-qa: stale (the evidence changed); record the lead again",
+      "not proven: validation of delivery by lead-security: stale (the evidence changed); record the lead again",
     ]);
   work.validations = [
     ...specValidations,
     delivery("lead-qa", "validated", "sha256:feed"),
     delivery("lead-security", "returned", "sha256:feed"),
   ];
-  const returnedDelivery = advancePhase(work, { ...ctx, evidence, proven: true });
+  const returnedDelivery = advancePhase(work, judgedBy(evidence));
   expect(returnedDelivery.ok).toBe(false);
   if (!returnedDelivery.ok)
     expect(returnedDelivery.missing).toEqual([
-      "validation of delivery by lead-security: returned 2 returns (conclave/lead-security.delivery.md); revise the delivery and record the lead again (a resumed lead's answer: its -reply.md file)",
+      "not proven: validation of delivery by lead-security: returned 2 returns (conclave/lead-security.delivery.md); revise the delivery and record the lead again (a resumed lead's answer: its -reply.md file)",
     ]);
   // A fast item, and a standard item with no seats recorded, ask for no validation.
   const fast = createWork(paths, "Fast");

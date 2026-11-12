@@ -8330,7 +8330,6 @@ function guardFor(work, next, ctx) {
       const reasons = ctx.unproven.map((reason) => `not proven: ${reason}`);
       missing.push(...reasons.length ? reasons : ["not proven: run crew gate run <id>"]);
     }
-    missing.push(...leadsMissing(work, ctx, "delivery"));
   } else if (next === "learn") {
     if (!ctx.proven)
       missing.push(`not proven: the proof is on earlier code (crew gate run ${work.id})`);
@@ -14744,6 +14743,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     ledger,
     currentFingerprint,
     tampered,
+    specText: specTextOf(paths, work),
     design: designReasons(readSurface(paths, work.id), readScore(paths, work.id), currentFingerprint)
   });
   const saved = updateEvidence(paths, work.id, (fresh) => {
@@ -14780,6 +14780,9 @@ function itemJudgement(work, changed, policy, registry) {
       planned.push({ gate: seated.gate, reason: `seated: ${seated.reason}` });
   return planned;
 }
+function specTextOf(paths, work) {
+  return readTextQuietly(join45(workDir(paths, work.id), "spec.md"));
+}
 function assess(paths, work, profile, policy, tampered = false) {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
@@ -14798,6 +14801,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     ledger: led.ledger,
     tampered: tampered || read.tampered || led.tampered,
     standing: standingState(policy, profile),
+    specText: specTextOf(paths, work),
     design: designReasons(readSurface(paths, work.id), readScore(paths, work.id), currentFingerprint),
     audit: {
       run: audit.run !== null,
@@ -14819,6 +14823,7 @@ function reassess(a, work, policy) {
     tampered: a.tampered,
     audit: a.audit,
     policy,
+    specText: a.specText,
     ...a.design ? { design: a.design } : {}
   });
   return { ...a, ...verdict };
@@ -16335,6 +16340,8 @@ function computeVerdict(input) {
       unproven.push(`judgement gate ${gate} not run: ${record.reason ?? "no reason given"}`);
   }
   unproven.push(...input.design ?? []);
+  const subject = { specText: input.specText ?? null, evidence };
+  unproven.push(...leadsMissing(work, subject, "spec"), ...leadsMissing(work, subject, "delivery"));
   if (input.ledger) {
     for (const o of blockingObjections(input.ledger, work, evidence, policy, ["open", "bound"]))
       unproven.push(`blocking objection ${o.id} ${objectionStatus(o, work, evidence, policy)}: ${o.text}`);
@@ -23668,6 +23675,25 @@ function deliver2(env, opened, evidence) {
   writeProtectedText(env.paths, join65(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
   return refused;
 }
+function verdictAfterRecord(env, opened) {
+  const work = opened.work;
+  const before = assess(env.paths, work, env.profile, env.policy, opened.tampered);
+  const written = updateEvidence(env.paths, work.id, (fresh) => {
+    const merged = reassess({ ...before, evidence: fresh }, work, env.policy);
+    fresh.verdict = merged.verdict;
+    fresh.unproven = merged.unproven;
+    return merged;
+  });
+  if ("refused" in written)
+    return { result: before, evidence: before.evidence, notes: [written.refused] };
+  const result = written.result;
+  if (result.verdict === "proven") {
+    const notSaved = deliver2(env, opened, written.saved);
+    return { result, evidence: written.saved, notes: notSaved ? [notSaved] : [] };
+  }
+  writeProtectedText(env.paths, join65(workDir(env.paths, work.id), "report.md"), reportOf(env, work, written.saved));
+  return { result, evidence: written.saved, notes: [] };
+}
 function saveWorkAsItStands(env, opened) {
   const id = opened.work.id;
   try {
@@ -27165,8 +27191,11 @@ test-first not credited: ${out.uncredited}` : "";
       const repeated = (work.validations ?? []).find((v) => v.by === by && v.fileHash === contentHash);
       if (repeated)
         return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`);
+      const specText = readText(join65(dir, "spec.md"));
+      if (what === "spec" && specText === null)
+        return refuse(`no spec.md to validate: write .crew/work/${work.id}/spec.md first (the route asks for it)`);
       const evidence = loadEvidence(env.paths, work.id).evidence;
-      const hash = validationHash(what, readText(join65(dir, "spec.md")), readText(join65(dir, "plan.md")), evidence.fingerprint ?? "");
+      const hash = validationHash(what, specText, readText(join65(dir, "plan.md")), evidence.fingerprint ?? "");
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
       const { round, newRound } = validationRound(work.validations ?? [], what, by, hash, rounds.validation);
       if (what === "spec" && newRound) {
@@ -27201,11 +27230,21 @@ test-first not credited: ${out.uncredited}` : "";
           file: recorded.file
         });
       const said = verdict.verdict === "validated" ? `validated (round ${round})` : `returned, ${verdict.returns} return${verdict.returns === 1 ? "" : "s"} (round ${round})`;
-      const filedLine = sessionFiledLine(loadEvidence(env.paths, work.id).evidence.roles ?? []);
-      return ok(`validation of ${what} by ${by}: ${said}${filedLine ? `
-${filedLine}` : ""}`, {
+      const { result, evidence: current, notes } = verdictAfterRecord(env, opened);
+      const lines = [
+        `validation of ${what} by ${by}: ${said}`,
+        result.verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${result.unproven.join("; ")}`
+      ];
+      const filedLine = sessionFiledLine(current.roles ?? []);
+      if (filedLine)
+        lines.push(filedLine);
+      lines.push(...notes);
+      return ok(lines.join(`
+`), {
         validation: work.validations[work.validations.length - 1],
-        rounds: work.rounds ?? rounds
+        rounds: work.rounds ?? rounds,
+        verdict: result.verdict,
+        unproven: result.unproven
       });
     }
     case "metrics": {

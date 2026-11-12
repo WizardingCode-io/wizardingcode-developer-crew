@@ -2156,3 +2156,22 @@ test("2026-11-12-003 AC-7 (findings 182 and 216): the conclave reference keeps n
     "never a `crew continue` asked per round. Whether a further round is granted is read from the `continuations` line of `crew status` (the entries on record, who recorded each, and the grant), never from memory.",
   );
 });
+
+test("2026-11-12-004 AC-6 (finding 209): the method says the leads' validations are part of the proof, what a lead's report reads, and what the phase rule cannot read", () => {
+  expect(readReference("gate.md"), "the gate run's verdict waits for the leads").toContain(
+    "On a route with leads the item is proven once every seated lead has validated the spec as it stands and the delivery: until then the gate run and the judgement record say `Not proven` and name each lead owed, and the record of the last validation is the step that proves and delivers.",
+  );
+  const deliver = readReference("deliver.md");
+  expect(deliver, "the report a lead reads").toContain(
+    "The leads' validations are part of the proof: the report a lead reads says Not proven for the validations alone, which is the state it validates, and `crew validation record` prints the verdict under its line, the last one `Proven`.",
+  );
+  expect(deliver, "a lead seated late, a spec edited after a validation").toContain(
+    "A lead the gate run seated validates the spec too, and a spec edited after a validation is read again by every lead, a round counted as any other.",
+  );
+  expect(repoFile("plugins/core/agents/tech-lead.md"), "the lead is told").toContain(
+    "The report of a delivery says Not proven while the leads' validations are the only thing owed: that is the state you validate, and your `validated` is part of the proof.",
+  );
+  expect(readReference("understand.md"), "the phase rule's reading").toContain(
+    "The rule reads the Write and Edit tools and a command line's own write shapes (a redirect, `tee`, `sed -i`, `cp` or `mv` onto a source file); a write made inside an interpreter's script (`python3 - <<E`) is one it cannot read, and the leads' validations on record are what keeps such an item not proven.",
+  );
+});

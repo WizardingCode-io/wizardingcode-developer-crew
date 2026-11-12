@@ -1607,3 +1607,121 @@ test("AC-8 (finding 61): on an item with no plan.md, crew task note and crew tas
     ).code,
   ).toBe(0);
 }, 30_000);
+
+test("2026-11-12-004 AC-11 (finding 209): a task's child on a route with leads replies done once its leads validated, and crew task merge takes it", async () => {
+  const { env, root, c, id, short, open, ended } = await lead({ mail: { maxConcurrent: 10 } });
+  const t2 = await open("T-2", "AC-2");
+  const worktree = t2.worktree;
+  const childEnv: NodeJS.ProcessEnv = {
+    ...env,
+    WIZARDINGCODE_CREW_MAIL_ID: t2.message,
+    WIZARDINGCODE_CREW_MAIL_AGENT: "T-2",
+    WIZARDINGCODE_CREW_MAIL_HOPS: "1",
+    WIZARDINGCODE_CREW_MAIL_BRANCH: `crew/${short}/T-2`,
+    WIZARDINGCODE_CREW_MAIL_MODE: "branch",
+    CLAUDE_CODE_SESSION_ATTENDED: "0",
+  };
+  const w = io(worktree, childEnv);
+  const wp = repoPaths(worktree, childEnv);
+  // The fixture commits the lead's profile and decision register, which arrive in the worktree
+  // with no record of their own; the child starts from its own, as in a checkout that ignores them.
+  for (const owned of ["profile.json", "decisions.json"])
+    rmSync(join(worktree, ".crew", owned), { force: true });
+  const detected = await w.run("detect");
+  expect(detected.code, detected.err).toBe(0);
+  // A child the classification sends to the standard route: it has the two leads every such item has.
+  const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const childId = (
+    await w.json(
+      "start",
+      "T-2 of the lead: src/b.ts",
+      "--answers",
+      standard,
+      "--origin",
+      t2.message,
+      "--criterion",
+      "src/b.ts says it",
+    )
+  ).data.id as string;
+  const child = loadWork(wp, childId).work;
+  if (!child) throw new Error("no child item");
+  expect(child.route).toBe("standard");
+  child.phase = "build";
+  saveWork(wp, child);
+  write(worktree, `.crew/work/${childId}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 b\n");
+  write(worktree, "tests/red.test.sh", "exit 1\n");
+  write(worktree, "tests/green.test.sh", "exit 0\n");
+  write(worktree, "src/b.ts", "export const B = 1;\n");
+  const red = await w.run("tdd", "red", childId, "AC-1", "--", "sh tests/red.test.sh");
+  expect(red.code, red.err).toBe(0);
+  expect((await w.run("tdd", "green", childId, "AC-1", "--", "sh tests/green.test.sh")).code).toBe(
+    0,
+  );
+  const ruling = join(worktree, "ruling.json");
+  writeFileSync(
+    ruling,
+    JSON.stringify({
+      rulings: ["code-quality", "test-quality"].map((gate) => ({
+        gate,
+        verdict: "proven",
+        findings: [],
+      })),
+    }),
+  );
+  await w.run("gate", "run", childId);
+  await w.run(
+    "judgement",
+    childId,
+    "record",
+    "--ruling",
+    filedRuling(childEnv, worktree, childId, ruling),
+  );
+  // Every gate and ruling is in, and the child still owes its leads: it could only reply blocked.
+  const owed = loadEvidence(wp, childId).evidence.unproven ?? [];
+  expect(owed.length).toBe(4);
+  expect(owed.every((reason) => reason.startsWith("validation of "))).toBe(true);
+  for (const what of ["spec", "delivery"] as const)
+    for (const by of ["lead-qa", "lead-security"]) {
+      const name = `.crew/work/${childId}/conclave/${by}${what === "delivery" ? ".delivery" : ""}.md`;
+      write(
+        worktree,
+        name,
+        `# ${by.slice(5)} lead's validation of ${childId}: ${what}\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
+      );
+      const recorded = await w.run(
+        "validation",
+        childId,
+        "record",
+        "--what",
+        what,
+        "--by",
+        by,
+        "--file",
+        name,
+      );
+      if (recorded.code !== 0) throw new Error(recorded.err);
+    }
+  // The last validation wrote the verdict the reply reads.
+  expect(loadEvidence(wp, childId).evidence.verdict).toBe("proven");
+  // The branch carries the change and the child's own record, nothing else of .crew/.
+  git(worktree, "add", "src", "tests", `.crew/work/${childId}`);
+  git(worktree, "commit", "-q", "-m", "T-2: change, evidence");
+  const replied = await w.run(
+    "mail",
+    "reply",
+    t2.message,
+    "Built",
+    "--branch",
+    `crew/${short}/T-2`,
+    "--item",
+    childId,
+  );
+  expect(replied.code, replied.err).toBe(0);
+  await ended(t2);
+  expect((await c.run("task", id, "list")).out).toContain(
+    `${t2.message} done · ${childId} · proven`,
+  );
+  const merged = await c.json("task", id, "merge", "T-2");
+  expect(merged.code, String(merged.data.message)).toBe(0);
+  expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.state).toBe("merged");
+}, 60_000);

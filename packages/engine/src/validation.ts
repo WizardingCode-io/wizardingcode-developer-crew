@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { TEAMS } from "./team.ts";
-import type { Seat, Validation, WorkItem } from "./types.ts";
-import type { GuardContext } from "./work.ts";
+import type { Evidence, Seat, Validation, WorkItem } from "./types.ts";
+
+/** What a lead's validation is read against: the spec's text and the evidence of the last gate run. */
+export interface ValidationSubject {
+  specText: string | null;
+  evidence?: Pick<Evidence, "fingerprint"> | null;
+}
 
 /** The teams a tech lead answers for, as its first line names them (`# <team> lead's validation of <id>: <what>`); the hook and the parser read the same list. */
 export const LEAD_TEAMS = Object.entries(TEAMS)
@@ -139,13 +144,14 @@ export function leadSeats(work: WorkItem): Seat[] {
 }
 
 /**
- * The guard's lines for a validation the leads must give (SP7 §6.4): one per lead seat without a
- * current `validated` for `what`; a `returned` says how many returns; a verdict on other content is
- * stale. On the fast route, or with no lead seated, nothing is asked.
+ * The lines for a validation the leads must give (SP7 §6.4): one per lead seat without a current
+ * `validated` for `what`; a `returned` says how many returns; a verdict on other content is stale.
+ * On the fast route, or with no lead seated, nothing is asked. The guard into Plan and the verdict
+ * read the one function, so they say one thing of one record (finding 209).
  */
 export function leadsMissing(
   work: WorkItem,
-  ctx: GuardContext,
+  ctx: ValidationSubject,
   what: "spec" | "delivery",
 ): string[] {
   if (work.route === "fast") return [];

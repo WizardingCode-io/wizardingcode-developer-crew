@@ -1635,6 +1635,46 @@ function deliver(env: Env, opened: OpenedForChange, evidence: Evidence): string 
 }
 
 /**
+ * The verdict after a record that is no gate run and no ruling changed what it reads (a lead's
+ * validation, finding 209). It is computed on the evidence as it stands at the save, under the
+ * lock, and written with it, so no reader sees a verdict older than the evidence beside it
+ * (finding 81). A record that proves the item delivers it as a ruling does; any other leaves the
+ * phase where it is and the report as the verdict stands. A refused save (the file edited outside
+ * the engine, a lock held) writes nothing: the verdict returned is the one read before it, and
+ * the refusal is among the notes for the caller to print.
+ */
+function verdictAfterRecord(
+  env: Env,
+  opened: OpenedForChange,
+): {
+  result: { verdict: "proven" | "unproven"; unproven: string[] };
+  evidence: Evidence;
+  notes: string[];
+} {
+  const work = opened.work;
+  const before = assess(env.paths, work, env.profile, env.policy, opened.tampered);
+  const written = updateEvidence(env.paths, work.id, (fresh) => {
+    const merged = reassess({ ...before, evidence: fresh }, work, env.policy);
+    fresh.verdict = merged.verdict;
+    fresh.unproven = merged.unproven;
+    return merged;
+  });
+  if ("refused" in written)
+    return { result: before, evidence: before.evidence, notes: [written.refused] };
+  const result = written.result;
+  if (result.verdict === "proven") {
+    const notSaved = deliver(env, opened, written.saved);
+    return { result, evidence: written.saved, notes: notSaved ? [notSaved] : [] };
+  }
+  writeProtectedText(
+    env.paths,
+    join(workDir(env.paths, work.id), "report.md"),
+    reportOf(env, work, written.saved),
+  );
+  return { result, evidence: written.saved, notes: [] };
+}
+
+/**
  * The work saved as it stands at the save (finding 186, finding 81's class on `work.json`): under the
  * work folder's lock the record is read again, this command's changes against the copy
  * `openForChange` loaded are put onto that fresh copy (`applyChangedFields`), the phase guards are
@@ -6219,10 +6259,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(
           `already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`,
         );
+      // A spec's validation is of a text (finding 209): with no spec.md there is nothing a lead
+      // read, and an empty text is never recorded as validated.
+      const specText = readText(join(dir, "spec.md"));
+      if (what === "spec" && specText === null)
+        return refuse(
+          `no spec.md to validate: write .crew/work/${work.id}/spec.md first (the route asks for it)`,
+        );
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(
         what,
-        readText(join(dir, "spec.md")),
+        specText,
         readText(join(dir, "plan.md")),
         evidence.fingerprint ?? "",
       );
@@ -6279,10 +6326,23 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         verdict.verdict === "validated"
           ? `validated (round ${round})`
           : `returned, ${verdict.returns} return${verdict.returns === 1 ? "" : "s"} (round ${round})`;
-      const filedLine = sessionFiledLine(loadEvidence(env.paths, work.id).evidence.roles ?? []);
-      return ok(`validation of ${what} by ${by}: ${said}${filedLine ? `\n${filedLine}` : ""}`, {
+      // The verdict reads the validations (finding 209), so this record can be the step that
+      // proves the item.
+      const { result, evidence: current, notes } = verdictAfterRecord(env, opened);
+      const lines = [
+        `validation of ${what} by ${by}: ${said}`,
+        result.verdict === "proven"
+          ? `Proven: ${work.id}`
+          : `Not proven: ${result.unproven.join("; ")}`,
+      ];
+      const filedLine = sessionFiledLine(current.roles ?? []);
+      if (filedLine) lines.push(filedLine);
+      lines.push(...notes);
+      return ok(lines.join("\n"), {
         validation: work.validations[work.validations.length - 1],
         rounds: work.rounds ?? rounds,
+        verdict: result.verdict,
+        unproven: result.unproven,
       });
     }
     case "metrics": {
