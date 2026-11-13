@@ -1192,3 +1192,41 @@ test("2026-11-11-002 AC-13: a run whose grader was not judged publishes the clas
     "t run 1 was not judged: honest-ending: You've reached your Fable limit.",
   ]);
 });
+
+test("2026-11-13-002 AC-1 (finding 177): removeKeptSandboxes with its default roots removes a sandbox made under the temp root, and the real dep prints the refused and the failed paths", () => {
+  // The default roots: the one path this row made under the temp root, and nothing else.
+  const kept = realpathSync(mkdtempSync(join(tmpdir(), "e-")));
+  mkdirSync(join(kept, "out"));
+  expect(removeKeptSandboxes([kept])).toEqual({ removed: [kept], refused: [], failed: [] });
+  expect(existsSync(kept)).toBe(false);
+  // The real dep's log, under a temp root of the row's own.
+  const { root } = fixture();
+  const own = realpathSync(mkdtempSync(join(tmpdir(), "own-tmp-")));
+  const refused = join(own, "not-a-sandbox");
+  mkdirSync(join(refused, "out"), { recursive: true });
+  const stuck = join(own, "e-stuck");
+  mkdirSync(join(stuck, "out"), { recursive: true });
+  const before = process.env.TMPDIR;
+  const log = console.log;
+  const lines: string[] = [];
+  process.env.TMPDIR = own;
+  console.log = (...words: unknown[]) => {
+    lines.push(words.join(" "));
+  };
+  // The parent read-only: the sandbox passes the guard, is opened, and cannot be unlinked.
+  chmodSync(own, 0o500);
+  try {
+    realDeps(root).removeSandboxes([refused]);
+    expect(lines).toEqual([`sandboxes refused: ${refused}`]);
+    realDeps(root).removeSandboxes([stuck]);
+    // Root unlinks regardless, so the failure cannot be staged there.
+    if (process.getuid?.() !== 0)
+      expect(lines).toEqual([`sandboxes refused: ${refused}`, `sandboxes failed: ${stuck}`]);
+  } finally {
+    chmodSync(own, 0o700);
+    console.log = log;
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
+  expect(existsSync(refused)).toBe(true);
+});

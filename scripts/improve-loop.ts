@@ -1220,6 +1220,48 @@ const IMPROVE_RESULT = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-improve-/;
 /** How long the clone keeps an improvement run's result folder: as long as a dated log. */
 const RESULT_FOLDER_DAYS = DATED_LOG_DAYS;
 
+/** How each half of `sweepLeftovers` reads an entry: the temp half follows a link, the results half never does. */
+export interface SweepStats {
+  temp: (path: string) => { mtimeMs: number };
+  results: (path: string) => { mtimeMs: number; isDirectory(): boolean };
+}
+
+/**
+ * What a tick removes before it runs (finding 177): the loop's own temp folders past their age, by
+ * name, and the improvement runs' result folders past theirs, a real directory alone (a file or a
+ * link of a matching name is left, and a link is never followed). An entry whose stat throws, gone
+ * between the listing and the stat or a link to nothing, is skipped and never removed, and the
+ * sweep goes on.
+ */
+export function sweepLeftovers(
+  tmp: string,
+  results: string,
+  now: Date,
+  stats: SweepStats = { temp: statSync, results: lstatSync },
+): void {
+  const quietly = <T>(read: () => T): T | null => {
+    try {
+      return read();
+    } catch {
+      return null;
+    }
+  };
+  for (const name of existsSync(tmp) ? readdirSync(tmp) : []) {
+    if (!LOOP_TEMP.test(name)) continue;
+    const entry = join(tmp, name);
+    const stat = quietly(() => stats.temp(entry));
+    if (stat && now.getTime() - stat.mtimeMs > TEMP_AGE_MS)
+      rmSync(entry, { recursive: true, force: true });
+  }
+  for (const name of existsSync(results) ? readdirSync(results) : []) {
+    if (!IMPROVE_RESULT.test(name)) continue;
+    const entry = join(results, name);
+    const stat = quietly(() => stats.results(entry));
+    if (stat?.isDirectory() && now.getTime() - stat.mtimeMs > RESULT_FOLDER_DAYS * DAY_MS)
+      rmSync(entry, { recursive: true, force: true });
+  }
+}
+
 /** The wait after `failures` failed ticks in a row, in hours: 1, 2, 4 … capped at a day, so a run that cannot be saved is not paid for every hour. */
 export { backoffHours };
 
@@ -1581,20 +1623,7 @@ export async function tick(
     // Where main stood when the run started: the base its figures were measured against (finding 172).
     const syncedMain = must(["rev-parse", "HEAD"]).trim();
     git(["worktree", "prune"]);
-    for (const name of existsSync(deps.tmpdir) ? readdirSync(deps.tmpdir) : [])
-      if (
-        LOOP_TEMP.test(name) &&
-        now.getTime() - statSync(join(deps.tmpdir, name)).mtimeMs > TEMP_AGE_MS
-      )
-        rmSync(join(deps.tmpdir, name), { recursive: true, force: true });
-    const results = join(repo, "plugins", "core", "evals", "results");
-    for (const name of existsSync(results) ? readdirSync(results) : []) {
-      if (!IMPROVE_RESULT.test(name)) continue;
-      const entry = join(results, name);
-      const stat = lstatSync(entry);
-      if (stat.isDirectory() && now.getTime() - stat.mtimeMs > RESULT_FOLDER_DAYS * DAY_MS)
-        rmSync(entry, { recursive: true, force: true });
-    }
+    sweepLeftovers(deps.tmpdir, join(repo, "plugins", "core", "evals", "results"), now);
     if (lockfile() !== before) bootstrap();
     // The code this tick runs is the one bun loaded at launch; when the sync brought another, the
     // tick hands over to one on the new code, once (2026-10-28-001 AC-2, D-2, finding 188).

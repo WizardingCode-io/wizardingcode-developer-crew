@@ -443,7 +443,12 @@ test("SP9-T6 AC-7: the inventory lists every animated declaration with its kind,
   const named = lint({ "src/e\u001bx.css": ".a { transition: all 200ms; }" });
   expect(named.files).toEqual(["src/ex.css"]);
   expect(named.hits.map((h) => h.file)).toEqual(["src/ex.css"]);
-  expect(JSON.stringify(named)).not.toContain("\u001b");
+  // The record as a reader parses it back: no control character in any name it carries.
+  const parsed = JSON.parse(JSON.stringify(named)) as typeof named;
+  expect([...parsed.files, ...parsed.skipped, ...parsed.hits.map((h) => h.file)]).toEqual([
+    "src/ex.css",
+    "src/ex.css",
+  ]);
   // The rule ids are the nine, and the gate's name sits right after secrets.
   expect(LINT_RULES).toEqual([
     "motion/transition-all",

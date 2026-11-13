@@ -455,7 +455,6 @@ export function lintInterfaceFiles(
   let firstMotion: { file: string; line: number; text: string } | null = null;
   for (const file of files) {
     const lines = (texts.get(file) ?? "").split("\n");
-    const name = file;
     const guarded = /\(hover:\s*hover\)/i.test(texts.get(file) ?? "");
     let hoverSaid = false;
     let willChange = 0;
@@ -495,16 +494,16 @@ export function lintInterfaceFiles(
             : "defect";
         hits.push({
           rule,
-          file: name,
+          file,
           line,
           text,
           verdict,
           allowed: verdict === "disabled" ? null : allowed,
         });
       }
-      if (isUnresolved(lower)) unresolved.push({ file: name, line, text });
-      inventory.push(...inventoryOf(name, line, raw));
-      if (!firstMotion && MOTION_ADDED.test(lower)) firstMotion = { file: name, line, text };
+      if (isUnresolved(lower)) unresolved.push({ file, line, text });
+      inventory.push(...inventoryOf(file, line, raw));
+      if (!firstMotion && MOTION_ADDED.test(lower)) firstMotion = { file, line, text };
       depth += (raw.match(/{/g) ?? []).length - (raw.match(/}/g) ?? []).length;
       if (inKeyframes && depth <= keyframesDepth) inKeyframes = false;
     });
@@ -514,7 +513,8 @@ export function lintInterfaceFiles(
     const found =
       [...texts.values()].some((text) => GUARD.test(text)) ||
       (options.projectFiles ?? []).some((rel) => {
-        if (texts.has(rel)) return false;
+        // The map is keyed by the safe name: a file of the change is not read a second time.
+        if (texts.has(safeText(rel))) return false;
         const text = readSafe(root, rel);
         return text !== null && GUARD.test(text);
       });

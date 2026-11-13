@@ -13865,7 +13865,6 @@ function lintInterfaceFiles(root, changed, options = {}) {
   for (const file of files) {
     const lines = (texts.get(file) ?? "").split(`
 `);
-    const name = file;
     const guarded = /\(hover:\s*hover\)/i.test(texts.get(file) ?? "");
     let hoverSaid = false;
     let willChange = 0;
@@ -13892,7 +13891,7 @@ function lintInterfaceFiles(root, changed, options = {}) {
         const verdict = disabled.includes(rule) ? "disabled" : ADVISORY_RULES.has(rule) ? "advisory" : "defect";
         hits.push({
           rule,
-          file: name,
+          file,
           line,
           text,
           verdict,
@@ -13900,10 +13899,10 @@ function lintInterfaceFiles(root, changed, options = {}) {
         });
       }
       if (isUnresolved(lower))
-        unresolved.push({ file: name, line, text });
-      inventory.push(...inventoryOf(name, line, raw));
+        unresolved.push({ file, line, text });
+      inventory.push(...inventoryOf(file, line, raw));
       if (!firstMotion && MOTION_ADDED.test(lower))
-        firstMotion = { file: name, line, text };
+        firstMotion = { file, line, text };
       depth += (raw.match(/{/g) ?? []).length - (raw.match(/}/g) ?? []).length;
       if (inKeyframes && depth <= keyframesDepth)
         inKeyframes = false;
@@ -13911,7 +13910,7 @@ function lintInterfaceFiles(root, changed, options = {}) {
   }
   if (firstMotion !== null) {
     const found = [...texts.values()].some((text) => GUARD.test(text)) || (options.projectFiles ?? []).some((rel) => {
-      if (texts.has(rel))
+      if (texts.has(safeText(rel)))
         return false;
       const text = readSafe(root, rel);
       return text !== null && GUARD.test(text);
@@ -15609,7 +15608,7 @@ var PASS_LINES = [
   /^ (\d+) pass$/,
   /^ *Tests +(?:\d+ \w+ \| )*(\d+) passed(?: \| \d+ \w+)* \(\d+\)$/,
   /^Tests: +(?:\d+ \w+, )*(\d+) passed(?:, \d+ \w+)*, \d+ total$/,
-  /^=+ (?:\d+ \w+, )*(\d+) passed(?:, [^=]+)? in [0-9.]+s(?: \([^)]*\))? =+$/,
+  /^=+ (?:\d+ \w+(?: \w+)?, )*(\d+) passed(?:, \d+ \w+(?: \w+)?)* in [0-9.]+s(?: \([^)]*\))? =+$/,
   /^OK \((\d+) tests?, \d+ assertions?\)$/
 ];
 var PHPUNIT_TESTS_LINE = /^Tests: (\d+), Assertions: \d+/;
@@ -15665,81 +15664,78 @@ function defaultTestCommand(profile) {
     heldBy: proposedByPack(test)
   };
 }
-async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason, say) {
+function criterionRefusal(work, criterionId, step, reason) {
   const criterion = work.criteria.find((c) => c.id === criterionId);
   if (!criterion)
-    return { ok: false, message: `unknown criterion ${criterionId}` };
+    return `unknown criterion ${criterionId}`;
   const expected = STEPS_BY_KIND[criterion.kind];
-  if (!expected.steps.includes(step)) {
-    return {
-      ok: false,
-      message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`
-    };
-  }
+  if (!expected.steps.includes(step))
+    return `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`;
   if (criterion.supersededBy)
-    return {
-      ok: false,
-      message: `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`
-    };
-  if (step === "observed" && !reason?.trim()) {
-    return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
-  }
+    return `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`;
+  if (step === "observed" && !reason?.trim())
+    return "an observed run needs --reason: why no red run can exist";
+  return null;
+}
+function commandFor(paths, step, override, fallback, entry) {
   if (typeof override !== "string" && override) {
     const why = shellRefusal(override);
     if (why)
-      return { ok: false, message: why };
+      return { refused: why };
   }
-  const fallback = defaultTestCommand(profile);
-  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
   const fromRed = step === "green" && override === undefined ? entry?.red?.command : undefined;
   if (override === undefined && fallback?.heldBy && (fromRed === undefined || fromRed === fallback.command))
     return {
-      ok: false,
-      message: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`
+      refused: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`
     };
   const command = typeof override === "string" ? override : override ? joinWords(override) : fromRed ?? fallback?.command;
-  if (!command) {
+  if (!command)
     return {
-      ok: false,
-      message: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>'
+      refused: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>'
     };
-  }
   if (override !== undefined && step !== "observed") {
     const unparsed = parseRefusal(command, paths.root);
     if (unparsed !== null)
       return {
-        ok: false,
-        message: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`
+        refused: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`
       };
     const why = testRunRefusal(command, paths.root, fallback?.command ?? null);
     if (why !== null)
       return {
-        ok: false,
-        message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`
+        refused: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`
       };
   }
+  return { command, fromRed };
+}
+function pairRefusal(criterionId, step, entry, command) {
   if (step === "green" && !entry?.red)
-    return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
+    return `no red run recorded for ${criterionId}: run crew tdd red first`;
   if (step === "after" && !entry?.before)
-    return {
-      ok: false,
-      message: `no before run recorded for ${criterionId}: run crew tdd before first`
-    };
+    return `no before run recorded for ${criterionId}: run crew tdd before first`;
   if (step === "after" && entry?.before && command !== entry.before.command)
-    return {
-      ok: false,
-      message: `the after must run the before's command (${entry.before.command}): the pair proves the tests the before ran still pass; run that command, or ${observedInstead(criterionId)}`
-    };
-  if (step === "before") {
-    const changed = changedWatchedPaths(paths.root, profile, work).filter((p) => !matchesAny(p, TEST_PATTERNS));
-    if (changed.length) {
-      const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
-      return {
-        ok: false,
-        message: `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`
-      };
-    }
-  }
+    return `the after must run the before's command (${entry.before.command}): the pair proves the tests the before ran still pass; run that command, or ${observedInstead(criterionId)}`;
+  return null;
+}
+function baselineRefusal(paths, profile, work, criterionId) {
+  const changed = changedWatchedPaths(paths.root, profile, work).filter((p) => !matchesAny(p, TEST_PATTERNS));
+  if (!changed.length)
+    return null;
+  const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
+  return `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`;
+}
+async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason, say) {
+  const asked = criterionRefusal(work, criterionId, step, reason);
+  if (asked !== null)
+    return { ok: false, message: asked };
+  const fallback = defaultTestCommand(profile);
+  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
+  const chosen = commandFor(paths, step, override, fallback, entry);
+  if ("refused" in chosen)
+    return { ok: false, message: chosen.refused };
+  const { command, fromRed } = chosen;
+  const unpaired = pairRefusal(criterionId, step, entry, command) ?? (step === "before" ? baselineRefusal(paths, profile, work, criterionId) : null);
+  if (unpaired !== null)
+    return { ok: false, message: unpaired };
   const writeRecord = (recorded, record) => (into) => {
     let target = into.tdd.find((t) => t.criterion === criterionId);
     if (!target) {

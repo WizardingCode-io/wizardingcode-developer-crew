@@ -99,7 +99,52 @@ function openFindings(text: string): number[] {
 // and a filing with no witness is named); the four points that stay are in 213's record, which stays open.
 // 244 (what the leads of 2026-11-12-007 left on the runtime's witness) recorded by 2026-11-13-001, which fixed its two
 // code points; it stays open until a live session after the release shows roles in parallel and a short role keeping their mark.
-const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 244];
+// 177, 178 and 181 (the advisories three items left: the loop's sweeps, the capture fixture and the design lint,
+// crew tdd's recordTdd and its pytest pattern) closed by 2026-11-13-002, each point done or left with its reason.
+const OPEN = [77, 114, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 244];
+
+test("2026-11-13-002 AC-4: findings 177, 178 and 181 read closed, each point named with what was done or why nothing is to do", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const outcome = (n: number) => {
+    const section = text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+    return /\n- Outcome:(.*)/.exec(section)?.[1]?.trim() ?? "";
+  };
+  const open = openFindings(text);
+  for (const n of [177, 178, 181]) {
+    expect(open, String(n)).not.toContain(n);
+    expect(outcome(n), String(n)).toStartWith("closed by `2026-11-13-002`");
+  }
+  for (const point of [
+    "`sweepLeftovers`",
+    "an entry whose stat throws is skipped",
+    "with its default roots",
+    "`sandboxes refused` and `sandboxes failed`",
+    "a file and a symlink of a matching name are left",
+    "the owner check",
+    "finding 114",
+    "`deps.dispose()`",
+  ])
+    expect(outcome(177), point).toContain(point);
+  for (const point of [
+    "the `pageName` branch",
+    "`session = null`",
+    "the alias",
+    "`texts.has(safeText(rel))`",
+    "on the parsed value",
+    "a symlinked motion sample and a symlinked `review/ui-evidence.json`",
+    "`process.chdir`",
+    "by their function names",
+    "skips with its reason",
+  ])
+    expect(outcome(178), point).toContain(point);
+  for (const point of [
+    "`criterionRefusal`, `commandFor`, `pairRefusal` and `baselineRefusal`",
+    "a number and one or two words",
+    "`src/_pytest/terminal.py`",
+    "the after's refusal",
+  ])
+    expect(outcome(181), point).toContain(point);
+});
 
 test("2026-11-13-001 AC-7 (finding 244): the record holds what the leads of 2026-11-12-007 left, open on the live session's record alone, with what a stop with no answer leaves behind", () => {
   const text = readFileSync(FINDINGS, "utf8");

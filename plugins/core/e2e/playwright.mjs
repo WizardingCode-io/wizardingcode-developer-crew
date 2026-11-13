@@ -249,7 +249,7 @@ function checkClash(dir, name, file, pair) {
   if (same) return;
   const describe = (p) =>
     Object.entries(p)
-      .map(([field, value]) => `${field === "pageName" ? "page" : field} ${value}`)
+      .map(([field, value]) => `${field} ${value}`)
       .join(" ");
   throw new Error(`name clash: ${name} is ${describe(owner)} already; ${describe(pair)} would overwrite it: rename one`);
 }
@@ -630,7 +630,6 @@ async function frameSource(page, frames, begun) {
   } catch {
     // not Chromium, or no CDP: sequential screenshots; a session that opened and then failed is let go
     if (session && typeof session.detach === "function") await Promise.resolve(session.detach()).catch(() => {});
-    session = null;
   }
   let stopped = false;
   const shot = async () => frames.push({ data: await page.screenshot(), t: Date.now() - begun });

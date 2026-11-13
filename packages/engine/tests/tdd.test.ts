@@ -1160,3 +1160,73 @@ test("2026-11-12-001 AC-5: a green with nothing after -- runs its red's command,
   expect(existsSync(join(s.root, "suite.txt"))).toBe(false);
   expect(s.evidence.tdd.find((t) => t.criterion === third.id)?.green).toBeUndefined();
 });
+
+test("2026-11-13-002 AC-2 (finding 181): the pytest summary is read in pytest's own form, parts of a number and one or two words, and a line with other text between the counts reads no count", () => {
+  const line = (middle: string) => `=========== ${middle} ===========`;
+  // Each kind pytest prints beside the passed count (src/_pytest/terminal.py: KNOWN_TYPES, pluralize).
+  for (const [middle, count] of [
+    ["2 passed, 1 skipped in 0.12s", 2],
+    ["2 passed, 3 warnings in 0.12s", 2],
+    ["2 passed, 1 warning in 0.12s", 2],
+    ["2 passed, 4 deselected in 0.12s", 2],
+    ["2 passed, 1 xfailed, 1 xpassed in 0.12s", 2],
+    ["2 passed, 2 errors in 0.12s", 2],
+    ["1 passed, 3 subtests passed in 0.01s", 1],
+    ["1 failed, 2 passed, 1 skipped in 0.12s", 2],
+    ["3 passed, 1 skipped in 61.00s (0:01:01)", 3],
+  ] as const)
+    expect([middle, passCount(line(middle))]).toEqual([middle, count]);
+  // Other text where a count part goes: no count, whatever the open pattern read.
+  expect(passCount("=== 3 passed, see the log in 0.12s ===")).toBeNull();
+  expect(passCount("=== 3 passed, 1 a b c in 0.12s ===")).toBeNull();
+  expect(passCount("=== 3 passed, in 0.12s ===")).toBeNull();
+});
+
+test("2026-11-13-002 AC-1 (finding 181): the refusals before a run that no row pinned in full keep their messages to the letter, and the first that applies answers", async () => {
+  const s = setup();
+  const said = async (
+    criterion: string,
+    step: "red" | "green" | "before" | "after" | "observed",
+    profile = s.profile,
+    override?: string,
+    reason?: string,
+  ) =>
+    (await recordTdd(s.paths, s.work, s.evidence, profile, criterion, step, override, reason))
+      .message;
+  expect(await said("AC-99", "red")).toBe("unknown criterion AC-99");
+  expect(await said(s.preserve.id, "red")).toBe(
+    `${s.preserve.id} is a preserve criterion: record before, then after`,
+  );
+  const bare = { ...s.profile, targets: [] };
+  expect(await said(s.behaviour.id, "red", bare)).toBe(
+    'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>',
+  );
+  expect(await said(s.behaviour.id, "green")).toBe(
+    `no red run recorded for ${s.behaviour.id}: run crew tdd red first`,
+  );
+  expect(await said(s.preserve.id, "after")).toBe(
+    `no before run recorded for ${s.preserve.id}: run crew tdd before first`,
+  );
+  // The order of two that apply at once: no command before the missing red, the kind before the
+  // superseding, the superseding before the missing reason and before the missing red.
+  expect(await said(s.behaviour.id, "green", bare)).toBe(
+    'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>',
+  );
+  const seen = addCriterion(s.work, "seen by a person", "observed");
+  seen.supersededBy = { id: "AC-7", at: "2026-11-13T00:00:00.000Z" };
+  expect(await said(seen.id, "observed")).toBe(
+    `${seen.id} is superseded by AC-7: record the proof on AC-7`,
+  );
+  s.behaviour.supersededBy = { id: "AC-7", at: "2026-11-13T00:00:00.000Z" };
+  const superseded = `${s.behaviour.id} is superseded by AC-7: record the proof on AC-7`;
+  expect(await said(s.behaviour.id, "green")).toBe(superseded);
+  expect(await said(s.behaviour.id, "before")).toBe(
+    `${s.behaviour.id} is a behavior criterion: record red, then green`,
+  );
+  s.preserve.supersededBy = { id: "AC-7", at: "2026-11-13T00:00:00.000Z" };
+  expect(await said(s.preserve.id, "after")).toBe(
+    `${s.preserve.id} is superseded by AC-7: record the proof on AC-7`,
+  );
+  // Nothing ran and nothing was recorded by any of them.
+  expect(s.evidence.tdd).toEqual([]);
+});

@@ -56,6 +56,7 @@ import {
   secretSetCommand,
   statusText,
   stopLoop,
+  sweepLeftovers,
   type TickDeps,
   tick,
   tickNotification,
@@ -3449,4 +3450,67 @@ test("2026-11-12-002 AC-5: the adoption reads its branch's commit once, before i
   await unresolved("2026-10-25-1", (args) =>
     args[0] === "rev-parse" ? { status: 0, stdout: "abc1234\n", stderr: "" } : null,
   );
+});
+
+test("2026-11-13-002 AC-1 (finding 177): the results sweep leaves a file of a matching name past the age, and a symlink of a matching name that points at a real directory past the age, with its target and the target's content untouched", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const results = join(world.home, "repo", "plugins", "core", "evals", "results");
+  mkdirSync(results, { recursive: true });
+  const file = join(results, "2026-09-01T00-00-00-000Z-improve-file");
+  writeFileSync(file, "a file");
+  utimesSync(file, 1, 1);
+  // A real directory past the age, outside the results folder, and a link of a matching name to it.
+  const target = join(world.home, "kept-elsewhere");
+  mkdirSync(target, { recursive: true });
+  writeFileSync(join(target, "keep.txt"), "keep");
+  utimesSync(target, 1, 1);
+  const link = join(results, "2026-09-01T00-00-00-000Z-improve-link");
+  symlinkSync(target, link);
+  const old = join(results, "2026-09-01T00-00-00-000Z-improve-old");
+  mkdirSync(old, { recursive: true });
+  utimesSync(old, 1, 1);
+  expect(await tick({}, tickDeps(world, { now: "2026-10-25T21:00:00.000Z" }).deps)).toBe(0);
+  expect(existsSync(old)).toBe(false);
+  expect(readFileSync(file, "utf8")).toBe("a file");
+  expect(lstatSync(link).isSymbolicLink()).toBe(true);
+  expect(readFileSync(join(target, "keep.txt"), "utf8")).toBe("keep");
+});
+
+test("2026-11-13-002 AC-3 (finding 177): the loop's two sweeps are one function; an entry whose stat throws is skipped and the sweep goes on, in the temp half (a dangling link on the real file system) and in the results half (a stat that throws for one entry)", () => {
+  const tmp = tempDir();
+  const results = tempDir();
+  const now = new Date("2026-10-25T21:00:00.000Z");
+  const oldDir = (dir: string, name: string): string => {
+    const path = join(dir, name);
+    mkdirSync(path, { recursive: true });
+    utimesSync(path, 1, 1);
+    return path;
+  };
+  // The temp half: an old folder on either side of a dangling link by name, whatever order the listing has.
+  const before = oldDir(tmp, "improve-hooks-a");
+  const dangling = join(tmp, "improve-trees-m");
+  symlinkSync(join(tmp, "nowhere"), dangling);
+  const after = oldDir(tmp, "improve-trees-z");
+  const other = oldDir(tmp, "other-xyz");
+  // The results half: three old folders, the middle one vanishing at its stat.
+  const first = oldDir(results, "2026-09-01T00-00-00-000Z-improve-a");
+  const vanished = oldDir(results, "2026-09-01T00-00-00-000Z-improve-m");
+  const last = oldDir(results, "2026-09-01T00-00-00-000Z-improve-z");
+  const suite = oldDir(results, "2026-09-01T00-00-00-000Z-suite");
+  sweepLeftovers(tmp, results, now, {
+    temp: statSync,
+    results: (path) => {
+      if (path === vanished) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return lstatSync(path);
+    },
+  });
+  expect([before, after].map((p) => existsSync(p))).toEqual([false, false]);
+  expect(lstatSync(dangling).isSymbolicLink()).toBe(true);
+  expect(existsSync(other)).toBe(true);
+  expect([first, last].map((p) => existsSync(p))).toEqual([false, false]);
+  expect(existsSync(vanished)).toBe(true);
+  expect(existsSync(suite)).toBe(true);
+  // With its own stats and folders that do not exist, the sweep does nothing and does not throw.
+  sweepLeftovers(join(tmp, "none"), join(results, "none"), now);
 });

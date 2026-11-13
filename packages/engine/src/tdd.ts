@@ -48,16 +48,18 @@ function ranNoTest(tail: string): string | null {
 /**
  * The runners' own summary lines with the passing count (finding 179), one anchored pattern per
  * runner over a whole line with the runner's own indentation: bun (` 334 pass`), vitest (its
- * reporter indents; `Tests  11 passed | 1 skipped (12)`, the other counts on either side), jest (`Tests:       3 passed, 1 skipped,
- * 4 total`, in either order), pytest (`=== 3 passed, 1 skipped in 0.12s ===`) and PHPUnit's `OK (5
- * tests, 9 assertions)`. The `failed` forms are never read: a run with a failure exits non-zero and
- * is refused before any count.
+ * reporter indents; `Tests  11 passed | 1 skipped (12)`, the other counts on either side), jest
+ * (`Tests:       3 passed, 1 skipped, 4 total`, in either order), pytest (`=== 3 passed, 1 skipped
+ * in 0.12s ===`) and PHPUnit's `OK (5 tests, 9 assertions)`. A pytest part is a number and one
+ * word, or two for its subtests types, as `src/_pytest/terminal.py` builds them, so the pattern has
+ * no open-ended part (finding 181). The `failed` forms are never read: a run with a failure exits
+ * non-zero and is refused before any count.
  */
 const PASS_LINES: readonly RegExp[] = [
   /^ (\d+) pass$/,
   /^ *Tests +(?:\d+ \w+ \| )*(\d+) passed(?: \| \d+ \w+)* \(\d+\)$/,
   /^Tests: +(?:\d+ \w+, )*(\d+) passed(?:, \d+ \w+)*, \d+ total$/,
-  /^=+ (?:\d+ \w+, )*(\d+) passed(?:, [^=]+)? in [0-9.]+s(?: \([^)]*\))? =+$/,
+  /^=+ (?:\d+ \w+(?: \w+)?, )*(\d+) passed(?:, \d+ \w+(?: \w+)?)* in [0-9.]+s(?: \([^)]*\))? =+$/,
   /^OK \((\d+) tests?, \d+ assertions?\)$/,
 ];
 /** PHPUnit's summary when the run had issues (`OK, but there were issues!`), read only when no line above matched. */
@@ -141,6 +143,122 @@ export type TddOutcome =
   | { ok: true; message: string; record: RunRecord; apply: (evidence: Evidence) => void }
   | { ok: false; message: string; record?: RunRecord };
 
+/** Why this step cannot be recorded on this criterion, before any command is looked at: the criterion, its kind, a superseded one, an observed run with no reason. */
+function criterionRefusal(
+  work: WorkItem,
+  criterionId: string,
+  step: TddStep,
+  reason: string | undefined,
+): string | null {
+  const criterion = work.criteria.find((c) => c.id === criterionId);
+  if (!criterion) return `unknown criterion ${criterionId}`;
+  const expected = STEPS_BY_KIND[criterion.kind];
+  if (!expected.steps.includes(step))
+    return `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`;
+  // A superseded criterion is proven through its replacement (finding 118's list): its own
+  // records stay as they are, and a new one would prove a text that is no longer the spec's.
+  if (criterion.supersededBy)
+    return `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`;
+  if (step === "observed" && !reason?.trim())
+    return "an observed run needs --reason: why no red run can exist";
+  return null;
+}
+
+/**
+ * The command a step runs, read before it runs, or why none can: the words after `--`, a green's
+ * own red (finding 237), or the profile's. `fromRed` is the red's command when the green took it.
+ */
+function commandFor(
+  paths: CrewPaths,
+  step: TddStep,
+  override: string | readonly string[] | undefined,
+  fallback: ReturnType<typeof defaultTestCommand>,
+  entry: Evidence["tdd"][number] | undefined,
+): { command: string; fromRed: string | undefined } | { refused: string } {
+  // The words after `--` keep their boundaries (finding 91); shell words that would run in pieces
+  // are refused before anything starts, and nothing is recorded.
+  if (typeof override !== "string" && override) {
+    const why = shellRefusal(override);
+    if (why) return { refused: why };
+  }
+  // A green with nothing after `--` runs its red's command (finding 237, D-2): the pair proves one
+  // command red and then green. That command passed the checks of a command after `--` when its
+  // red was recorded, or is the profile's own.
+  const fromRed = step === "green" && override === undefined ? entry?.red?.command : undefined;
+  // A pack's unconfirmed command is never run unseen: refused whenever the profile's own would run.
+  if (
+    override === undefined &&
+    fallback?.heldBy &&
+    (fromRed === undefined || fromRed === fallback.command)
+  )
+    return {
+      refused: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`,
+    };
+  const command =
+    typeof override === "string"
+      ? override
+      : override
+        ? joinWords(override)
+        : (fromRed ?? fallback?.command);
+  if (!command)
+    return {
+      refused: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>',
+    };
+  // A command after `--` is read before it runs (finding 153): one the shell cannot parse keeps
+  // finding 144's refusal, read with `sh -n`, which runs nothing; one that is no test run is refused.
+  if (override !== undefined && step !== "observed") {
+    const unparsed = parseRefusal(command, paths.root);
+    if (unparsed !== null)
+      return {
+        refused: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`,
+      };
+    const why = testRunRefusal(command, paths.root, fallback?.command ?? null);
+    if (why !== null)
+      return {
+        refused: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`,
+      };
+  }
+  return { command, fromRed };
+}
+
+/** Why the second step of a pair cannot be recorded: no first step, or an after over another command than its before's. */
+function pairRefusal(
+  criterionId: string,
+  step: TddStep,
+  entry: Evidence["tdd"][number] | undefined,
+  command: string,
+): string | null {
+  if (step === "green" && !entry?.red)
+    return `no red run recorded for ${criterionId}: run crew tdd red first`;
+  if (step === "after" && !entry?.before)
+    return `no before run recorded for ${criterionId}: run crew tdd before first`;
+  // The pair is one run (finding 179): an after over another command would prove nothing about
+  // the tests the before ran, so it is refused before anything runs, on the final command text
+  // whether the words came from `--` or from the profile.
+  if (step === "after" && entry?.before && command !== entry.before.command)
+    return `the after must run the before's command (${entry.before.command}): the pair proves the tests the before ran still pass; run that command, or ${observedInstead(criterionId)}`;
+  return null;
+}
+
+/**
+ * Why a before recorded now is no baseline (finding 79): a watched source already differs from the
+ * item's base, so the run proves nothing the after does not. The tests may differ: the red test of
+ * a behaviour criterion comes first.
+ */
+function baselineRefusal(
+  paths: CrewPaths,
+  profile: Profile,
+  work: WorkItem,
+  criterionId: string,
+): string | null {
+  const changed = changedWatchedPaths(paths.root, profile, work).filter(
+    (p) => !matchesAny(p, TEST_PATTERNS),
+  );
+  if (!changed.length) return null;
+  const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
+  return `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`;
+}
+
 export async function recordTdd(
   paths: CrewPaths,
   work: WorkItem,
@@ -153,105 +271,17 @@ export async function recordTdd(
   /** Where a line said before the run goes: the command a green took from its red (finding 237). */
   say?: (line: string) => void,
 ): Promise<TddOutcome> {
-  const criterion = work.criteria.find((c) => c.id === criterionId);
-  if (!criterion) return { ok: false, message: `unknown criterion ${criterionId}` };
-  const expected = STEPS_BY_KIND[criterion.kind];
-  if (!expected.steps.includes(step)) {
-    return {
-      ok: false,
-      message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`,
-    };
-  }
-  // A superseded criterion is proven through its replacement (finding 118's list): its own
-  // records stay as they are, and a new one would prove a text that is no longer the spec's.
-  if (criterion.supersededBy)
-    return {
-      ok: false,
-      message: `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`,
-    };
-  if (step === "observed" && !reason?.trim()) {
-    return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
-  }
-  // The words after `--` keep their boundaries (finding 91); shell words that would run in pieces
-  // are refused before anything starts, and nothing is recorded.
-  if (typeof override !== "string" && override) {
-    const why = shellRefusal(override);
-    if (why) return { ok: false, message: why };
-  }
+  const asked = criterionRefusal(work, criterionId, step, reason);
+  if (asked !== null) return { ok: false, message: asked };
   const fallback = defaultTestCommand(profile);
   const entry = evidence.tdd.find((t) => t.criterion === criterionId);
-  // A green with nothing after `--` runs its red's command (finding 237, D-2): the pair proves one
-  // command red and then green. That command passed the checks of a command after `--` when its
-  // red was recorded, or is the profile's own.
-  const fromRed = step === "green" && override === undefined ? entry?.red?.command : undefined;
-  // A pack's unconfirmed command is never run unseen: refused whenever the profile's own would run.
-  if (
-    override === undefined &&
-    fallback?.heldBy &&
-    (fromRed === undefined || fromRed === fallback.command)
-  )
-    return {
-      ok: false,
-      message: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`,
-    };
-  const command =
-    typeof override === "string"
-      ? override
-      : override
-        ? joinWords(override)
-        : (fromRed ?? fallback?.command);
-  if (!command) {
-    return {
-      ok: false,
-      message: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>',
-    };
-  }
-  // A command after `--` is read before it runs (finding 153): one the shell cannot parse keeps
-  // finding 144's refusal, read with `sh -n`, which runs nothing; one that is no test run is refused.
-  if (override !== undefined && step !== "observed") {
-    const unparsed = parseRefusal(command, paths.root);
-    if (unparsed !== null)
-      return {
-        ok: false,
-        message: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`,
-      };
-    const why = testRunRefusal(command, paths.root, fallback?.command ?? null);
-    if (why !== null)
-      return {
-        ok: false,
-        message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`,
-      };
-  }
-  if (step === "green" && !entry?.red)
-    return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
-  if (step === "after" && !entry?.before)
-    return {
-      ok: false,
-      message: `no before run recorded for ${criterionId}: run crew tdd before first`,
-    };
-  // The pair is one run (finding 179): an after over another command would prove nothing about
-  // the tests the before ran, so it is refused before anything runs, on the final command text
-  // whether the words came from `--` or from the profile.
-  if (step === "after" && entry?.before && command !== entry.before.command)
-    return {
-      ok: false,
-      message: `the after must run the before's command (${entry.before.command}): the pair proves the tests the before ran still pass; run that command, or ${observedInstead(criterionId)}`,
-    };
-  // A baseline is the tests green before the change (finding 79): with a watched source already
-  // differing from the item's base, a before recorded now proves nothing the after does not, and
-  // is refused. The tests may differ: the red test of a behaviour criterion comes first.
-  if (step === "before") {
-    const changed = changedWatchedPaths(paths.root, profile, work).filter(
-      (p) => !matchesAny(p, TEST_PATTERNS),
-    );
-    if (changed.length) {
-      const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
-      return {
-        ok: false,
-        message: `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`,
-      };
-    }
-  }
+  const chosen = commandFor(paths, step, override, fallback, entry);
+  if ("refused" in chosen) return { ok: false, message: chosen.refused };
+  const { command, fromRed } = chosen;
+  const unpaired =
+    pairRefusal(criterionId, step, entry, command) ??
+    (step === "before" ? baselineRefusal(paths, profile, work, criterionId) : null);
+  if (unpaired !== null) return { ok: false, message: unpaired };
   // The record is written into whatever evidence the caller applies it to, never into this copy,
   // which was read before the run and may be stale by the time it ends (finding 81).
   const writeRecord = (recorded: TddStep, record: RunRecord) => (into: Evidence) => {

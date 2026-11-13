@@ -1366,3 +1366,35 @@ test("2026-10-29-001 AC-7 (the round-1 rulings): the page's strings in the UI li
   writeUiEvidence(paths, work.id, bad);
   expect(readUiEvidence(paths, work.id)).toBeNull();
 });
+
+test("2026-11-13-002 AC-1 (finding 178, the planted links' two other callers): a symlinked motion sample and a symlinked review/ui-evidence.json are unreadable and never followed", async () => {
+  const { readUiEvidence, writeUiEvidence, uiEvidencePath } = await import("../src/ui.ts");
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const outside = tempDir();
+  const declared = [{ page: "checkout", state: "default", criteria: ["AC-1"] }];
+  seedCapture(ui, "checkout", "default");
+  seedMotion(ui, "checkout", "open");
+  expect(graded(paths, work.id, declared).offence).toBeNull();
+  // The sample replaced by a link to the same well-formed sample outside the folder.
+  const sample = join(ui, "checkout-open.motion.json");
+  writeFileSync(join(outside, "sample.json"), readFileSync(sample, "utf8"));
+  unlinkSync(sample);
+  symlinkSync(join(outside, "sample.json"), sample);
+  const grade = graded(paths, work.id, declared);
+  expect(grade.offence).toBe("ui: unreadable checkout-open.motion.json");
+  expect(grade.manifest.interactions).toEqual([]);
+  // The manifest replaced by a link to the very manifest the engine wrote, kept outside.
+  unlinkSync(sample);
+  seedMotion(ui, "checkout", "open");
+  const good = graded(paths, work.id, declared).manifest;
+  writeUiEvidence(paths, work.id, good);
+  expect(readUiEvidence(paths, work.id)).toEqual(good);
+  const manifest = uiEvidencePath(paths, work.id);
+  writeFileSync(join(outside, "manifest.json"), readFileSync(manifest, "utf8"));
+  unlinkSync(manifest);
+  symlinkSync(join(outside, "manifest.json"), manifest);
+  expect(readUiEvidence(paths, work.id)).toBeNull();
+  expect(JSON.parse(readFileSync(join(outside, "manifest.json"), "utf8"))).toEqual(good);
+});
