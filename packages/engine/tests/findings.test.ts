@@ -103,7 +103,38 @@ function openFindings(text: string): number[] {
 // crew tdd's recordTdd and its pytest pattern) closed by 2026-11-13-002, each point done or left with its reason.
 // 183 (a role wait ends the turn where nobody watches) closed by 2026-11-13-003: the Stop hook holds such an end while
 // a role the session launched is out, and crew await <id> role --here waits inside the turn.
-const OPEN = [77, 114, 206, 210, 212, 213, 214, 215, 221, 222, 224, 244];
+// 212 (the token read after the push, the probe silent on it, a command that never returns) and 221 (the release
+// records item's advisories, a release killed mid-step, steps with no bound) closed by 2026-11-13-004.
+const OPEN = [77, 114, 206, 210, 213, 214, 215, 222, 224, 244];
+
+test("2026-11-13-004 AC-54: findings 212 and 221 read closed, each point with what was done", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const record = (n: number) => {
+    const section = text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
+    return /\n- Outcome:(.*)/.exec(section)?.[1]?.trim() ?? "";
+  };
+  expect(openFindings(text)).not.toContain(212);
+  expect(openFindings(text)).not.toContain(221);
+  expect(record(212)).toStartWith("closed by `2026-11-13-004`");
+  for (const point of [
+    "reads the account's token before step 1",
+    "writes and pushes nothing",
+    "`release token (<account>)`",
+    "Every command of a release is bounded",
+    "killed with its process group",
+  ])
+    expect(record(212), point).toContain(point);
+  expect(record(221)).toStartWith("closed by `2026-11-13-004`");
+  for (const point of [
+    "The entry point has a row",
+    "names a rebuilt bundle",
+    "Every step's command is bounded",
+    "put back by the next new release from its journal",
+    "accepted by ADR 0015's note",
+    "finding 206",
+  ])
+    expect(record(221), point).toContain(point);
+});
 
 test("2026-11-13-003 AC-15: finding 183 reads closed, with the hold, the command, the eval's sample and the runtimes it does not reach", () => {
   const text = readFileSync(FINDINGS, "utf8");

@@ -52,6 +52,8 @@ import {
   readStateAt,
 } from "./improve-home.ts";
 import {
+  accountToken,
+  leftCommand,
   notificationCommand,
   RELEASE_STEP_NAMES,
   type ReleaseOptions,
@@ -579,9 +581,38 @@ export interface StopDeps {
   boot: () => string;
   alive: (pid: number) => boolean;
   sh: TickDeps["sh"];
-  kill: (pid: number, signal: "SIGTERM") => void;
+  kill: (pid: number, signal: "SIGTERM" | "SIGKILL") => void;
+  /** The command a release of the stopped tick waits on, by its pid, or null: the release's own check when not given. */
+  leftCommand?: (root: string, startedBy: number) => number | null;
   wait: (ms: number) => Promise<void>;
   now: () => Date;
+}
+
+/**
+ * Ends the command a release of a tick waits on (2026-11-13-004, D-2): such a command leads a
+ * process group of its own, which a signal to the tick, or launchd ending the tick, does not
+ * reach. `find` is the release's own check of its command file when not given, and answers the
+ * group to kill only for a command that tick's release started and that is still that process.
+ */
+function endTickCommand(
+  home: string,
+  tick: number,
+  find: ((root: string, startedBy: number) => number | null) | undefined,
+  kill: (group: number) => void,
+): void {
+  const group = (find ?? ((root, by) => leftCommand(root, {}, by)))(join(home, "repo"), tick);
+  if (group === null) return;
+  try {
+    kill(group);
+  } catch {
+    // The command ended between the check and the signal.
+  }
+}
+
+/** The pid of the tick the lock file names, when it names one. */
+function lockedTick(home: string): number | null {
+  const pid = readJson<{ pid?: unknown }>(join(home, "lock.json"))?.pid;
+  return typeof pid === "number" && Number.isInteger(pid) && pid > 1 ? pid : null;
 }
 
 const STOP_WAIT_MS = 30_000;
@@ -610,9 +641,18 @@ export async function stopLoop(deps: StopDeps): Promise<string> {
   if (!(command.includes("improve-loop.ts") && /\btick\b/.test(command))) return none;
   const pgid = deps.sh(["ps", "-o", "pgid=", "-p", pid], { cwd: home }).stdout.trim();
   deps.kill(pgid === pid ? -lock.pid : lock.pid, "SIGTERM");
+  // A command of the tick's release runs in a group of its own (2026-11-13-004, D-2), which the
+  // signal above does not reach: it is killed here, so the step fails and the release stops as it
+  // did when the command shared the tick's group. Asked again on each turn of the wait, for a tick
+  // caught between two commands.
+  const killCommand = () =>
+    endTickCommand(home, lock.pid, deps.leftCommand, (group) => deps.kill(-group, "SIGKILL"));
+  killCommand();
   const ended = () => !existsSync(join(home, "lock.json"));
-  for (let waited = 0; waited < STOP_WAIT_MS && !ended(); waited += STOP_POLL_MS)
+  for (let waited = 0; waited < STOP_WAIT_MS && !ended(); waited += STOP_POLL_MS) {
     await deps.wait(STOP_POLL_MS);
+    if (!ended()) killCommand();
+  }
   return ended()
     ? `stopped: the tick (pid ${pid}) ended; the loop is paused (bun scripts/improve-loop.ts resume)`
     : `stop requested: the tick (pid ${pid}) is still ending; the loop is paused`;
@@ -1189,8 +1229,16 @@ export interface TickDeps {
   git: (args: string[], cwd: string) => { status: number; stdout: string; stderr: string };
   sh: (
     cmd: string[],
-    opts: { cwd: string; env?: Record<string, string>; input?: string },
-  ) => { status: number; stdout: string; stderr: string };
+    opts: {
+      cwd: string;
+      env?: Record<string, string>;
+      input?: string;
+      /** The command's output is a secret: never printed. */
+      quiet?: boolean;
+      /** The command is killed past this many milliseconds, with its process group. */
+      timeoutMs?: number;
+    },
+  ) => { status: number; stdout: string; stderr: string; timedOut?: boolean };
   /** The improvement itself (`runImprove` with the real deps of the clone). */
   improve: (options: ImproveOptions, repo: string) => Promise<number>;
   /** A signal handler for the tick's duration (2026-10-28-001 AC-7): installed, and removed by what it returns. */
@@ -1560,7 +1608,7 @@ export async function tick(
     const provider = providerEnv(config, deps.readSecret);
     secrets = provider.secrets;
     // The first tick writes the probe the install waits for (D-8).
-    if (!existsSync(join(home, "probe.json"))) {
+    if (needsProbe(home)) {
       const probe = runProbe(config, repo, deps.sh, deps.git);
       writeRedacted(join(home, "probe.json"), `${JSON.stringify(probe, null, 2)}\n`, secrets);
       state.probe = probe as unknown as Record<string, unknown>;
@@ -1807,6 +1855,12 @@ export async function tick(
             // The adoption's files are committed before the release, whose precondition is a clean tree.
             commitDocs(`Improvement run ${latest.run}: the adoption's ruling`);
             const rulingCommit = must(["rev-parse", "HEAD"]).trim();
+            /** The merge off main, the ruling's files committed again on the head that was. */
+            const takeMergeBack = () => {
+              must(["reset", "-q", "--hard", mainBefore]);
+              git(["checkout", rulingCommit, "--", `docs/improve/${latest.run}`]);
+              commitDocs(`Improvement run ${latest.run}: the adoption's ruling`);
+            };
             const outcome = await deps.release({
               root: repo,
               bump: "patch",
@@ -1830,11 +1884,19 @@ export async function tick(
             } else if (outcome.pending && failure) {
               state.pendingRelease = pendingAt(outcome.version, failure.step);
               day.failures.push(failure);
+              if (outcome.localUnconfirmed) {
+                // The pending version is held, and this run's commits are not confirmed on origin
+                // (2026-11-13-004): the push's outcome is unknown, or the version is an earlier
+                // run's. The merge goes, as for a failure before the push, so the tick's own push
+                // sends nothing unreleased; the kept branch waits for a later tick.
+                takeMergeBack();
+                log(
+                  `release ${outcome.version} is held pending at step ${failure.step} and is not confirmed on origin: this run's adoption waits`,
+                );
+              }
             } else {
               // Before the push: the merge goes, the adoption's files stay on the main that was.
-              must(["reset", "-q", "--hard", mainBefore]);
-              git(["checkout", rulingCommit, "--", `docs/improve/${latest.run}`]);
-              commitDocs(`Improvement run ${latest.run}: the adoption's ruling`);
+              takeMergeBack();
               if (failure) day.failures.push(failure);
             }
             saveState();
@@ -2014,6 +2076,21 @@ export interface InstallDeps {
   log: (line: string) => void;
   /** Whether a pid is alive, for the status's reading of the lock. */
   alive?: (pid: number) => boolean;
+  /** The command a release of the ended tick waits on, by its pid, or null: the release's own check when not given. */
+  leftCommand?: (root: string, startedBy: number) => number | null;
+  /** Kills a process group by its leader's pid: SIGKILL to the group when not given. */
+  killGroup?: (pid: number) => void;
+}
+
+/** Ends the command of the tick launchd just ended for an install or an uninstall: launchd's kill does not reach it. */
+function endEndedTickCommand(deps: InstallDeps, tick: number | null): void {
+  if (tick === null) return;
+  endTickCommand(
+    deps.home,
+    tick,
+    deps.leftCommand,
+    deps.killGroup ?? ((group) => process.kill(-group, "SIGKILL")),
+  );
 }
 
 /** What the first tick found it could reach (D-8), written to `probe.json` and printed by install. */
@@ -2025,6 +2102,29 @@ export interface Probe {
   push: string;
   /** Each configured keychain account: found or missing, never a value. */
   keychain: Record<string, "found" | "missing">;
+  /**
+   * Whether the release's account gave a token when the probe was written (2026-11-13-004), the
+   * word alone: a snapshot, not the token's state at a later release. Absent from a probe an
+   * older loop wrote.
+   */
+  releaseToken?: "found" | "missing";
+}
+
+/** The bound of each of the probe's two `gh` calls. */
+const PROBE_GH_MS = 120_000;
+
+/** Whether the tick has a probe to write (2026-11-13-004): the file is absent, does not parse, or does not say the release's token was found. */
+function needsProbe(home: string): boolean {
+  const file = join(home, "probe.json");
+  if (!existsSync(file)) return true;
+  try {
+    // A probe that says missing is taken again, so the word follows a login.
+    return (
+      (JSON.parse(readFileSync(file, "utf8")) as Partial<Probe> | null)?.releaseToken !== "found"
+    );
+  } catch {
+    return true;
+  }
 }
 
 /** The accounts the configuration names in the keychain. */
@@ -2056,7 +2156,7 @@ export function runProbe(
   } catch {
     authMethod = `unreadable (${auth.stderr.trim().split("\n")[0] ?? ""})`;
   }
-  const gh = sh(["gh", "auth", "status"], { cwd: repo });
+  const gh = sh(["gh", "auth", "status"], { cwd: repo, timeoutMs: PROBE_GH_MS });
   const github = /account (\S+)/.exec(`${gh.stdout}\n${gh.stderr}`)?.[1] ?? null;
   const first = (text: string) => text.trim().split("\n")[0] ?? "";
   const remote = git(["ls-remote", "origin", "HEAD"], repo);
@@ -2075,6 +2175,9 @@ export function runProbe(
     remote: remote.status === 0 ? "ok" : first(remote.stderr) || "failed",
     push: push.status === 0 ? "ok" : first(push.stderr) || "failed",
     keychain,
+    // The release's own read, so the rule for a token being there is written once; the word alone is kept.
+    releaseToken:
+      accountToken(sh, config.marketplace.account, repo).token === null ? "missing" : "found",
   };
 }
 
@@ -2086,9 +2189,10 @@ const FALLBACK = [
   '  3. "oauthToken": { "keychain": "oauth-token" } in config.json',
 ];
 
-function printProbe(probe: Probe, log: (line: string) => void): void {
+export function printProbe(probe: Probe, account: string, log: (line: string) => void): void {
   log(`login: ${probe.authMethod} (${probe.loggedIn ? "logged in" : "not logged in"})`);
   log(`github: ${probe.github ?? "not logged in"}`);
+  log(`release token (${account}): ${probe.releaseToken ?? "not probed"}`);
   log(`remote: ${probe.remote}; push: ${probe.push}`);
   const accounts = Object.entries(probe.keychain).map(([k, v]) => `${k} ${v}`);
   log(`keychain: ${accounts.join(", ") || "nothing configured"}`);
@@ -2176,7 +2280,9 @@ export async function install(options: { cloneFrom?: string }, deps: InstallDeps
     return 1;
   }
   rmSync(join(home, "probe.json"), { force: true });
+  const running = lockedTick(home);
   deps.sh(["launchctl", "kickstart", "-k", target], { cwd: home });
+  endEndedTickCommand(deps, running);
   log(`agent ${LABEL} installed: ${plist}; waiting for its first tick's probe`);
   for (let waited = 0; waited < 90; waited++) {
     if (existsSync(join(home, "probe.json"))) break;
@@ -2186,13 +2292,19 @@ export async function install(options: { cloneFrom?: string }, deps: InstallDeps
     log(`the agent wrote no probe in 90 s: see launchctl print ${target} and ${join(home, "log")}`);
     return 1;
   }
-  printProbe(JSON.parse(readFileSync(join(home, "probe.json"), "utf8")) as Probe, log);
+  printProbe(
+    JSON.parse(readFileSync(join(home, "probe.json"), "utf8")) as Probe,
+    readConfig(home).marketplace.account,
+    log,
+  );
   return 0;
 }
 
 /** The agent booted out and its plist removed; the home and its clone stay. */
 export async function uninstall(deps: InstallDeps): Promise<number> {
+  const running = lockedTick(deps.home);
   deps.sh(["launchctl", "bootout", `gui/${deps.uid}/${LABEL}`], { cwd: deps.home });
+  endEndedTickCommand(deps, running);
   rmSync(plistPath(deps), { force: true });
   deps.log(`agent ${LABEL} removed`);
   return 0;

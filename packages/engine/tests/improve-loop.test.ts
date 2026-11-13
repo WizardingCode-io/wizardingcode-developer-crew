@@ -44,6 +44,7 @@ import {
   parseRuling,
   pauseLoop,
   pickTargets,
+  printProbe,
   providerEnv,
   providerUnpriced,
   readConfig,
@@ -767,6 +768,8 @@ type Seen = {
   fromSteps: (number | undefined)[];
   accounts: (string | undefined)[];
   log: string[];
+  /** The clone's commits when the release was called (2026-11-13-004): the head before the adoption's merge, the merge, the ruling on top of it, and the release's own commit and origin's head when the fake made or moved them. */
+  heads: { before?: string; merge?: string; ruling?: string; release?: string; origin?: string };
 };
 
 /** The tick's deps: real git, every other command played, the improvement a stub that writes a record. */
@@ -809,6 +812,15 @@ function tickDeps(
     probe?: (model: string) => ProbeAnswer;
     /** A path the run's kept commit also writes (2026-11-11-002 AC-32): one outside the harness fails the adoption gate. */
     keptAlso?: string;
+    /**
+     * The release answers a version pending at step 7 that is not confirmed on origin (2026-11-13-004):
+     * as the recovery's rule 3 reports it (`rule-3`, nothing committed), as a push of unknown outcome
+     * does (`unknown`, the release's commit and tag in the clone), or as one that did land (`landed`,
+     * that commit and tag on origin too).
+     */
+    unconfirmed?: "rule-3" | "unknown" | "landed";
+    /** `gh auth token -u` answers a token (2026-11-13-004): none when not given. */
+    releaseToken?: boolean;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
   const seen: Seen = {
@@ -823,6 +835,7 @@ function tickDeps(
     fromSteps: [],
     accounts: [],
     log: [],
+    heads: {},
   };
   const now = new Date(options.now ?? "2026-10-25T20:00:00.000Z");
   const deps: TickDeps = {
@@ -860,6 +873,8 @@ function tickDeps(
     },
     sh: (cmd, shOptions) => {
       seen.sh.push([...cmd]);
+      if (options.releaseToken && cmd.join(" ").startsWith("gh auth token"))
+        return { status: 0, stdout: "a-token\n", stderr: "" };
       if (cmd[0] === "env" && cmd.includes("install") && shOptions?.cwd) {
         if (options.shellInstallFails)
           return { status: 1, stdout: "", stderr: "the download failed\nmore" };
@@ -965,6 +980,22 @@ function tickDeps(
         return options.resumeFails === undefined
           ? { version, code: 0, failedStep: null, pending: false }
           : { version, code: 1, failedStep: options.resumeFails, pending: true };
+      }
+      if (options.unconfirmed) {
+        const at = (rev: string) => git(opts.root, "rev-parse", rev).trim();
+        seen.heads = { ruling: at("HEAD"), merge: at("HEAD~1"), before: at("HEAD~1^1") };
+        if (options.unconfirmed !== "rule-3") {
+          writeFileSync(join(opts.root, "package.json"), '{ "name": "r", "version": "0.15.1" }\n');
+          git(opts.root, "add", "-A");
+          git(opts.root, "commit", "-q", "-m", `Release ${version}: ${opts.reason}`);
+          git(opts.root, "tag", `v${version}`);
+          seen.heads.release = at("HEAD");
+        }
+        if (options.unconfirmed === "landed") {
+          git(opts.root, "push", "-q", "origin", "main", `v${version}`);
+          seen.heads.origin = at("HEAD");
+        }
+        return { version, code: 1, failedStep: 7, pending: true, localUnconfirmed: true };
       }
       if ((options.releaseCode ?? 0) === 0) {
         // The release commits and pushes like the real one: the version file and the tag.
@@ -1199,11 +1230,24 @@ function installDeps(
     which?: Record<string, string | null>;
     /** The origin a heal fetches from (finding 169): a local one, never GitHub, in a test. */
     originUrl?: string;
+    /** The command the ended tick's release left running, by its pid (2026-11-13-004). */
+    leftCommand?: number | null;
   } = {},
 ) {
   const seen: string[][] = [];
   const log: string[] = [];
+  const asked: { root: string; startedBy: number }[] = [];
+  const kills: number[] = [];
   const deps: InstallDeps = {
+    leftCommand: (root, startedBy) => {
+      asked.push({ root, startedBy });
+      return options.leftCommand ?? null;
+    },
+    killGroup: (pid) => {
+      kills.push(pid);
+      // In the one list of what was run, so a row can say what came first.
+      seen.push(["kill group", String(pid)]);
+    },
     home,
     originUrl:
       options.originUrl ?? "git@github.com:WizardingCode-io/wizardingcode-developer-crew.git",
@@ -1238,7 +1282,7 @@ function installDeps(
     now: () => new Date("2026-10-25T20:00:00.000Z"),
     log: (line) => log.push(line),
   };
-  return { deps, seen, log };
+  return { deps, seen, log, asked, kills };
 }
 
 test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch-up on wake, the tools' PATH and the two logs; install clones, bootstraps, boots the agent and prints the probe; uninstall boots it out; status says where the loop stands", async () => {
@@ -1876,6 +1920,7 @@ test("2026-10-25-005 AC-8 (the probe): the first tick records what the agent rea
     remote: "ok",
     push: "ok",
     keychain: { "or-token": "found", "oauth-token": "missing" },
+    releaseToken: "missing",
   });
 });
 
@@ -2224,8 +2269,11 @@ function stopDeps(
     pgid?: string;
     /** Whether the tick removes its lock while the stop waits (true when not given). */
     ends?: boolean;
+    /** What the release's `leftCommand` answers on each call, in order, null once they run out (2026-11-13-004). */
+    leftCommands?: (number | null)[];
   } = {},
 ) {
+  const asked: { root: string; startedBy: number }[] = [];
   const kills: { pid: number; signal: string }[] = [];
   const ps: string[][] = [];
   let waited = 0;
@@ -2245,8 +2293,12 @@ function stopDeps(
         };
       return { status: 0, stdout: "", stderr: "" };
     },
-    kill: (pid: number, signal: "SIGTERM") => {
+    kill: (pid: number, signal: "SIGTERM" | "SIGKILL") => {
       kills.push({ pid, signal });
+    },
+    leftCommand: (root: string, startedBy: number) => {
+      asked.push({ root, startedBy });
+      return options.leftCommands?.[asked.length - 1] ?? null;
     },
     wait: async () => {
       waited += 1;
@@ -2254,7 +2306,7 @@ function stopDeps(
     },
     now: () => new Date("2026-10-28T03:00:00.000Z"),
   };
-  return { deps, kills, ps, waited: () => waited };
+  return { deps, kills, ps, asked, waited: () => waited };
 }
 
 test("2026-10-28-001 AC-7: pause and resume write paused into the configuration, keep its other keys and say so; resume removes a stop marker", () => {
@@ -3513,4 +3565,286 @@ test("2026-11-13-002 AC-3 (finding 177): the loop's two sweeps are one function;
   expect(existsSync(suite)).toBe(true);
   // With its own stats and folders that do not exist, the sweep does nothing and does not throw.
   sweepLeftovers(join(tmp, "none"), join(results, "none"), now);
+});
+
+const probeConfig = {
+  provider: "runtime",
+  casesPerRun: 2,
+  staleDays: 7,
+  proposals: 2,
+  marketplace: { account: "the-account" },
+} as LoopConfig;
+const gitOk: TickDeps["git"] = () => ({ status: 0, stdout: "", stderr: "" });
+
+test("2026-11-13-004 AC-32: the probe says whether the release's account gave a token, by the word alone, and bounds its two gh calls", () => {
+  const MARK = "ghp_SENTINEL_91c2";
+  const probeWith = (token: ReturnType<TickDeps["sh"]>) => {
+    const calls: { cmd: string[]; opts: Parameters<TickDeps["sh"]>[1] }[] = [];
+    const sh: TickDeps["sh"] = (cmd, opts) => {
+      calls.push({ cmd, opts });
+      return cmd.join(" ") === "gh auth token -u the-account"
+        ? token
+        : { status: 0, stdout: "", stderr: "" };
+    };
+    return { probe: runProbe(probeConfig, "/repo", sh, gitOk), calls };
+  };
+  const found = probeWith({ status: 0, stdout: `${MARK}\n`, stderr: "" });
+  expect(found.probe.releaseToken).toBe("found");
+  expect(JSON.stringify(found.probe)).not.toContain("SENTINEL");
+  const tokenCall = found.calls.find((c) => c.cmd[2] === "token");
+  expect(tokenCall?.opts).toEqual({ cwd: "/repo", quiet: true, timeoutMs: 120_000 });
+  expect(found.calls.find((c) => c.cmd.join(" ") === "gh auth status")?.opts.timeoutMs).toBe(
+    120_000,
+  );
+  for (const none of [
+    { status: 1, stdout: `${MARK}\n`, stderr: MARK },
+    { status: 0, stdout: "\n", stderr: "" },
+    { status: 1, stdout: MARK, stderr: "", timedOut: true },
+  ]) {
+    const { probe } = probeWith(none);
+    expect(probe.releaseToken).toBe("missing");
+    expect(JSON.stringify(probe)).not.toContain("SENTINEL");
+  }
+  const printed = (probe: Parameters<typeof printProbe>[0]) => {
+    const lines: string[] = [];
+    printProbe(probe, "the-account", (l) => lines.push(l));
+    return lines;
+  };
+  expect(printed(found.probe)).toContain("release token (the-account): found");
+  expect(printed(found.probe).join("\n")).not.toContain("SENTINEL");
+  expect(printed({ ...found.probe, releaseToken: "missing" })).toContain(
+    "release token (the-account): missing",
+  );
+  const { releaseToken: _, ...older } = found.probe;
+  expect(printed(older)).toContain("release token (the-account): not probed");
+});
+
+test("2026-11-13-004 AC-32: a tick probes again when the probe file is absent, does not parse or has no release token, and runs no probe over a complete one", async () => {
+  const world = loopWorld();
+  const file = join(world.home, "probe.json");
+  mkdirSync(world.home, { recursive: true });
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ paused: true }));
+  const probed = async (hour: number) => {
+    const at = tickDeps(world, { now: `2026-10-25T${hour}:00:00.000Z`, releaseToken: true });
+    expect(await tick({}, at.deps)).toBe(0);
+    return at.seen.sh.filter((c) => c[0] === "gh").map((c) => c.join(" "));
+  };
+  const both = ["gh auth status", "gh auth token -u andreagroferreira"];
+  expect(await probed(10)).toEqual(both);
+  const complete = JSON.parse(readFileSync(file, "utf8"));
+  expect(complete.releaseToken).toBe("found");
+  expect(readFileSync(file, "utf8")).not.toContain("a-token");
+  // A complete file: no probe.
+  expect(await probed(11)).toEqual([]);
+  // A file an older loop wrote, with no field.
+  const { releaseToken: _, ...older } = complete;
+  writeFileSync(file, JSON.stringify(older));
+  expect(await probed(12)).toEqual(both);
+  expect(JSON.parse(readFileSync(file, "utf8")).releaseToken).toBe("found");
+  // A file that does not parse.
+  writeFileSync(file, "{not json");
+  expect(await probed(13)).toEqual(both);
+  expect(JSON.parse(readFileSync(file, "utf8")).releaseToken).toBe("found");
+});
+
+test("2026-11-13-004 AC-32: a resume that reports its own step, as one refused for a missing token does, stays pending at that step", async () => {
+  // Green before this item's code: the loop's branch for a pending outcome is not changed for it.
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const stateFile = join(world.home, "state.json");
+  const state = JSON.parse(readFileSync(stateFile, "utf8"));
+  writeFileSync(
+    stateFile,
+    JSON.stringify({
+      ...state,
+      pendingRelease: { version: "0.15.1", failedStep: 9, failedName: "the marketplace entry" },
+    }),
+  );
+  const at = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", resumeFails: 9 });
+  await tick({}, at.deps);
+  expect(at.seen.fromSteps).toEqual([9]);
+  expect(JSON.parse(readFileSync(stateFile, "utf8")).pendingRelease).toEqual({
+    version: "0.15.1",
+    failedStep: 9,
+    failedName: "the marketplace entry",
+  });
+});
+
+test("2026-11-13-004 AC-53: a pending release that is not confirmed on origin holds its version at step 7 and takes this run's adoption back, so nothing unreleased reaches origin", async () => {
+  for (const unconfirmed of ["rule-3", "unknown"] as const) {
+    const world = loopWorld();
+    const at = tickDeps(world, { kept: true, unconfirmed });
+    expect(await tick({}, at.deps)).toBe(0);
+    const repo = join(world.home, "repo");
+    const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+    expect(state.pendingRelease).toEqual({
+      version: "0.15.1",
+      failedStep: 7,
+      failedName: "the tarball",
+    });
+    expect(state.day.failures).toEqual([{ run: "2026-10-25-1", step: 7, name: "the tarball" }]);
+    expect(at.seen.log.join("\n")).toContain(
+      "release 0.15.1 is held pending at step 7 and is not confirmed on origin: this run's adoption waits",
+    );
+    const { before, merge, ruling, release: released } = at.seen.heads;
+    const reached = (hash: string | undefined, of: string, ref: string) =>
+      spawnSync("git", ["merge-base", "--is-ancestor", hash as string, ref], { cwd: of }).status ===
+      0;
+    // The clone's main is back on the head before the merge, with the ruling committed again on it.
+    expect(reached(before, repo, "main")).toBe(true);
+    for (const hash of [merge, ruling, ...(unconfirmed === "unknown" ? [released] : [])]) {
+      expect(hash).toMatch(/^[0-9a-f]{40}$/);
+      expect(reached(hash, repo, "main")).toBe(false);
+      expect(reached(hash, world.origin, "main")).toBe(false);
+    }
+    expect(git(world.origin, "ls-tree", "-r", "--name-only", "main")).toContain(
+      "docs/improve/2026-10-25-1/adoption/ruling.md",
+    );
+    expect(git(world.origin, "log", "--format=%s", "main")).not.toContain("Release 0.15.1");
+    expect(git(world.origin, "branch", "--list", "improve/2026-10-25-1").trim()).toBe(
+      "improve/2026-10-25-1",
+    );
+    // The next tick resumes the pending version from step 7.
+    const next = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+    await tick({}, next.deps);
+    expect(next.seen.fromSteps).toEqual([7]);
+  }
+});
+
+test("2026-11-13-004 AC-53: when the unknown push did land, the tick's push adds the day's report alone, and a pending release that is confirmed keeps the merge as before", async () => {
+  const world = loopWorld();
+  const at = tickDeps(world, { kept: true, unconfirmed: "landed" });
+  expect(await tick({}, at.deps)).toBe(0);
+  const landed = at.seen.heads.origin as string;
+  const head = git(world.origin, "rev-parse", "main").trim();
+  expect(
+    spawnSync("git", ["merge-base", "--is-ancestor", landed, "main"], { cwd: world.origin }).status,
+  ).toBe(0);
+  const added = git(world.origin, "diff", "--name-only", `${landed}..main`).trim().split("\n");
+  expect(added.length).toBeGreaterThan(0);
+  for (const path of added) expect(path).toStartWith("docs/improve/");
+  expect(git(world.origin, "rev-list", "--count", `${landed}..main`).trim()).toBe("1");
+  expect(git(world.origin, "log", "-1", "--format=%s", head).trim()).toBe(
+    "Improvement run 2026-10-25-1: the day's report",
+  );
+  // The merge and the release's commit are in origin's history once, as the push left them.
+  const subjects = git(world.origin, "log", "--format=%s", "main").split("\n");
+  expect(subjects.filter((s) => s.startsWith("Release 0.15.1")).length).toBe(1);
+  expect(subjects.filter((s) => s.startsWith("Adopt improvement run")).length).toBe(1);
+  expect(JSON.parse(readFileSync(join(world.home, "state.json"), "utf8")).pendingRelease).toEqual({
+    version: "0.15.1",
+    failedStep: 7,
+    failedName: "the tarball",
+  });
+  const next = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  await tick({}, next.deps);
+  expect(next.seen.fromSteps).toEqual([7]);
+  // A pending outcome that says nothing of origin: the merge went out with the release's push, and stays.
+  const confirmed = loopWorld();
+  const failed = tickDeps(confirmed, { kept: true, releaseCode: 1 });
+  expect(await tick({}, failed.deps)).toBe(0);
+  expect(git(join(confirmed.home, "repo"), "log", "--format=%s", "main")).toContain(
+    "Adopt improvement run",
+  );
+  expect(failed.seen.log.join("\n")).not.toContain("is not confirmed on origin");
+});
+
+test("2026-11-13-004 AC-52: stop kills the command of the stopped tick's release after its signal to the tick, on each turn of its wait, and signals the tick alone when there is none", async () => {
+  const world = loopWorld();
+  mkdirSync(world.home, { recursive: true });
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ provider: "runtime" }));
+  const lock = { pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" };
+  const stop = async (options: Parameters<typeof stopDeps>[1]) => {
+    writeFileSync(join(world.home, "lock.json"), JSON.stringify(lock));
+    const d = stopDeps(world, options);
+    await stopLoop(d.deps);
+    return d;
+  };
+  // The tick's release waits on a command: its group is killed, after the tick's own signal.
+  const running = await stop({ leftCommands: [777] });
+  expect(running.kills).toEqual([
+    { pid: -4242, signal: "SIGTERM" },
+    { pid: -777, signal: "SIGKILL" },
+  ]);
+  expect(running.asked[0]).toEqual({ root: join(world.home, "repo"), startedBy: 4242 });
+  // No command of that tick's release: the tick alone.
+  const idle = await stop({});
+  expect(idle.kills).toEqual([{ pid: -4242, signal: "SIGTERM" }]);
+  expect(idle.asked.length).toBeGreaterThan(0);
+  // Caught between two commands: the next one is killed on a later turn of the wait.
+  const between = await stop({ leftCommands: [null, null, 888], ends: false });
+  expect(between.kills).toEqual([
+    { pid: -4242, signal: "SIGTERM" },
+    { pid: -888, signal: "SIGKILL" },
+  ]);
+  expect(between.asked.length).toBeGreaterThan(2);
+});
+
+test("2026-11-13-004 AC-57: a tick probes again while the probe says the release's token is missing, so the word follows a login", async () => {
+  const world = loopWorld();
+  const file = join(world.home, "probe.json");
+  mkdirSync(world.home, { recursive: true });
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ paused: true }));
+  const probed = async (hour: number, releaseToken: boolean) => {
+    const at = tickDeps(world, { now: `2026-10-25T${hour}:00:00.000Z`, releaseToken });
+    expect(await tick({}, at.deps)).toBe(0);
+    return {
+      gh: at.seen.sh.filter((c) => c[0] === "gh").length,
+      word: JSON.parse(readFileSync(file, "utf8")).releaseToken,
+    };
+  };
+  expect(await probed(10, false)).toEqual({ gh: 2, word: "missing" });
+  // Still logged out: probed again, the word stays.
+  expect(await probed(11, false)).toEqual({ gh: 2, word: "missing" });
+  // Logged in since: the next tick's probe says so, and the one after runs none.
+  expect(await probed(12, true)).toEqual({ gh: 2, word: "found" });
+  expect(await probed(13, true)).toEqual({ gh: 0, word: "found" });
+});
+
+test("2026-11-13-004 AC-57: install and uninstall kill the command of the tick they end, after ending it, and nothing when no tick's release left one", async () => {
+  const base = tempDir("ended-");
+  const home = join(base, "crew-improve");
+  mkdirSync(home, { recursive: true });
+  const lock = { pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" };
+  writeFileSync(join(home, "lock.json"), JSON.stringify(lock));
+  const down = installDeps(home, null, { leftCommand: 777 });
+  expect(await uninstall(down.deps)).toBe(0);
+  expect(down.asked).toEqual([{ root: join(home, "repo"), startedBy: 4242 }]);
+  expect(down.kills).toEqual([777]);
+  // Afterwards: the tick is ended first, so it cannot start another command.
+  expect(down.seen.map((c) => c.slice(0, 2).join(" "))).toEqual([
+    "launchctl bootout",
+    "kill group 777",
+  ]);
+  // No command left by that tick: nothing is signalled.
+  const idle = installDeps(home, null);
+  expect(await uninstall(idle.deps)).toBe(0);
+  expect(idle.kills).toEqual([]);
+  // No lock: no tick to have left one, so nothing is asked.
+  rmSync(join(home, "lock.json"));
+  const none = installDeps(home, null, { leftCommand: 777 });
+  expect(await uninstall(none.deps)).toBe(0);
+  expect(none.asked).toEqual([]);
+  expect(none.kills).toEqual([]);
+  // The install's kickstart ends a running tick too.
+  const again = join(base, "crew-improve-2");
+  mkdirSync(again, { recursive: true });
+  writeFileSync(join(again, "lock.json"), JSON.stringify(lock));
+  const up = installDeps(
+    again,
+    {
+      loggedIn: true,
+      authMethod: "claude.ai",
+      github: "a",
+      remote: "ok",
+      push: "ok",
+      keychain: {},
+    },
+    { leftCommand: 888 },
+  );
+  expect(await install({ cloneFrom: loopSeed() }, up.deps)).toBe(0);
+  expect(up.asked).toEqual([{ root: join(again, "repo"), startedBy: 4242 }]);
+  expect(up.kills).toEqual([888]);
+  const order = up.seen.map((c) => c.slice(0, 2).join(" "));
+  expect(order.indexOf("kill group 888")).toBeGreaterThan(order.indexOf("launchctl kickstart"));
 });

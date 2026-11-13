@@ -12,8 +12,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { sha256 } from "../packages/engine/src/fs.ts";
+import { dirname, join, resolve } from "node:path";
+import { nowIso, sha256, writeJson } from "../packages/engine/src/fs.ts";
+import { killGroup, processGone, processStart } from "../packages/engine/src/open.ts";
 import { resolvePaths } from "../packages/engine/src/paths.ts";
 import { loadProfile } from "../packages/engine/src/profile.ts";
 import {
@@ -85,46 +86,61 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** One file of a bump's plan: its path from the root and the text the bump gives it. */
+export interface PlannedFile {
+  rel: string;
+  text: string;
+}
+
+/** The paths a bump can write, with no version needed: the release files and the two tests' files (2026-11-13-004). */
+export function journalPaths(root: string): string[] {
+  return [...releaseFiles(root), ...TEST_LITERALS.map(([rel]) => rel)];
+}
+
 /**
- * Writes `to` into every release file, the two tests' literals and the packs' `core` bound; returns
- * the files written. A release file still at another version afterwards is the caller's failure
- * (`staleReleaseFiles`).
+ * What a bump would write, and nothing written (2026-11-13-004 AC-44): each release file and each
+ * test literal with the text `to` gives it, in the order the bump writes them. A test literal whose
+ * file is absent, or whose text would not change, is left out.
  */
-export function bumpVersion(root: string, from: string, to: string): string[] {
-  const written: string[] = [];
+export function plannedBump(root: string, from: string, to: string): PlannedFile[] {
+  const plan: PlannedFile[] = [];
   for (const rel of releaseFiles(root)) {
-    const path = join(root, rel);
-    if (rel.endsWith(".json")) {
-      // The version strings alone, every other byte kept: a re-serialization would reshape the
-      // manifests the formatter keeps otherwise, and the check that guards the release would
-      // reject its own write (finding 166).
-      const text = readFileSync(path, "utf8");
-      writeFileSync(
-        path,
-        text
-          .replace(new RegExp(`("version"\\s*:\\s*")${escapeRegex(from)}(")`), `$1${to}$2`)
-          .replace(new RegExp(`("core"\\s*:\\s*">=)${escapeRegex(from)}(")`), `$1${to}$2`),
-      );
-    } else {
-      const text = readFileSync(path, "utf8");
-      writeFileSync(
-        path,
-        text.replace(`export const VERSION = "${from}";`, `export const VERSION = "${to}";`),
-      );
-    }
-    written.push(rel);
+    const text = readFileSync(join(root, rel), "utf8");
+    // The version strings alone, every other byte kept: a re-serialization would reshape the
+    // manifests the formatter keeps otherwise, and the check that guards the release would
+    // reject its own write (finding 166).
+    plan.push({
+      rel,
+      text: rel.endsWith(".json")
+        ? text
+            .replace(new RegExp(`("version"\\s*:\\s*")${escapeRegex(from)}(")`), `$1${to}$2`)
+            .replace(new RegExp(`("core"\\s*:\\s*">=)${escapeRegex(from)}(")`), `$1${to}$2`)
+        : text.replace(`export const VERSION = "${from}";`, `export const VERSION = "${to}";`),
+    });
   }
   for (const [rel, pattern] of TEST_LITERALS) {
     const path = join(root, rel);
     if (!existsSync(path)) continue;
     const text = readFileSync(path, "utf8");
     const next = text.replace(pattern(from), (m) => m.replace(`"${from}"`, `"${to}"`));
-    if (next !== text) {
-      writeFileSync(path, next);
-      written.push(rel);
-    }
+    if (next !== text) plan.push({ rel, text: next });
   }
-  return written;
+  return plan;
+}
+
+/** Writes a bump's plan; returns the files written, in the plan's order. */
+export function writePlan(root: string, plan: readonly PlannedFile[]): string[] {
+  for (const { rel, text } of plan) writeFileSync(join(root, rel), text);
+  return plan.map((f) => f.rel);
+}
+
+/**
+ * Writes `to` into every release file, the two tests' literals and the packs' `core` bound; returns
+ * the files written. A release file still at another version afterwards is the caller's failure
+ * (`staleReleaseFiles`).
+ */
+export function bumpVersion(root: string, from: string, to: string): string[] {
+  return writePlan(root, plannedBump(root, from, to));
 }
 
 /**
@@ -139,6 +155,8 @@ export interface CommandResult {
   stderr: string;
   signal?: string;
   error?: string;
+  /** The command passed the bound it was given and was killed with its process group (2026-11-13-004). */
+  timedOut?: boolean;
 }
 
 export type CommandRunner = (
@@ -149,10 +167,193 @@ export type CommandRunner = (
     input?: string;
     /** The command's output is a secret (a token): never printed. */
     quiet?: boolean;
-    /** The command is killed past this many milliseconds (the project update's bound, item 2026-11-08-002). */
+    /**
+     * The command is killed past this many milliseconds, with the processes of its own group: it
+     * runs as the leader of a new one and reads no terminal (2026-11-13-004, D-2).
+     */
     timeoutMs?: number;
+    /** Where a bounded command writes its pid and start and its starter's while it runs, so the next release can end a command a killed one left (2026-11-13-004). */
+    commandFile?: string;
   },
 ) => CommandResult;
+
+/** The three bounds of a release's commands (2026-11-13-004): a local command, a remote one or a build, the check. */
+export const LOCAL_MS = 120_000;
+export const REMOTE_OR_BUILD_MS = 300_000;
+export const CHECK_MS = 2_700_000;
+/** Where a bounded command of the release says who it is while it runs, under the root. */
+export const COMMAND_FILE = "dist/release-in-progress.command";
+
+/** The bound of a command of the release, by what it is. */
+export function boundOf(cmd: readonly string[]): number {
+  const [program, first, second] = cmd;
+  if (program === "bun")
+    return first === "run" && second === "check" ? CHECK_MS : REMOTE_OR_BUILD_MS;
+  if (program === "git")
+    return first === "fetch" || first === "ls-remote" || first === "push"
+      ? REMOTE_OR_BUILD_MS
+      : LOCAL_MS;
+  if (program === "gh") return first === "auth" ? LOCAL_MS : REMOTE_OR_BUILD_MS;
+  return program === "claude" || program === "tar" ? REMOTE_OR_BUILD_MS : LOCAL_MS;
+}
+
+/**
+ * What every git command of the release carries, so a credential that would ask fails at once
+ * instead of waiting out its bound: no prompt of git's, and ssh in batch mode. The caller's own
+ * `GIT_SSH_COMMAND` is left as it is; an ssh command git's configuration names
+ * (`core.sshCommand`), which the environment's setting would otherwise replace, is kept with
+ * batch mode added.
+ */
+export function gitEnv(env: NodeJS.ProcessEnv, configured = ""): Record<string, string> {
+  return {
+    GIT_TERMINAL_PROMPT: "0",
+    ...(env.GIT_SSH_COMMAND ? {} : { GIT_SSH_COMMAND: `${configured || "ssh"} -o BatchMode=yes` }),
+  };
+}
+
+/** The least a runner must do for the token's read: the release's runner and the loop's both do. */
+type TokenRunner = (
+  cmd: string[],
+  opts: { cwd: string; quiet?: boolean; timeoutMs?: number },
+) => { status: number; stdout: string; timedOut?: boolean };
+
+/**
+ * The named account's token, read quietly (2026-11-13-004): a token when the command exits 0 with
+ * an output, none otherwise, and whether the command passed its bound. The one place that says
+ * when a token is there, for the release and for the loop's probe; nothing of the command's
+ * output or error leaves this function but the token.
+ */
+export function accountToken(
+  run: TokenRunner,
+  account: string,
+  cwd: string,
+): { token: string | null; timedOut: boolean } {
+  const r = run(["gh", "auth", "token", "-u", account], { cwd, quiet: true, timeoutMs: LOCAL_MS });
+  return {
+    token: r.status === 0 ? r.stdout.trim() || null : null,
+    timedOut: r.timedOut === true,
+  };
+}
+
+/** Where a release that is not a dry run keeps what it is about to write, under the root, until its push or its rollback. */
+export const JOURNAL = "dist/release-in-progress.journal";
+
+/**
+ * A release's journal (2026-11-13-004, D-1): written before step 1 writes anything, so the next new
+ * release can put back what a killed one left. It records no commit: the release's commit is
+ * recognised by its parent, its subject and its paths. It holds no secret.
+ */
+export interface Journal {
+  version: string;
+  tag: string;
+  title: string;
+  /** `HEAD` when the release started. */
+  head: string;
+  pid: number;
+  /** The release's process's start, as the engine reads it: with the pid, the process's identity. */
+  processStart: string;
+  writtenAt: string;
+  /** Each file step 1 writes, with the sha256 of the text it writes. */
+  files: Record<string, string>;
+  /** The bundle's sha256 after the build step. */
+  bundle?: string;
+}
+
+/** The journal under a root: what it holds as parsed, or why there is nothing to read. */
+export function readJournal(root: string): unknown | "absent" | "unparsable" {
+  const path = join(root, JOURNAL);
+  if (!existsSync(path)) return "absent";
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch {
+    return "unparsable";
+  }
+}
+
+/** What a recovery asks of the system about a process: the engine's functions when a field is not given. */
+export interface ProcessDeps {
+  /** Whether a pid is no process any more. */
+  processGone?: (pid: number) => boolean;
+  /** A process's start time, empty when it cannot be read. */
+  processStart?: (pid: number) => string;
+  /** Whether a process leads a process group of its own. */
+  groupLeader?: (pid: number) => boolean;
+}
+
+/** The process group a process is in, by `ps`; empty when it cannot be read. */
+const groupOf = (pid: number): string =>
+  spawnSync("ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim();
+const leadsItsGroup = (pid: number): boolean => groupOf(pid) === String(pid);
+
+/** Removes a file the release left (its journal, its command file, a part-written archive, the lock of a command it killed), whatever sits at its path, and never throws: a removal must not stop a step. */
+function removeLeft(path: string): void {
+  try {
+    rmSync(path, { force: true, recursive: true });
+  } catch {
+    // What could not be removed is read again, and judged again, by the next release.
+  }
+}
+
+/** What a command file says: the command's pid and start, and those of the release that started it. */
+export interface CommandFile {
+  pid: number;
+  start: string;
+  releasePid: number;
+  releaseStart: string;
+}
+
+/**
+ * The command file under a root (2026-11-13-004): its four values, or why there are none. Its
+ * shape is checked before anything is done with it, since a pid from it can reach a signal: four
+ * lines, each id decimal digits alone and above 1 (0, 1 and a negative number never pass), each
+ * start time not empty.
+ */
+export function readCommandFile(root: string): "absent" | "off-shape" | CommandFile {
+  const path = join(root, COMMAND_FILE);
+  if (!existsSync(path)) return "absent";
+  let lines: string[];
+  try {
+    lines = readFileSync(path, "utf8")
+      .replace(/\n$/, "")
+      .split("\n")
+      .map((l) => l.trim());
+  } catch {
+    return "off-shape";
+  }
+  const [pid, start, releasePid, releaseStart] = lines as [string, string, string, string];
+  const id = (text: string) => /^[0-9]{1,10}$/.test(text) && Number(text) > 1;
+  if (lines.length !== 4 || !id(pid) || !id(releasePid) || !start || !releaseStart)
+    return "off-shape";
+  return { pid: Number(pid), start, releasePid: Number(releasePid), releaseStart };
+}
+
+/**
+ * The command a release that is gone left running, by its pid, or null (2026-11-13-004): the
+ * command file has its shape, it names `startedBy` as its release when one is given, and the
+ * command passes the check a kill needs, stricter than the one a stop needs: its process is
+ * alive, its start time read now is present and equal to the file's, and it leads a process group
+ * of its own. Whether the release itself is gone is the caller's question.
+ */
+export function leftCommand(
+  root: string,
+  deps: ProcessDeps = {},
+  startedBy?: number,
+): number | null {
+  const file = readCommandFile(root);
+  if (typeof file === "string") return null;
+  if (startedBy !== undefined && file.releasePid !== startedBy) return null;
+  // Never this process, nor the group it is in: a file that names it is no command a release left.
+  if (file.pid === process.pid || String(file.pid) === groupOf(process.pid)) return null;
+  if ((deps.processGone ?? processGone)(file.pid)) return null;
+  const now = (deps.processStart ?? processStart)(file.pid);
+  if (!now || now !== file.start) return null;
+  return (deps.groupLeader ?? leadsItsGroup)(file.pid) ? file.pid : null;
+}
+
+/** What GitHub holds of a version's release: nothing, one published with its archive, one left unfinished (a draft, no archive, an archive still uploading), or no answer that can be read. */
+type GithubRelease =
+  | { state: "none" | "published" | "unfinished" }
+  | { state: "unknown"; why: string };
 
 /** The capture per stream: spawnSync's own 1 MiB stops a check's output with ENOBUFS (finding 217). */
 const CAPTURE_BYTES = 64 * 1024 * 1024;
@@ -221,7 +422,13 @@ function failureMessage(
  * the status line in front: the file is written only here, for a failed step, and a write that
  * fails is a note on the message, never a thrown error.
  */
-function failedStep(root: string, file: string, r: CommandResult, what: string): string {
+function failedStep(
+  root: string,
+  file: string,
+  r: CommandResult,
+  what: string,
+  afterMs?: number,
+): string {
   const status = statusLine(r);
   const nl = r.stdout && !r.stdout.endsWith("\n") ? "\n" : "";
   let note = "";
@@ -231,7 +438,16 @@ function failedStep(root: string, file: string, r: CommandResult, what: string):
   } catch (error) {
     note = ` (the output file could not be written: ${(error as Error).message})`;
   }
-  return failureMessage(`${r.stdout}\n${r.stderr}`, what, status, file, note);
+  const message = failureMessage(`${r.stdout}\n${r.stderr}`, what, status, file, note);
+  if (afterMs === undefined) return message;
+  // A command killed at its bound says so first; the line it has otherwise follows (2026-11-13-004).
+  const [head, ...body] = message.split("\n") as [string, ...string[]];
+  return [
+    `${what} timed out after ${Math.round(afterMs / 1000)} s`,
+    `  ${head}`,
+    "  processes that left the command's group may still be running",
+    ...body,
+  ].join("\n");
 }
 
 /**
@@ -252,6 +468,19 @@ export interface ReleaseDeps {
   report?: (outcome: ReleaseOutcome) => void;
   /** The engine's records of the release, when the run is a session's (2026-11-01-003). */
   record?: ReleaseRecord;
+  /** The caller's environment, read for its own ssh command; this process's when not given. */
+  env?: NodeJS.ProcessEnv;
+  /** Whether a pid is no process any more, and a process's start time: the engine's when not given. */
+  processGone?: (pid: number) => boolean;
+  processStart?: (pid: number) => string;
+  /** Whether a process leads its own group, by `ps` when not given. */
+  groupLeader?: (pid: number) => boolean;
+  /** Ends a process group: the engine's `killGroup` when not given (asked to end, a second, then killed). */
+  killGroup?: (pid: number) => void;
+  /** How long the release waits for a command it ended to be gone; 10 seconds when not given. */
+  leftRunningWaitMs?: number;
+  /** How long the release waits before it asks origin a second time for a killed push's tag; 5 seconds when not given. */
+  pushSettleMs?: number;
 }
 
 export interface ReleaseOptions {
@@ -282,12 +511,33 @@ export interface ReleaseOutcome {
   failedStep: number | null;
   /** True when the failure came after the push: the release is resumed, never redone. */
   pending: boolean;
+  /**
+   * With `pending`: the commits the caller made for this run are not confirmed to be on origin
+   * (2026-11-13-004). The push's outcome is unknown, or the pending version is an earlier run's;
+   * a caller that keeps a merge for a pending release takes it back.
+   */
+  localUnconfirmed?: boolean;
 }
 
 export const MARKETPLACE_REPO = "WizardingCode-io/wizardingcode-plugins";
 export const MARKETPLACE_FILE = ".claude-plugin/marketplace.json";
 export const PLUGIN_NAME = "wizardingcode-developer-crew";
 const PUSH_STEP = 6;
+const TARBALL_STEP = 7;
+/** How long a release waits for a command it ended to be gone. */
+const LEFT_RUNNING_WAIT_MS = 10_000;
+/** How long a push killed at its bound is given to land before origin is asked a second time. */
+const PUSH_SETTLE_MS = 5_000;
+const pause = (ms: number): void => {
+  if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+/** The git commands of the release that write the index, and so can leave its lock when killed. */
+const INDEX_WRITES = ["add", "commit", "reset", "checkout"];
+/** What a stop on a failed git write says of the lock. */
+const LOCK_ADVICE =
+  "if no git command is running, remove the lock file git names and run the release again";
+/** The last step that needs the account's token (the GitHub release is step 8, the marketplace entry step 9). */
+const MARKETPLACE_STEP = 9;
 /** The thirteen steps by name, for the plan, the log and the loop's report. */
 export const RELEASE_STEP_NAMES = [
   "the version files",
@@ -353,6 +603,258 @@ export function notificationCommand(title: string, body: string): string[] {
 const firstLine = (text: string) => text.trim().split("\n")[0] ?? "";
 
 /**
+ * The command a killed release left running (2026-11-13-004), handled at the start of a new
+ * release and of a resume: true when the release must stop. A file off its shape is removed. A
+ * release that still runs is never touched: this one stops, and the file stays. A command whose
+ * release is gone is ended with its group, waited for, and said; a resume then drops its
+ * version's archive, which that command may have been writing. In `report` mode nothing is
+ * ended or removed.
+ */
+function endLeftCommand(at: {
+  root: string;
+  mode: "apply" | "report";
+  log: (line: string) => void;
+  stopLine: (line: string) => boolean;
+  sameProcess: (pid: number, start: string) => "gone" | "same" | "another";
+  processes: ProcessDeps;
+  kill: (pid: number) => void;
+  waitMs: number;
+  /** The version a resume resumes, when the run is one. */
+  resumed: string | undefined;
+}): boolean {
+  const { root, mode, log } = at;
+  const path = join(root, COMMAND_FILE);
+  const file = readCommandFile(root);
+  if (file === "absent") return false;
+  if (file === "off-shape") {
+    if (mode === "apply") {
+      removeLeft(path);
+      log(`${COMMAND_FILE} is not a release's: removed, nothing killed`);
+    }
+    return false;
+  }
+  if (
+    file.releasePid !== process.pid &&
+    at.sameProcess(file.releasePid, file.releaseStart) === "same"
+  )
+    return at.stopLine(
+      `a release is running (pid ${file.releasePid}): wait for it; if no release is running, delete ${COMMAND_FILE}`,
+    );
+  const left = leftCommand(root, at.processes);
+  if (mode === "report") {
+    if (left !== null) log(`would kill the command a killed release left running (pid ${left})`);
+    return false;
+  }
+  if (left !== null) {
+    const gone = at.processes.processGone ?? processGone;
+    at.kill(left);
+    for (const until = Date.now() + at.waitMs; !gone(left) && Date.now() < until; ) pause(100);
+    if (!gone(left))
+      return at.stopLine(
+        `the command a killed release left running (pid ${left}) did not end: nothing put back; end it and run the release again`,
+      );
+    log(`the command a killed release left running was killed (pid ${left})`);
+    if (at.resumed) removeLeft(join(root, "dist", `${PLUGIN_NAME}-${at.resumed}.tar.gz`));
+  }
+  removeLeft(path);
+  return false;
+}
+
+/** The first field of a journal that is off its shape, or null (2026-11-13-004): no value of a journal reaches git unless it passed this. */
+function journalFault(
+  value: unknown,
+  root: string,
+  git: (...args: string[]) => CommandResult,
+): string | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return "content";
+  const j = value as Record<string, unknown>;
+  const text = (v: unknown): v is string => typeof v === "string" && !v.startsWith("-");
+  if (!text(j.version) || !/^\d+\.\d+\.\d+$/.test(j.version)) return "version";
+  if (j.tag !== `v${j.version}`) return "tag";
+  if (!text(j.title)) return "title";
+  if (!text(j.head) || !/^[0-9a-f]{40}$/.test(j.head)) return "head";
+  if (git("cat-file", "-e", `${j.head}^{commit}`).status !== 0) return "head";
+  if (typeof j.pid !== "number" || !Number.isInteger(j.pid) || j.pid <= 0) return "pid";
+  if (typeof j.processStart !== "string" || j.processStart.startsWith("-")) return "processStart";
+  if (!text(j.writtenAt)) return "writtenAt";
+  if (typeof j.files !== "object" || j.files === null || Array.isArray(j.files)) return "files";
+  const allowed = journalPaths(root);
+  for (const [rel, hash] of Object.entries(j.files))
+    if (!allowed.includes(rel) || rel.split("/").includes("..") || !text(hash)) return "files";
+  if (j.bundle !== undefined && !text(j.bundle)) return "bundle";
+  return null;
+}
+
+/** The commit a tag points at in an `ls-remote --tags` answer: the peeled line of an annotated tag, the tag's own of a lightweight one; null when the answer has neither. */
+function taggedCommit(answer: string, tag: string): string | null {
+  const lines = answer.split("\n").map((l) => l.trim().split(/\s+/));
+  const of = (ref: string) => lines.find((l) => l[1] === ref)?.[0] ?? null;
+  return of(`refs/tags/${tag}^{}`) ?? of(`refs/tags/${tag}`);
+}
+
+/**
+ * The recovery of a release killed before its push (2026-11-13-004, D-1), run by the next new
+ * release before its preconditions: null when the release goes on, or the stop, with what the
+ * caller is told when the stop reports. It puts back only a file whose content is exactly what
+ * the journal says the release wrote, and the bundle; it takes off `main` only a commit git shows
+ * to be the release's (one parent, the journal's head; the journal's title; the journal's paths
+ * alone) by a reset that keeps the working tree; anything it cannot tell stops it with nothing
+ * changed. In `report` mode (a dry run) it reads the same and changes nothing.
+ */
+function recoverKilled(at: {
+  root: string;
+  git: (...args: string[]) => CommandResult;
+  log: (line: string) => void;
+  mode: "apply" | "report";
+  sameProcess: (pid: number, start: string) => "gone" | "same" | "another";
+  /** Says a stop; false in a dry run, where the release goes on to print its plan. */
+  stopLine: (line: string) => boolean;
+}): { report?: ReleaseOutcome } | null {
+  const { root, git, log, mode } = at;
+  const stop = (line: string, report?: ReleaseOutcome) =>
+    at.stopLine(line) ? { ...(report ? { report } : {}) } : null;
+  const read = readJournal(root);
+  if (read === "absent") return null;
+  if (read === "unparsable")
+    return stop(
+      `${JOURNAL} does not parse: nothing put back; read it, and delete it if it is not a release's`,
+    );
+  const fault = journalFault(read, root, git);
+  if (fault) return stop(`${JOURNAL} has no valid ${fault}: nothing put back`);
+  const j = read as Journal;
+  const v = j.version;
+  // Rule 1: the journal's release is running.
+  if (at.sameProcess(j.pid, j.processStart) === "same")
+    return stop(
+      `release ${v} is running (pid ${j.pid}, written ${j.writtenAt}): wait for it; if no release is running, delete ${JOURNAL}`,
+    );
+  // Rule 2: the recovery changes something only on main.
+  const branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.trim();
+  if (branch !== "main")
+    return stop(
+      `a release ${v} was killed before its push: check out main and run the release again; nothing put back on ${branch}`,
+    );
+  const files = Object.keys(j.files);
+  const paths = [...files, BUNDLE];
+  const short = (hash: string) => hash.slice(0, 7);
+  /** 4a: a commit is the release's by what the journal held before the commit existed. */
+  const isReleaseCommit = (commit: string): boolean => {
+    const line = git("rev-list", "--parents", "-n", "1", commit).stdout.trim().split(/\s+/);
+    if (line.length !== 2 || line[1] !== j.head) return false;
+    if (git("log", "-1", "--format=%s", commit).stdout.trim() !== j.title) return false;
+    const changed = git("diff", "--name-only", j.head, commit);
+    return (
+      changed.status === 0 &&
+      changed.stdout
+        .split("\n")
+        .filter(Boolean)
+        .every((rel) => paths.includes(rel))
+    );
+  };
+  // Rule 3: the push went through and the kill came after it: the resume's, not the recovery's.
+  const asked = git("ls-remote", "--tags", "origin", j.tag, `${j.tag}^{}`);
+  if (asked.status !== 0)
+    return stop(`origin could not be asked whether release ${v} was pushed: nothing put back`);
+  if (asked.stdout.includes(`refs/tags/${j.tag}`)) {
+    // The tag counts as the killed release's only by its commit: one of rule 4a's shape.
+    const onOrigin = taggedCommit(asked.stdout, j.tag);
+    if (onOrigin === null || !isReleaseCommit(onOrigin))
+      return stop(
+        `the tag ${j.tag} on origin is not the killed release's commit: nothing put back; delete ${JOURNAL} if that release is another's`,
+      );
+    return stop(
+      `release ${v} is on origin and was not finished: resume it with bun scripts/release.ts --resume ${j.tag} --from-step ${PUSH_STEP + 1}`,
+      { version: v, code: 1, failedStep: PUSH_STEP + 1, pending: true, localUnconfirmed: true },
+    );
+  }
+  // Rule 4: killed before its push.
+  const failed = (what: string, r: CommandResult) =>
+    stop(`the recovery could not ${what}: ${firstLine(r.stderr)}; ${LOCK_ADVICE}`);
+  const head = git("rev-parse", "HEAD").stdout.trim();
+  const atRelease = head !== j.head && isReleaseCommit(head);
+  const elsewhere = head !== j.head && !atRelease;
+  // 4c: HEAD is somebody's, and something of the killed release is still in the tree.
+  const nothingLeft = elsewhere && git("diff", "--quiet", "HEAD", "--", ...paths).status === 0;
+  if (elsewhere && !nothingLeft)
+    return stop(
+      `a release ${v} was killed before its push and HEAD moved since (${short(head)}): nothing put back; put back by hand: git checkout ${j.head} -- ${files.join(" ")}, then delete ${JOURNAL}`,
+    );
+  // A commit origin/main already holds is never taken off, whatever its shape. The ref is this
+  // clone's own, as fresh as its last fetch or push: rule 3's ask of origin above is the live check.
+  if (atRelease && git("merge-base", "--is-ancestor", head, "origin/main").status === 0)
+    return stop(
+      `the commit ${short(head)} has the shape of release ${v}'s and is on origin/main: nothing put back; delete ${JOURNAL} if that release is finished`,
+    );
+  // 4b: the release's own commit comes off main; the working tree is kept and the reflog keeps the commit.
+  if (atRelease) {
+    if (mode === "report") log(`would take the commit ${short(head)} off main`);
+    else {
+      const reset = git("reset", "-q", "--mixed", j.head);
+      if (reset.status !== 0) return failed(`take the commit ${short(head)} off main`, reset);
+      log(`the commit ${short(head)} of release ${v} is off main, kept in the reflog`);
+    }
+  }
+  // 4d: the killed release's tag, when it points at the release's commit.
+  const tagged = git("rev-parse", "-q", "--verify", `refs/tags/${j.tag}^{commit}`);
+  if (mode === "apply" && tagged.status === 0) {
+    const target = tagged.stdout.trim();
+    if (isReleaseCommit(target)) git("tag", "-d", j.tag);
+    else
+      log(`the tag ${j.tag} points at ${short(target)}, not at the killed release's commit: left`);
+  }
+  // 4e: nothing of the killed release is left (the loop's clone after its reset).
+  if (nothingLeft) {
+    if (mode === "report") {
+      log("would remove the journal: nothing of the killed release is left");
+      return null;
+    }
+    removeLeft(join(root, JOURNAL));
+    log(
+      `release ${v} was killed before its push and nothing of it is left: its journal is removed`,
+    );
+    return null;
+  }
+  // 4f: each file the release wrote goes back to its content at the head; one changed since stays.
+  const putBack: string[] = [];
+  const left: string[] = [];
+  const present = (rel: string): string | null =>
+    existsSync(join(root, rel)) ? sha256(readFileSync(join(root, rel))) : null;
+  const differs = (rel: string) => git("diff", "--quiet", j.head, "--", rel).status !== 0;
+  for (const rel of files) {
+    if (present(rel) === j.files[rel]) {
+      if (mode === "apply") {
+        const back = git("checkout", j.head, "--", rel);
+        if (back.status !== 0) return failed(`put ${rel} back`, back);
+      }
+      putBack.push(rel);
+    } else if (differs(rel)) left.push(rel);
+  }
+  // The bundle is the build's output, made again by the build: put back even when rebuilt since.
+  if (differs(BUNDLE)) {
+    const rebuilt = j.bundle !== undefined && present(BUNDLE) !== j.bundle;
+    if (mode === "apply") {
+      const back = git("checkout", j.head, "--", BUNDLE);
+      if (back.status !== 0) return failed(`put ${BUNDLE} back`, back);
+    }
+    putBack.push(`${BUNDLE}${rebuilt ? " (rebuilt since the release's build)" : ""}`);
+  }
+  const list = (rels: string[]) => rels.join(", ") || "none";
+  if (mode === "report") {
+    log(`would put back: ${list(putBack)}`);
+    log(`would leave: ${list(left)}`);
+    return null;
+  }
+  // 4g
+  removeLeft(join(root, JOURNAL));
+  log(
+    `release ${v} was killed before its push (written ${j.writtenAt}): put back: ${list(putBack)}`,
+  );
+  if (left.length)
+    log(`left as they are, changed since the release wrote them: ${left.join(", ")}`);
+  return null;
+}
+
+/**
  * The one release flow (AC-7, AC-15), for a person and for the loop: the preconditions, then twelve
  * steps in order, each stopping the release with nothing after it. A failure before the push puts
  * the tree back where it started (or where `rollbackTo` names) and keeps every branch; a failure
@@ -364,45 +866,181 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   const { log } = deps;
   const home = options.home ?? homedir();
   const account = options.githubAccount ?? "andreagroferreira";
-  const git = (...args: string[]) => deps.run(["git", ...args], { cwd: root });
+  const commandFile = join(root, COMMAND_FILE);
+  const journalFile = join(root, JOURNAL);
+  const startOf = deps.processStart ?? processStart;
+  /** The bound each result of the helpers was given: a result from elsewhere (the fleet's two calls) has none, and words its own failure. */
+  const bounds = new WeakMap<CommandResult, number>();
+  /** The command the helpers ran last and its result: a failed step reads it for the lock a killed index write left. */
+  const ran: { last: { cmd: readonly string[]; result: CommandResult } | null } = { last: null };
+  const bounded = (
+    cmd: string[],
+    opts: { env?: Record<string, string>; input?: string; quiet?: boolean },
+  ): CommandResult => {
+    const boundMs = boundOf(cmd);
+    // A dry run writes nothing, a command file included: its commands are the preconditions' reads.
+    const result = deps.run(cmd, {
+      cwd: root,
+      ...opts,
+      timeoutMs: boundMs,
+      ...(options.dryRun ? {} : { commandFile }),
+    });
+    ran.last = { cmd, result };
+    bounds.set(result, boundMs);
+    return result;
+  };
+  /** The environment of the release's git commands, read once: git's configured ssh command is asked first. */
+  let noTerminal: Record<string, string> | null = null;
+  const git = (...args: string[]): CommandResult => {
+    if (noTerminal === null) {
+      const env = deps.env ?? process.env;
+      const configured = env.GIT_SSH_COMMAND
+        ? ""
+        : bounded(["git", "config", "--get", "core.sshCommand"], {
+            env: { GIT_TERMINAL_PROMPT: "0" },
+          }).stdout.trim();
+      noTerminal = gitEnv(env, configured);
+    }
+    return bounded(["git", ...args], { env: noTerminal });
+  };
   const sh = (cmd: string[], env?: Record<string, string>, input?: string, quiet?: boolean) =>
-    deps.run(cmd, { cwd: root, env, input, quiet });
+    bounded(cmd, { env, input, quiet });
+  const seconds = (ms: number) => Math.round(ms / 1000);
   const fail = (message: string): number => {
     log(message);
     return 1;
   };
 
+  if (!options.resume && !options.bump)
+    return fail("a release names --patch, --minor, --major, --version <v> or --resume <v>");
+  if (!options.resume && options.pending)
+    return fail(
+      `release ${options.pending.version} is pending at step ${options.pending.failedStep}: resume it first (bun scripts/release.ts --resume v${options.pending.version} --from-step ${options.pending.failedStep})`,
+    );
+  const goneNow = deps.processGone ?? processGone;
+  /** Tells the caller what the release did, and answers its exit code. */
+  const report = (o: ReleaseOutcome): number => {
+    deps.report?.(o);
+    return o.code;
+  };
+  /**
+   * Whether a recorded process is still that process, by the rule a stop needs (the engine's for a
+   * session's pid): gone; the same when its start time is the recorded one or either cannot be
+   * read; another process otherwise.
+   */
+  const sameProcess = (pid: number, start: string): "gone" | "same" | "another" => {
+    if (goneNow(pid)) return "gone";
+    const now = startOf(pid);
+    return !now || !start || now === start ? "same" : "another";
+  };
+  const mode = options.dryRun ? "report" : "apply";
+  /**
+   * A notification under a title: `crew release` for a stop before the version is known, the
+   * version's once it is. Sent with its bound and no command file: a notification is no command of the release's work,
+   * and through the file it would replace, then remove, the record of a release that is running
+   * when this one only stops beside it.
+   */
+  const notifyAs = (title: string, body: string): CommandResult => {
+    const result = deps.run(notificationCommand(title, body), { cwd: root, timeoutMs: LOCAL_MS });
+    bounds.set(result, LOCAL_MS);
+    return result;
+  };
+  /**
+   * A stop before step 1: said and notified, since under launchd the log is otherwise the only
+   * place it is said; in a dry run said as what the next new release would do, and not a stop.
+   */
+  const stopLine = (line: string): boolean => {
+    if (mode === "report") {
+      log(`the next new release would stop: ${line}`);
+      return false;
+    }
+    log(line);
+    notifyAs("crew release", line);
+    return true;
+  };
+  // A resume starts at a step after the push: anything else would run the steps before it again.
+  if (
+    options.resume &&
+    options.fromStep !== undefined &&
+    !(
+      Number.isInteger(options.fromStep) &&
+      options.fromStep > PUSH_STEP &&
+      options.fromStep <= RELEASE_STEP_NAMES.length
+    )
+  )
+    return fail(
+      `--from-step names a step from ${PUSH_STEP + 1} to ${RELEASE_STEP_NAMES.length}, not ${options.fromStep}`,
+    );
+  // A resume's version names files under dist/: only the version form passes.
+  if (options.resume && !/^\d+\.\d+\.\d+$/.test(options.resume))
+    return fail(`--resume names a version as X.Y.Z, not ${options.resume}`);
+
+  // The command a killed release left running (2026-11-13-004): read before anything else, by a
+  // new release and by a resume, so nothing of a killed run writes while this one works.
+  if (
+    endLeftCommand({
+      root,
+      mode,
+      log,
+      stopLine,
+      sameProcess,
+      processes: { processGone: goneNow, processStart: startOf, groupLeader: deps.groupLeader },
+      kill: deps.killGroup ?? killGroup,
+      waitMs: deps.leftRunningWaitMs ?? LEFT_RUNNING_WAIT_MS,
+      resumed: options.resume,
+    })
+  )
+    return 1;
+
+  // The recovery of a release killed before its push (2026-11-13-004, D-1): by a new release
+  // alone, from the journal, taking from it only what git confirms.
+  if (!options.resume) {
+    const recovered = recoverKilled({ root, git, log, mode, sameProcess, stopLine });
+    if (recovered) {
+      if (recovered.report) deps.report?.(recovered.report);
+      return 1;
+    }
+  }
+
   // The version: a bump from the current one, or the one resumed.
   let version: string;
+  let current = "";
   let startHead = "";
   if (options.resume) {
     version = options.resume;
     const tags = git("ls-remote", "--tags", "origin", `v${version}`);
     if (tags.status !== 0 || !tags.stdout.includes(`refs/tags/v${version}`))
       return fail(`v${version} is not on origin; nothing to resume`);
+    // Origin has the tag, so a journal of this version has nothing left to put back; one of
+    // another version is another release's, and is left.
+    const left = readJournal(root);
+    if (
+      mode === "apply" &&
+      typeof left === "object" &&
+      left !== null &&
+      (left as Journal).version === version
+    )
+      removeLeft(journalFile);
   } else {
-    if (!options.bump)
-      return fail("a release names --patch, --minor, --major, --version <v> or --resume <v>");
-    if (options.pending)
-      return fail(
-        `release ${options.pending.version} is pending at step ${options.pending.failedStep}: resume it first (bun scripts/release.ts --resume v${options.pending.version} --from-step ${options.pending.failedStep})`,
-      );
     const branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.trim();
     if (branch !== "main") return fail(`the release runs on main, not ${branch}`);
     const status = git("status", "--porcelain").stdout;
     if (status.trim() !== "")
       return fail(
-        `the tree has uncommitted changes (${firstLine(status).slice(3).trim()}): commit or stash them first`,
+        // A porcelain line is two status columns, a space and the path: read from the line as git printed it.
+        `the tree has uncommitted changes (${(status.split("\n")[0] ?? "").slice(3).trim()}): commit or stash them first`,
       );
     const fetched = git("fetch", "-q", "origin", "main");
-    if (fetched.status !== 0) return fail(`origin is not reachable: ${firstLine(fetched.stderr)}`);
+    if (fetched.status !== 0)
+      return fail(
+        `origin is not reachable: ${fetched.timedOut ? `timed out after ${seconds(REMOTE_OR_BUILD_MS)} s` : firstLine(fetched.stderr)}`,
+      );
     const behind = git("rev-list", "--count", "HEAD..origin/main").stdout.trim();
     if (behind !== "0") return fail(`origin/main is ahead by ${behind} commit(s): pull first`);
-    const current = (
-      JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }
-    ).version;
+    current = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string })
+      .version;
     try {
-      version = nextVersion(current, options.bump);
+      version = nextVersion(current, options.bump as Bump);
     } catch (error) {
       return fail((error as Error).message);
     }
@@ -415,15 +1053,54 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   const title = `Release ${version}: ${reason}`;
   const install = join(home, ".local", "share", PLUGIN_NAME);
   let written: string[] = [];
+  let plan: PlannedFile[] = [];
+  let journal: Journal | null = null;
   let token: string | null = null;
   /** The named account's token, for every GitHub step: never the account active in gh. */
+  const readToken = () =>
+    accountToken((cmd, opts) => sh(cmd, undefined, undefined, opts.quiet), account, root);
   const githubToken = (): string | null => {
-    if (token !== null) return token;
-    const r = sh(["gh", "auth", "token", "-u", account], undefined, undefined, true);
-    token = r.status === 0 ? r.stdout.trim() || null : null;
+    token ??= readToken().token;
     return token;
   };
   const noTokenMessage = `gh auth token -u ${account} gave no token`;
+  let onGithub: GithubRelease | null = null;
+  /**
+   * What GitHub holds of this version's release: nothing, one published with the archive, one left
+   * unfinished, or no answer that can be read, with why. "Nothing" is gh's own `release not found`
+   * (gh 2.87.3, read here on 2026-11-13, exit 1); a gh that worded it otherwise would make step 8
+   * fail as unread, never delete or create.
+   */
+  const githubRelease = (): GithubRelease => {
+    const t = githubToken();
+    if (t === null) return { state: "none" };
+    const viewed = sh(["gh", "release", "view", tag, "--json", "isDraft,assets"], { GH_TOKEN: t });
+    // gh says a release that does not exist in these words; any other failure (the network, a
+    // bound) is no answer, and is never read as "none".
+    if (viewed.status !== 0)
+      return /release not found/i.test(viewed.stderr)
+        ? { state: "none" }
+        : {
+            state: "unknown",
+            why: viewed.timedOut
+              ? `timed out after ${seconds(REMOTE_OR_BUILD_MS)} s`
+              : firstLine(viewed.stderr),
+          };
+    let got: { isDraft?: unknown; assets?: unknown };
+    try {
+      got = JSON.parse(viewed.stdout) as typeof got;
+    } catch {
+      return { state: "unknown", why: "its answer does not parse" };
+    }
+    if (typeof got.isDraft !== "boolean" || !Array.isArray(got.assets))
+      return { state: "unknown", why: "its answer has no isDraft or no assets" };
+    const name = archive.split("/").at(-1);
+    // An asset still being uploaded is listed with another state: only an uploaded one counts.
+    const uploaded = (got.assets as { name?: unknown; state?: unknown }[]).some(
+      (a) => a.name === name && (a.state === undefined || a.state === "uploaded"),
+    );
+    return { state: !got.isDraft && uploaded ? "published" : "unfinished" };
+  };
   /** The marketplace file fetched with the token: the command's result, or the no-token text. */
   const fetchMarketplace = (): CommandResult | string => {
     const t = githubToken();
@@ -456,20 +1133,15 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   const ours = (data: Marketplace) =>
     data.plugins.filter((p) => p.name === PLUGIN_NAME || p.name.startsWith("wizardingcode-pack-"));
   let marketplace: { sha: string; data: Marketplace } | null = null;
-  const outcome = (code: number, failedStep: number | null): number => {
-    deps.report?.({
-      version,
-      code,
-      failedStep,
-      pending: failedStep !== null && failedStep > PUSH_STEP,
-    });
-    return code;
-  };
+  const outcome = (code: number, failedStep: number | null): number =>
+    report({ version, code, failedStep, pending: failedStep !== null && failedStep > PUSH_STEP });
   /** The step's output file, relative to the root, named by the version and the step (AC-40). */
   const stepOutputPath = (step: number) => join("dist", `release-${version}-step-${step}.log`);
   /** Null when the command succeeded; otherwise the failed step's message, its output kept (AC-40). */
   const ok = (r: CommandResult, what: string, step: number): string | null =>
-    r.status === 0 ? null : failedStep(root, stepOutputPath(step), r, what);
+    r.status === 0
+      ? null
+      : failedStep(root, stepOutputPath(step), r, what, r.timedOut ? bounds.get(r) : undefined);
   /**
    * What step 1 wrote and step 2 built, by hash, so step 5 commits that and nothing else (AC-43):
    * a change to one of these files between the write and the commit would land inside the
@@ -497,7 +1169,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       return false;
     }
   };
-  const notify = (body: string) => sh(notificationCommand(`crew ${version}`, body));
+  const notify = (body: string) => notifyAs(`crew ${version}`, body);
 
   // What step 12 did, for the notification: its count line, or why it did not update.
   let projectCounts = "not run";
@@ -507,10 +1179,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       name: RELEASE_STEP_NAMES[0],
       command: `write ${version} into ${releaseFiles(root).length} release files, the two test literals and the packs' core bound`,
       run: () => {
-        const current = (
-          JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }
-        ).version;
-        written = bumpVersion(root, current, version);
+        written = writePlan(root, plan);
         for (const rel of written) hashes.set(rel, hashOf(rel));
         const stale = staleReleaseFiles(root, version);
         return stale.length ? `still at another version: ${stale.join(", ")}` : null;
@@ -523,7 +1192,12 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       run: () => {
         const built = ok(sh(["bun", "run", "build"]), "the build", 2);
         if (built) return built;
-        hashes.set(BUNDLE, hashOf(BUNDLE));
+        const bundleHash = hashOf(BUNDLE);
+        hashes.set(BUNDLE, bundleHash);
+        if (journal && bundleHash !== null) {
+          journal.bundle = bundleHash;
+          writeJson(journalFile, journal);
+        }
         return null;
       },
     },
@@ -572,13 +1246,31 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       n: 8,
       name: RELEASE_STEP_NAMES[7],
       command: `gh release create ${tag} ${archive} --verify-tag --title ${version} --notes-file ${notesFile} with GH_TOKEN from gh auth token -u ${account}`,
+      // Done only when GitHub shows the release published with the version's archive: a create
+      // killed at its bound can leave a draft, or a release with no archive (2026-11-13-004).
       done: () => {
-        const t = githubToken();
-        return t !== null && sh(["gh", "release", "view", tag], { GH_TOKEN: t }).status === 0;
+        onGithub = githubRelease();
+        return onGithub.state === "published";
       },
       run: () => {
         const t = githubToken();
         if (t === null) return noTokenMessage;
+        // What `done` just read, so GitHub is asked once.
+        const held = onGithub ?? githubRelease();
+        // An answer that could not be read is a failed step: nothing is deleted or created on it.
+        if (held.state === "unknown")
+          return `the GitHub release of ${tag} could not be read: ${held.why}`;
+        if (held.state === "unfinished") {
+          const removed = ok(
+            sh(["gh", "release", "delete", tag, "--yes"], { GH_TOKEN: t }),
+            "gh release delete",
+            8,
+          );
+          if (removed) return removed;
+          log(
+            `  the GitHub release of ${tag} was left unfinished: deleted and created again, with this run's notes`,
+          );
+        }
         mkdirSync(join(root, "dist"), { recursive: true });
         writeFileSync(
           join(root, notesFile),
@@ -760,6 +1452,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         const dry = deps.run(["node", bundle, "projects", "update", "--dry-run"], {
           cwd: root,
           timeoutMs: PROJECT_DRY_RUN_TIMEOUT_MS,
+          commandFile,
           env: { HOME: home },
         });
         const dryLines = dry.stdout.split("\n");
@@ -773,6 +1466,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         const r = deps.run(["node", bundle, "projects", "update"], {
           cwd: root,
           timeoutMs: Math.max(1, PROJECT_UPDATE_TIMEOUT_MS - (Date.now() - began)),
+          commandFile,
           env: { HOME: home },
         });
         const count = r.stdout.split("\n").find(isCount);
@@ -829,6 +1523,42 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     return 0;
   }
   const from = options.resume ? (options.fromStep ?? PUSH_STEP + 1) : 1;
+  // The token before step 1 (2026-11-13-004, finding 212): a run that still has step 8 or 9 ahead
+  // reads it now, so a release with none writes and pushes nothing. A resume refused here reports
+  // the step it would resume from, so its caller keeps the release pending there.
+  if (from <= MARKETPLACE_STEP) {
+    const read = readToken();
+    token = read.token;
+    if (token === null) {
+      const cause = read.timedOut ? `timed out after ${seconds(LOCAL_MS)} s` : "gave no token";
+      const line = `gh auth token -u ${account} ${cause}: ${options.resume ? "nothing resumed" : "nothing written, nothing pushed by this release"}; log in to that account with gh auth login`;
+      log(line);
+      notify(line);
+      return outcome(1, options.resume ? from : null);
+    }
+  }
+  // The journal before step 1 writes anything (2026-11-13-004, D-1): the whole of it or none.
+  if (!options.resume) {
+    plan = plannedBump(root, current, version);
+    journal = {
+      version,
+      tag,
+      title,
+      head: startHead,
+      pid: process.pid,
+      processStart: startOf(process.pid),
+      writtenAt: nowIso(),
+      files: Object.fromEntries(plan.map((f) => [f.rel, sha256(f.text)])),
+    };
+    try {
+      writeJson(journalFile, journal);
+    } catch (error) {
+      const line = `the release's journal could not be written (${(error as Error).message}): nothing written`;
+      log(line);
+      notify(line);
+      return outcome(1, null);
+    }
+  }
   log(options.resume ? `resuming release ${version} from step ${from}` : title);
   // The engine's start record (2026-11-01-003): a session's run, never a resume (its commit is
   // pushed already); the end is recorded only when this one did.
@@ -849,7 +1579,10 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       log(`  ${step.n}. ${step.name}: ok`);
       // The engine's end record (2026-11-01-003), right after the push went through: the pushed
       // commit becomes the session's baseline; a refusal is logged and the release goes on.
-      if (step.n === PUSH_STEP && recorded) record("done");
+      if (step.n === PUSH_STEP) {
+        removeLeft(journalFile);
+        if (recorded) record("done");
+      }
       continue;
     }
     // A failed step's message is several lines (AC-40): the first names the cause, the file and the
@@ -860,6 +1593,53 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       for (const line of body) log(line);
       continue;
     }
+    // The lock a timed-out index write of the release left (2026-11-13-004): its group is killed,
+    // so the lock is its leftover and is removed. No other lock is ever removed here: a fetch, a
+    // push or a failed command takes none, and one found then is somebody else's.
+    const failedCommand = ran.last;
+    if (
+      failedCommand?.result.timedOut &&
+      failedCommand.cmd[0] === "git" &&
+      INDEX_WRITES.includes(failedCommand.cmd[1] as string)
+    ) {
+      const lock = git("rev-parse", "--git-path", "index.lock").stdout.trim();
+      if (lock) removeLeft(resolve(root, lock));
+    }
+    if (step.n === PUSH_STEP && !options.resume) {
+      // A push that failed or was killed has an outcome nobody knows: origin is asked before
+      // anything is reset (2026-11-13-004).
+      // The tag counts as this release's only when its commit is the release's own. A push killed
+      // at its bound may still land a moment later: an "absent" after such a kill is asked again.
+      const own = git("rev-parse", `${tag}^{commit}`).stdout.trim();
+      // Both names are asked: the tag's own, and the peeled one that carries an annotated tag's commit.
+      const ask = () => git("ls-remote", "--tags", "origin", tag, `${tag}^{}`);
+      const landed = (r: CommandResult) => own !== "" && taggedCommit(r.stdout, tag) === own;
+      let asked = ask();
+      if (asked.status === 0 && !landed(asked) && failedCommand?.result.timedOut) {
+        pause(deps.pushSettleMs ?? PUSH_SETTLE_MS);
+        asked = ask();
+      }
+      if (asked.status !== 0) {
+        const message = `step ${step.n} (${step.name}) failed: the push's outcome is unknown: origin could not be asked; nothing was reset; run bun scripts/release.ts --resume ${tag} when origin answers: it goes on if the tag is there; if it says there is nothing to resume, the next new release puts the tree back`;
+        log(message);
+        notify(message);
+        return report({
+          version,
+          code: 1,
+          failedStep: PUSH_STEP + 1,
+          pending: true,
+          localUnconfirmed: true,
+        });
+      }
+      if (landed(asked)) {
+        log(`  ${step.n}. ${step.name}: ok (found on origin after the push command failed)`);
+        removeLeft(journalFile);
+        if (recorded) record("done");
+        continue;
+      }
+    }
+    // A part-written archive is never published: the resume builds it again.
+    if (step.n === TARBALL_STEP) removeLeft(join(root, archive));
     if (step.n <= PUSH_STEP && !options.resume) {
       // Before the push: the tree back where it started (or before the loop's merge), the tag gone,
       // every branch kept, nothing of the release left.
@@ -873,9 +1653,26 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         .stdout.split("\n")
         .filter((l) => l.length > 3 && !l.startsWith("??"))
         .map((l) => l.slice(3).trim())
-        .filter((rel) => rel !== BUNDLE && (!hashes.has(rel) || hashOf(rel) !== hashes.get(rel)));
-      git("reset", "-q", "--hard", back);
+        .filter((rel) =>
+          // The bundle is the build's own output: named only when it was rebuilt after the build
+          // step recorded it (2026-11-13-004, finding 221).
+          rel === BUNDLE
+            ? hashes.has(BUNDLE) && hashOf(BUNDLE) !== hashes.get(BUNDLE)
+            : !hashes.has(rel) || hashOf(rel) !== hashes.get(rel),
+        );
+      const reset = git("reset", "-q", "--hard", back);
+      if (reset.status !== 0) {
+        // A rollback that could not reset changes nothing further and keeps the journal, so the
+        // next new release puts the tree back; it never says the tree is back.
+        const stuck = `the rollback could not put the tree back: ${firstLine(reset.stderr)}; ${LOCK_ADVICE}`;
+        log(`step ${step.n} (${step.name}) failed: ${head}`);
+        for (const line of body) log(line);
+        log(stuck);
+        notify(stuck);
+        return outcome(1, step.n);
+      }
       git("tag", "-d", tag);
+      removeLeft(journalFile);
       const message = `step ${step.n} (${step.name}) failed: ${head}; the tree is back at ${back.slice(0, 7)}, nothing released`;
       log(message);
       for (const line of body) log(line);
@@ -926,18 +1723,63 @@ export function parseReleaseArgs(argv: readonly string[]): ReleaseOptions | stri
   return options;
 }
 
-/** A runner through spawnSync: every command with the environment given on top of this process's; `print` shows a command's output as it comes, unless it is a secret's. */
+/** A command's three streams: its input when one is given, nothing when it is bounded (no terminal to ask), this process's otherwise. */
+export function stdioFor(
+  opts: Parameters<CommandRunner>[1],
+): ["pipe" | "ignore" | "inherit", "pipe", "pipe"] {
+  if (opts.input !== undefined) return ["pipe", "pipe", "pipe"];
+  return [opts.timeoutMs ? "ignore" : "inherit", "pipe", "pipe"];
+}
+
+/**
+ * What starts a bounded command that has a command file (2026-11-13-004): it writes four lines
+ * (its own pid and start time, then its starter's, handed to it), beside the file and renamed, and
+ * becomes the command, so the first pid is the command's and its group's. The script is this fixed
+ * text; the file, the two values and the command's words are its arguments, never part of it.
+ */
+const WRAPPER =
+  'f="$0"; r="$1"; s="$2"; shift 2; printf "%s\\n%s\\n%s\\n%s\\n" "$$" "$(LC_ALL=C TZ=UTC ps -o lstart= -p $$)" "$r" "$s" > "$f.$$" && mv -f "$f.$$" "$f"; exec "$@"';
+
+/**
+ * A runner through spawnSync: every command with the environment given on top of this process's;
+ * `print` shows a command's output as it comes, unless it is a secret's. A command given a bound
+ * leads a process group of its own, which is killed whole when it passes the bound (D-2), and
+ * reads no terminal; one given none runs as it always did.
+ */
 export function spawnRunner(print: boolean): CommandRunner {
+  let ownStart: string | null = null;
   return (cmd, opts) => {
-    const r = spawnSync(cmd[0] as string, cmd.slice(1), {
+    const file = opts.timeoutMs ? opts.commandFile : undefined;
+    let argv = [...cmd];
+    if (file) {
+      try {
+        mkdirSync(dirname(file), { recursive: true });
+      } catch {
+        // The wrapper's write fails too, and the command runs all the same.
+      }
+      ownStart ??= processStart(process.pid);
+      argv = ["sh", "-c", WRAPPER, file, String(process.pid), ownStart, ...cmd];
+    }
+    const r = spawnSync(argv[0] as string, argv.slice(1), {
       cwd: opts.cwd,
       env: { ...process.env, ...opts.env },
       input: opts.input,
       encoding: "utf8",
-      stdio: opts.input === undefined ? ["inherit", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+      stdio: stdioFor(opts),
       maxBuffer: CAPTURE_BYTES,
-      ...(opts.timeoutMs ? { timeout: opts.timeoutMs } : {}),
+      // SIGKILL at the bound: a leader that ignores a request to end would keep spawnSync waiting.
+      ...(opts.timeoutMs
+        ? { timeout: opts.timeoutMs, killSignal: "SIGKILL" as const, detached: true }
+        : {}),
     });
+    const timedOut = (r.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
+    if (timedOut && r.pid)
+      try {
+        process.kill(-r.pid, "SIGKILL");
+      } catch {
+        // the group is gone already
+      }
+    if (file) for (const left of [file, `${file}.${r.pid}`]) removeLeft(left);
     if (print && r.stdout && !opts.quiet) process.stdout.write(r.stdout);
     return {
       status: r.status ?? 1,
@@ -946,6 +1788,7 @@ export function spawnRunner(print: boolean): CommandRunner {
       stderr: r.stderr ?? "",
       ...(r.signal ? { signal: r.signal } : {}),
       ...(r.error ? { error: r.error.message } : {}),
+      ...(timedOut ? { timedOut: true } : {}),
     };
   };
 }
