@@ -2345,7 +2345,7 @@ test("SP2c AC-9: crew await <id> role and mail record the wait and the message; 
   });
   expect((await c.run("status")).out).toContain("waiting for the roles");
   expect((await c.run("await", id, "mail")).err.trim()).toBe(
-    "usage: crew await <id> user | role | mail <message id>",
+    "usage: crew await <id> user | role [--here [--seconds <1 to 590, 540 when not given>]] | mail <message id>",
   );
   expect((await c.json("await", id, "mail", "M-2026-10-15-001-crm")).data).toMatchObject({
     awaiting: "mail",
@@ -2360,7 +2360,7 @@ test("SP2c AC-9: crew await <id> role and mail record the wait and the message; 
     awaitingMessage: null,
   });
   expect((await c.run("await", id, "judge")).err.trim()).toBe(
-    "usage: crew await <id> user | role | mail <message id>",
+    "usage: crew await <id> user | role [--here [--seconds <1 to 590, 540 when not given>]] | mail <message id>",
   );
 });
 
@@ -3654,6 +3654,32 @@ test("SP7b AC-4: crew start --origin, await and resume move the origin message a
   expect((await cb.run("resume", id)).code).toBe(0);
   expect(inboxStatus()).toBe("in-progress");
   expect(outboxStatus()).toBe("in-progress");
+}, 30_000);
+
+test("2026-11-13-003 AC-17 (finding 183): crew await <id> role --here moves no origin mail, where the plain wait moves it to blocked", async () => {
+  const { env, a, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const mid = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "change-request", "Add the field")).out,
+  )?.[1] as string;
+  const pa = repoPaths(a, env);
+  const statuses = () => [
+    readBox(crmInboxDir(env), "inbox").box.messages.find((m) => m.id === mid)?.status,
+    readBox(mailbox(pa.userDir, "w", "storefront").dir, "outbox").box.messages.find(
+      (m) => m.id === mid,
+    )?.status,
+  ];
+  const id = (await cb.json("start", "Add the field", "--answers", answers, "--origin", mid)).data
+    .id as string;
+  expect(statuses()).toEqual(["in-progress", "in-progress"]);
+  const here = await cb.run("await", id, "role", "--here", "--seconds", "1");
+  expect(here.code, here.err).toBe(0);
+  expect(statuses()).toEqual(["in-progress", "in-progress"]);
+  expect((await cb.json("status")).data.awaiting).toBeNull();
+  // The wait that ends a turn is the one that blocks the origin.
+  expect((await cb.run("await", id, "role")).code).toBe(0);
+  expect(statuses()).toEqual(["blocked", "blocked"]);
 }, 30_000);
 
 test("SP7b AC-5: an item's priority comes from --priority, else from its origin's confirmed priority, else normal; status prints it", async () => {

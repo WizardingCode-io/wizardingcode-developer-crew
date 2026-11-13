@@ -88,7 +88,7 @@ async function item(route: "standard" | "full" | "fast" = "standard") {
     );
   const roles = (): RoleRecord[] => loadEvidence(paths, id).evidence.roles ?? [];
   const logFile = join(root, ".crew", "local", "witness", "log.json");
-  const log = (): { agentId: string; agent: string; at: string }[] =>
+  const log = (): { agentId: string; agent: string; at: string; sessionId?: string }[] =>
     existsSync(logFile) ? JSON.parse(readFileSync(logFile, "utf8")).entries : [];
   const validate = (lead: string, file: string, what = "spec") =>
     run([
@@ -125,7 +125,9 @@ test("2026-11-12-007 AC-6 (finding 243): crew hook agent-spawn appends the crew 
   const done = await t.spawned("lead-1");
   expect(done.code).toBe(0);
   expect(done.out.trim()).toBe("{}");
-  expect(t.log()).toEqual([{ agentId: "lead-1", agent: "tech-lead", at: expect.any(String) }]);
+  expect(t.log()).toEqual([
+    { agentId: "lead-1", agent: "tech-lead", at: expect.any(String), sessionId: "s" },
+  ]);
   // A subagent that is no crew role, and a payload with no agent id, leave nothing.
   await t.run(
     ["hook", "agent-spawn"],
@@ -361,7 +363,7 @@ test("2026-11-12-007 AC-22: a witness log that cannot be read, does not parse or
     // The next spawn starts the log again: its own entry, nothing of the damaged file.
     await t.spawned("lead-2");
     expect(t.log(), state).toEqual([
-      { agentId: "lead-2", agent: "tech-lead", at: expect.any(String) },
+      { agentId: "lead-2", agent: "tech-lead", at: expect.any(String), sessionId: "s" },
     ]);
     await t.stopped(
       "lead-2",

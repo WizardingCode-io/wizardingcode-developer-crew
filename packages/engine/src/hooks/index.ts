@@ -57,7 +57,14 @@ export function handleHook(
       case "agent-spawn": {
         // The runtime's witness of a crew role's spawn (finding 243); any other subagent leaves nothing.
         const role = roleOf(payload.agent_type);
-        if (role && payload.agent_id) recordSpawn(ctx.paths, payload.agent_id, role);
+        // The session as the payload names it, never the context's stand-in for none (finding 183).
+        if (role && payload.agent_id)
+          recordSpawn(
+            ctx.paths,
+            payload.agent_id,
+            role,
+            typeof payload.session_id === "string" ? payload.session_id : undefined,
+          );
         return {};
       }
       case "session-end":

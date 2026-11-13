@@ -14233,7 +14233,7 @@ function isEntry(value) {
   if (typeof value !== "object" || value === null)
     return false;
   const entry = value;
-  return typeof entry.agentId === "string" && typeof entry.agent === "string" && typeof entry.at === "string";
+  return typeof entry.agentId === "string" && typeof entry.agent === "string" && typeof entry.at === "string" && (entry.sessionId === undefined || typeof entry.sessionId === "string");
 }
 function readEntries(paths) {
   const read = readProtectedJson(paths, logFile(paths));
@@ -14244,12 +14244,18 @@ function readEntries(paths) {
   const entries = read.data.entries;
   return Array.isArray(entries) && entries.every(isEntry) ? entries : null;
 }
-function recordSpawn(paths, agentId, agent) {
+function recordSpawn(paths, agentId, agent, sessionId) {
   withLock(witnessDir(paths), () => {
     const kept = readEntries(paths);
     if (kept === null)
       rmSync7(logFile(paths), { force: true });
-    const entries = [...kept ?? [], { agentId, agent, at: nowIso() }];
+    const entry = {
+      agentId,
+      agent,
+      at: nowIso(),
+      ...sessionId ? { sessionId } : {}
+    };
+    const entries = [...kept ?? [], entry];
     writeProtectedJson(paths, logFile(paths), { entries: entries.slice(-WITNESS_LOG_MAX) });
   }, LOCK);
 }
@@ -14268,6 +14274,29 @@ function spendWitness(paths, agentId, agent) {
   } catch {
     return false;
   }
+}
+function entriesOut(paths, sessionId, roles) {
+  let entries;
+  try {
+    entries = readEntries(paths);
+  } catch {
+    return null;
+  }
+  if (entries === null)
+    return null;
+  return entries.filter((e) => (sessionId === null || e.sessionId === sessionId) && !roles.some((r) => r.agentId === e.agentId && r.at >= e.at));
+}
+function countRoles(entries) {
+  const counted = new Map;
+  for (const entry of entries)
+    counted.set(entry.agent, (counted.get(entry.agent) ?? 0) + 1);
+  return [...counted].map(([agent, count]) => ({ agent, count }));
+}
+function rolesOut(paths, sessionId, roles) {
+  return countRoles(entriesOut(paths, sessionId, roles) ?? []);
+}
+function rolesOutText(out) {
+  return out.map((r) => r.count > 1 ? `${r.agent} (${r.count})` : r.agent).join(", ");
 }
 function isTechLead(record) {
   return record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
@@ -16978,7 +17007,8 @@ var BOOLEAN_FLAGS = new Set([
   "churn",
   "all",
   "remove",
-  "dry-run"
+  "dry-run",
+  "here"
 ]);
 function commaList(value) {
   if (typeof value !== "string")
@@ -21435,6 +21465,11 @@ function onStop(ctx, payload = {}) {
       return hold(`Crew: blocker ${blocker.id} from ${blocker.from.project}: ${subjectQuoted(blocker.subject)}. Read it (crew mail read ${blocker.id}) and say it to the user before anything else.`);
     }
   }
+  if (work && work.awaiting === "role" && !active?.tampered && session.stopBlocks < MAX_STOP_BLOCKS && unwatched(ctx.headless, payload.permission_mode) !== null) {
+    const out = rolesOut(ctx.paths, ctx.sessionId, loadEvidence(ctx.paths, work.id).evidence.roles ?? []);
+    if (out.length)
+      return hold(`Crew: nobody watches this session, and the roles it launched have not all answered: ${rolesOutText(out)}. A role wait does not end the turn here. Wait for them inside this turn with crew await ${work.id} role --here, then read their answers and go on.`);
+  }
   const current = computeFingerprint(ctx.paths.root, ctx.profile, work);
   const result = work ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered) : null;
   const proven = result?.verdict === "proven";
@@ -21523,7 +21558,7 @@ function handleHook(event, payload, env = process.env) {
       case "agent-spawn": {
         const role = roleOf(payload.agent_type);
         if (role && payload.agent_id)
-          recordSpawn(ctx.paths, payload.agent_id, role);
+          recordSpawn(ctx.paths, payload.agent_id, role, typeof payload.session_id === "string" ? payload.session_id : undefined);
         return {};
       }
       case "session-end":
@@ -23174,7 +23209,7 @@ var KNOWN_FLAGS = {
   objection: ["by", "severity", "criterion", "reason", "mode"],
   approve: ["mode", "validator"],
   phase: [],
-  await: [],
+  await: ["here", "seconds"],
   resume: ["mode"],
   tdd: ["reason"],
   gate: ["only"],
@@ -24039,16 +24074,73 @@ function withNotes(text, notes) {
 ${notes.join(`
 `)}` : text;
 }
-function awaitCommand(env, args) {
+var HERE_SECONDS = { byDefault: 540, most: 590 };
+var AWAIT_USAGE = `usage: crew await <id> user | role [--here [--seconds <1 to ${HERE_SECONDS.most}, ${HERE_SECONDS.byDefault} when not given>]] | mail <message id>`;
+async function awaitHere(env, id, seconds, session) {
+  const opened = openWork(env, id);
+  if (isOutcome(opened))
+    return opened;
+  const item = opened.work.id;
+  const rolesOf = () => loadEvidence(env.paths, item).evidence.roles ?? [];
+  const unread = `${item}: the witness log cannot be read: no role can be waited for here`;
+  const first = entriesOut(env.paths, session, rolesOf());
+  if (first === null)
+    return ok(unread, { out: null });
+  if (!first.length)
+    return ok(`${item}: no role is out`, { out: [] });
+  const waitedFor = new Map(first.map((e) => [e.agentId, e.at]));
+  const until = Date.now() + seconds * 1000;
+  for (;; ) {
+    const roles = rolesOf();
+    const out = entriesOut(env.paths, session, roles);
+    if (out === null)
+      return ok(unread, { out: null });
+    for (const e of out)
+      if (!waitedFor.has(e.agentId))
+        waitedFor.set(e.agentId, e.at);
+    if (!out.length) {
+      const answered = roles.filter((r) => {
+        const since = r.agentId ? waitedFor.get(r.agentId) : undefined;
+        return since !== undefined && r.file !== null && r.at >= since;
+      });
+      return ok([`${item}: the roles answered`, ...answered.map((r) => `  ${r.agent}: ${r.file}`)].join(`
+`), { out: [], answered: answered.map((r) => ({ agent: r.agent, file: r.file })) });
+    }
+    if (Date.now() >= until) {
+      const named = countRoles(out);
+      return ok(`${item}: still out after ${seconds} s: ${rolesOutText(named)}`, { out: named });
+    }
+    await new Promise((wake) => setTimeout(wake, 500));
+  }
+}
+function hereSeconds(parsed) {
+  const { here, seconds } = parsed.flags;
+  if (here === undefined && seconds === undefined)
+    return null;
+  if (here !== true)
+    return "refused";
+  if (seconds === undefined)
+    return HERE_SECONDS.byDefault;
+  if (typeof seconds !== "string" || !/^[0-9]+$/.test(seconds))
+    return "refused";
+  const asked = Number(seconds);
+  return asked >= 1 && asked <= HERE_SECONDS.most ? asked : "refused";
+}
+async function awaitCommand(env, parsed, args, io) {
+  const kind = args[1];
+  const seconds = hereSeconds(parsed);
+  if (seconds !== null) {
+    if (seconds === "refused" || kind !== "role")
+      return refuse(AWAIT_USAGE);
+    return awaitHere(env, args[0], seconds, io.env.CLAUDE_CODE_SESSION_ID || null);
+  }
   const opened = openForChange(env, args[0]);
   if (isOutcome(opened))
     return opened;
-  const usage = "usage: crew await <id> user | role | mail <message id>";
-  const kind = args[1];
   if (kind !== "user" && kind !== "role" && kind !== "mail")
-    return refuse(usage);
+    return refuse(AWAIT_USAGE);
   if (kind === "mail" && !args[2])
-    return refuse(usage);
+    return refuse(AWAIT_USAGE);
   opened.work.awaiting = kind;
   if (kind === "mail")
     opened.work.awaitingMessage = args[2];
@@ -26785,7 +26877,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       return ok(`${opened.work.id}: phase ${result.phase}`, { phase: result.phase });
     }
     case "await":
-      return awaitCommand(env, args);
+      return awaitCommand(env, parsed, args, io);
     case "resume":
       return resumeCommand(env, parsed, args);
     case "research":
@@ -28273,6 +28365,7 @@ var HELP = `crew ${VERSION}
   audit <id> report                     render the audit's report from the findings (every one proof-checked): Markdown, HTML under the brand, the PDF by the project's Playwright or a browser or its reason; crew approve <id> audit signs it
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
+  await <id> role --here [--seconds <n>]   where nobody watches: wait inside the turn for the roles this session launched (540 s, 590 at most); sets no wait
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)
   question <id> add "<text>" [--mode m] | posted Q-n --channel <c> --ref <r> | answer Q-n "<answer>" | list   a doubt on record, posted where it can; answered by a person (asks the user)
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace

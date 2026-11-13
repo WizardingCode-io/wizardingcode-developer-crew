@@ -504,7 +504,15 @@ import {
   verifyValidator,
 } from "./verify.ts";
 import { VERSION } from "./version.ts";
-import { isTechLead, roleLabel, stampVerdict, witnessLine } from "./witness.ts";
+import {
+  countRoles,
+  entriesOut,
+  isTechLead,
+  roleLabel,
+  rolesOutText,
+  stampVerdict,
+  witnessLine,
+} from "./witness.ts";
 import {
   activeWork,
   addCriterion,
@@ -588,7 +596,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   objection: ["by", "severity", "criterion", "reason", "mode"],
   approve: ["mode", "validator"],
   phase: [],
-  await: [],
+  await: ["here", "seconds"],
   // A resume that clears a jev dispute is a decision (finding 94): --mode where nobody watches.
   resume: ["mode"],
   tdd: ["reason"],
@@ -1939,14 +1947,82 @@ function withNotes(text: string, notes: readonly string[]): string {
   return notes.length ? `${text}\n${notes.join("\n")}` : text;
 }
 
-/** `crew await <id> user | role | mail <mid>`: the three waits a turn may end on (SP2c §9), the origin blocked. */
-function awaitCommand(env: Env, args: string[]): Outcome {
+/** The seconds `crew await <id> role --here` waits when given none, and the most it takes: under a tool call's own bound. */
+const HERE_SECONDS = { byDefault: 540, most: 590 };
+const AWAIT_USAGE = `usage: crew await <id> user | role [--here [--seconds <1 to ${HERE_SECONDS.most}, ${HERE_SECONDS.byDefault} when not given>]] | mail <message id>`;
+
+/**
+ * `crew await <id> role --here` (finding 183): the wait inside a turn, for a session nobody watches.
+ * It waits until no role is out or its seconds are up and says what answered or what is still out.
+ * It reads the item, its evidence and the witness log and writes nothing: no wait is set, no entry
+ * spent, no mail moved. The session is the one the runtime names in the environment; with none,
+ * every unspent entry counts.
+ */
+async function awaitHere(
+  env: Env,
+  id: string | undefined,
+  seconds: number,
+  session: string | null,
+): Promise<Outcome> {
+  const opened = openWork(env, id);
+  if (isOutcome(opened)) return opened;
+  const item = opened.work.id;
+  const rolesOf = (): RoleRecord[] => loadEvidence(env.paths, item).evidence.roles ?? [];
+  const unread = `${item}: the witness log cannot be read: no role can be waited for here`;
+  const first = entriesOut(env.paths, session, rolesOf());
+  if (first === null) return ok(unread, { out: null });
+  if (!first.length) return ok(`${item}: no role is out`, { out: [] });
+  const waitedFor = new Map(first.map((e) => [e.agentId, e.at]));
+  const until = Date.now() + seconds * 1000;
+  for (;;) {
+    const roles = rolesOf();
+    const out = entriesOut(env.paths, session, roles);
+    if (out === null) return ok(unread, { out: null });
+    for (const e of out) if (!waitedFor.has(e.agentId)) waitedFor.set(e.agentId, e.at);
+    if (!out.length) {
+      // The answers of the roles waited for, filed since each was launched.
+      const answered = roles.filter((r) => {
+        const since = r.agentId ? waitedFor.get(r.agentId) : undefined;
+        return since !== undefined && r.file !== null && r.at >= since;
+      });
+      return ok(
+        [`${item}: the roles answered`, ...answered.map((r) => `  ${r.agent}: ${r.file}`)].join(
+          "\n",
+        ),
+        { out: [], answered: answered.map((r) => ({ agent: r.agent, file: r.file })) },
+      );
+    }
+    if (Date.now() >= until) {
+      const named = countRoles(out);
+      return ok(`${item}: still out after ${seconds} s: ${rolesOutText(named)}`, { out: named });
+    }
+    await new Promise((wake) => setTimeout(wake, 500));
+  }
+}
+
+/** The seconds `--here` asks for: null when the wait inside the turn was not asked, `refused` for `--seconds` with no `--here` or a value that is no whole number from 1 to the most. */
+function hereSeconds(parsed: Parsed): number | "refused" | null {
+  const { here, seconds } = parsed.flags;
+  if (here === undefined && seconds === undefined) return null;
+  if (here !== true) return "refused";
+  if (seconds === undefined) return HERE_SECONDS.byDefault;
+  if (typeof seconds !== "string" || !/^[0-9]+$/.test(seconds)) return "refused";
+  const asked = Number(seconds);
+  return asked >= 1 && asked <= HERE_SECONDS.most ? asked : "refused";
+}
+
+/** `crew await <id> user | role | mail <mid>`: the three waits a turn may end on (SP2c §9), the origin blocked; with `--here`, the wait inside the turn. */
+async function awaitCommand(env: Env, parsed: Parsed, args: string[], io: CliIo): Promise<Outcome> {
+  const kind = args[1];
+  const seconds = hereSeconds(parsed);
+  if (seconds !== null) {
+    if (seconds === "refused" || kind !== "role") return refuse(AWAIT_USAGE);
+    return awaitHere(env, args[0], seconds, io.env.CLAUDE_CODE_SESSION_ID || null);
+  }
   const opened = openForChange(env, args[0]);
   if (isOutcome(opened)) return opened;
-  const usage = "usage: crew await <id> user | role | mail <message id>";
-  const kind = args[1];
-  if (kind !== "user" && kind !== "role" && kind !== "mail") return refuse(usage);
-  if (kind === "mail" && !args[2]) return refuse(usage);
+  if (kind !== "user" && kind !== "role" && kind !== "mail") return refuse(AWAIT_USAGE);
+  if (kind === "mail" && !args[2]) return refuse(AWAIT_USAGE);
   opened.work.awaiting = kind;
   if (kind === "mail") opened.work.awaitingMessage = args[2];
   else delete opened.work.awaitingMessage;
@@ -5481,7 +5557,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return ok(`${opened.work.id}: phase ${result.phase}`, { phase: result.phase });
     }
     case "await":
-      return awaitCommand(env, args);
+      return awaitCommand(env, parsed, args, io);
     case "resume":
       return resumeCommand(env, parsed, args);
     case "research":
@@ -7373,6 +7449,7 @@ const HELP = `crew ${VERSION}
   audit <id> report                     render the audit's report from the findings (every one proof-checked): Markdown, HTML under the brand, the PDF by the project's Playwright or a browser or its reason; crew approve <id> audit signs it
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
+  await <id> role --here [--seconds <n>]   where nobody watches: wait inside the turn for the roles this session launched (540 s, 590 at most); sets no wait
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)
   question <id> add "<text>" [--mode m] | posted Q-n --channel <c> --ref <r> | answer Q-n "<answer>" | list   a doubt on record, posted where it can; answered by a person (asks the user)
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace

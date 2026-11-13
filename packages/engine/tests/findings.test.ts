@@ -101,7 +101,31 @@ function openFindings(text: string): number[] {
 // code points; it stays open until a live session after the release shows roles in parallel and a short role keeping their mark.
 // 177, 178 and 181 (the advisories three items left: the loop's sweeps, the capture fixture and the design lint,
 // crew tdd's recordTdd and its pytest pattern) closed by 2026-11-13-002, each point done or left with its reason.
-const OPEN = [77, 114, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 244];
+// 183 (a role wait ends the turn where nobody watches) closed by 2026-11-13-003: the Stop hook holds such an end while
+// a role the session launched is out, and crew await <id> role --here waits inside the turn.
+const OPEN = [77, 114, 206, 210, 212, 213, 214, 215, 221, 222, 224, 244];
+
+test("2026-11-13-003 AC-15: finding 183 reads closed, with the hold, the command, the eval's sample and the runtimes it does not reach", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith("### 183. ")) ?? "";
+  const outcome = /\n- Outcome:(.*)/.exec(section)?.[1]?.trim() ?? "";
+  expect(openFindings(text)).not.toContain(183);
+  expect(outcome).toStartWith("closed by `2026-11-13-003`");
+  for (const point of [
+    "the Stop hook holds the turn's end, three times at most per turn end",
+    "`crew await <id> role --here`",
+    "by its role name and a count",
+    "A log the engine cannot trust reads as no role out",
+    "One run of the eval case `pack-frontend-seats-the-team` on the bundle built from the delivered tree",
+    "the hook held once, naming `tech-lead (2)`",
+    "stopped at a decision only a person signs",
+    "An earlier run of the same day, on the bundle before the reviewers' round",
+    "Each is one sample of its bundle and no rate",
+    "Whether the tool's own session variable is the session's string is not shown",
+    "Codex, Cursor and Copilot",
+  ])
+    expect(outcome, point).toContain(point);
+});
 
 test("2026-11-13-002 AC-4: findings 177, 178 and 181 read closed, each point named with what was done or why nothing is to do", () => {
   const text = readFileSync(FINDINGS, "utf8");

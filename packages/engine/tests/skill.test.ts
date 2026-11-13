@@ -2200,3 +2200,12 @@ test("2026-11-12-007 AC-18 (finding 243): the runtimes reference says what the r
   ])
     expect(reference, sentence).toContain(sentence);
 });
+
+test("2026-11-13-003 AC-18 (finding 183): the modes reference says a session nobody watches waits for its roles inside the turn, and the runtimes reference says a runtime with no witness ends at a role wait as before", () => {
+  expect(readReference("modes.md")).toContain(
+    "Where nobody watches, the roles are waited for inside the turn: `crew await <id> role --here` waits until the roles this session launched have answered (540 seconds, 590 at most with `--seconds`) and says which answered or which are still out. Never wait for a role there by ending the turn with `crew await <id> role`: no next turn comes, and the Stop hook holds such an end, three times at most, while a role is out. A session a person watches keeps `crew await <id> role`.",
+  );
+  expect(readReference("runtimes.md")).toContain(
+    "A runtime with no witness has no record of the roles a session launched: a session nobody watches ends its turn at a role wait there as before, and `crew await <id> role --here` finds no role to wait for.",
+  );
+});

@@ -1107,7 +1107,7 @@ function unreadableDecision(
  * `bypassPermissions mode`), or null where a person is there to answer a prompt: the one rule the
  * user-only decision and the unreadable line read.
  */
-function unwatched(headless: boolean, permissionMode: string | undefined): string | null {
+export function unwatched(headless: boolean, permissionMode: string | undefined): string | null {
   const mode = permissionMode ?? "default";
   if (headless) return `a headless session in ${mode} mode`;
   return PROMPTLESS_MODES.has(mode) ? `${mode} mode` : null;

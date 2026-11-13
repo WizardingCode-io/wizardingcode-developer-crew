@@ -1,3 +1,4 @@
+import { loadEvidence } from "../evidence.ts";
 import { changedWatchedPaths, computeFingerprint, isGitRepo, UNAVAILABLE } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
@@ -5,9 +6,13 @@ import { emptyInboxSummary, inboxSummary, markNoticed, subjectQuoted } from "../
 import { releasePermit, runPermit } from "../running.ts";
 import { loadState, sessionState, updateSession } from "../state.ts";
 import { takeReplies } from "../tasks.ts";
+import { rolesOut, rolesOutText } from "../witness.ts";
 import { activeWork, noItemTurnEnds, saveWork, waitingPhrase } from "../work.ts";
 import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
 import { takeNotices } from "./notices.ts";
+// The guard's rule for who watches, read where it is defined: exported and not moved, so the
+// guard's own rows stay as they were (item 2026-11-13-003).
+import { unwatched } from "./pre-tool-use.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 export const MAX_STOP_BLOCKS = 3;
@@ -123,6 +128,27 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
         `Crew: blocker ${blocker.id} from ${blocker.from.project}: ${subjectQuoted(blocker.subject)}. Read it (crew mail read ${blocker.id}) and say it to the user before anything else.`,
       );
     }
+  }
+  // Where nobody watches, a role wait does not end the turn while a role this session launched has
+  // not answered (finding 183): no next turn would come for its answer. One more hold under the
+  // cap, after the mail's, asked only inside a role wait, so it replaces an end of the turn and
+  // never a block; a log the engine cannot trust reads as no role out, and the turn ends as before.
+  if (
+    work &&
+    work.awaiting === "role" &&
+    !active?.tampered &&
+    session.stopBlocks < MAX_STOP_BLOCKS &&
+    unwatched(ctx.headless, payload.permission_mode) !== null
+  ) {
+    const out = rolesOut(
+      ctx.paths,
+      ctx.sessionId,
+      loadEvidence(ctx.paths, work.id).evidence.roles ?? [],
+    );
+    if (out.length)
+      return hold(
+        `Crew: nobody watches this session, and the roles it launched have not all answered: ${rolesOutText(out)}. A role wait does not end the turn here. Wait for them inside this turn with crew await ${work.id} role --here, then read their answers and go on.`,
+      );
   }
   const current = computeFingerprint(ctx.paths.root, ctx.profile, work);
   const result = work

@@ -19,6 +19,8 @@ interface WitnessEntry {
   /** The role, as `roleOf` reads it from the agent's type. */
   agent: string;
   at: string;
+  /** The session the runtime's payload named at the spawn (finding 183); absent when it named none, and on an entry from before. */
+  sessionId?: string;
 }
 
 interface WitnessLog {
@@ -44,7 +46,8 @@ function isEntry(value: unknown): value is WitnessEntry {
   return (
     typeof entry.agentId === "string" &&
     typeof entry.agent === "string" &&
-    typeof entry.at === "string"
+    typeof entry.at === "string" &&
+    (entry.sessionId === undefined || typeof entry.sessionId === "string")
   );
 }
 
@@ -64,14 +67,25 @@ function readEntries(paths: CrewPaths): WitnessEntry[] | null {
  * write that fails throws: the hook's dispatcher answers `{}` for it, and the role is then filed
  * with no witness and named, while `spendWitness` below must not throw inside a filing.
  */
-export function recordSpawn(paths: CrewPaths, agentId: string, agent: string): void {
+export function recordSpawn(
+  paths: CrewPaths,
+  agentId: string,
+  agent: string,
+  sessionId?: string,
+): void {
   withLock(
     witnessDir(paths),
     () => {
       const kept = readEntries(paths);
       // A file that cannot be read may not be writable in place either: it is replaced.
       if (kept === null) rmSync(logFile(paths), { force: true });
-      const entries = [...(kept ?? []), { agentId, agent, at: nowIso() }];
+      const entry: WitnessEntry = {
+        agentId,
+        agent,
+        at: nowIso(),
+        ...(sessionId ? { sessionId } : {}),
+      };
+      const entries = [...(kept ?? []), entry];
       writeProtectedJson(paths, logFile(paths), { entries: entries.slice(-WITNESS_LOG_MAX) });
     },
     LOCK,
@@ -104,6 +118,60 @@ export function spendWitness(paths: CrewPaths, agentId: string, agent: string): 
   } catch {
     return false;
   }
+}
+
+/**
+ * The entries of roles launched and not yet answered (finding 183): unspent, of the session given
+ * (of any session, and of none, when no session is given), with no end of that agent on the item's
+ * record at or after the entry's time, so a role that stopped with no answer, whose entry stays, is
+ * not out. An entry with no session id is no session's. Null when the log cannot be trusted or
+ * read; never throws, and takes no lock of its own: it is read at a turn's end beside roles that
+ * write it.
+ */
+export function entriesOut(
+  paths: CrewPaths,
+  sessionId: string | null,
+  roles: readonly RoleRecord[],
+): WitnessEntry[] | null {
+  let entries: WitnessEntry[] | null;
+  try {
+    entries = readEntries(paths);
+  } catch {
+    return null;
+  }
+  if (entries === null) return null;
+  return entries.filter(
+    (e) =>
+      (sessionId === null || e.sessionId === sessionId) &&
+      !roles.some((r) => r.agentId === e.agentId && r.at >= e.at),
+  );
+}
+
+/** Entries counted by role, each role once with how many of it, in the order they were launched. */
+export function countRoles(
+  entries: readonly { agent: string }[],
+): { agent: string; count: number }[] {
+  const counted = new Map<string, number>();
+  for (const entry of entries) counted.set(entry.agent, (counted.get(entry.agent) ?? 0) + 1);
+  return [...counted].map(([agent, count]) => ({ agent, count }));
+}
+
+/** The roles out by role and count; none when the log cannot be trusted. */
+export function rolesOut(
+  paths: CrewPaths,
+  sessionId: string | null,
+  roles: readonly RoleRecord[],
+): { agent: string; count: number }[] {
+  return countRoles(entriesOut(paths, sessionId, roles) ?? []);
+}
+
+/**
+ * The roles out as a reader names them: by the role's name, which the engine's own list bounds, and
+ * a count when a role is out more than once (`tech-lead (2), judge`). Never an entry's agent id or
+ * session id: those come from a payload taken on trust, and the text is read as the engine's own.
+ */
+export function rolesOutText(out: readonly { agent: string; count: number }[]): string {
+  return out.map((r) => (r.count > 1 ? `${r.agent} (${r.count})` : r.agent)).join(", ");
 }
 
 /** Whether a role record is a tech lead's: the agent `tech-lead`, or `tech-lead-<n>` for an answer with no heading. */
