@@ -79,9 +79,13 @@ export function recordSpawn(paths: CrewPaths, agentId: string, agent: string): v
 }
 
 /**
- * Whether the runtime witnessed this agent id as this role, spending the entry: one witness marks
- * one filing, so the filing a script makes with a real role's id after that role stopped is not
- * marked. Never throws: whatever state the log is in, the filing goes on with no mark.
+ * Whether the runtime witnessed this agent id as this role, spending every entry of that id and
+ * role: a role resumed after a stop with no answer holds two, and one left behind would mark a
+ * later filing with its id. The caller asks only for a filing that saved an answer, so a stop with
+ * no answer leaves its entry for the role's next filing; until then, or until later spawns push it
+ * out, a script that files with that id and role takes the mark (finding 213's second point).
+ * After a filing with an answer, no later filing with that id is marked without a new spawn.
+ * Never throws: whatever state the log is in, the filing goes on with no mark.
  */
 export function spendWitness(paths: CrewPaths, agentId: string, agent: string): boolean {
   try {
@@ -90,9 +94,9 @@ export function spendWitness(paths: CrewPaths, agentId: string, agent: string): 
       () => {
         const entries = readEntries(paths);
         if (entries === null) return false;
-        const at = entries.findIndex((e) => e.agentId === agentId && e.agent === agent);
-        if (at === -1) return false;
-        writeProtectedJson(paths, logFile(paths), { entries: entries.filter((_, n) => n !== at) });
+        const others = entries.filter((e) => e.agentId !== agentId || e.agent !== agent);
+        if (others.length === entries.length) return false;
+        writeProtectedJson(paths, logFile(paths), { entries: others });
         return true;
       },
       LOCK,

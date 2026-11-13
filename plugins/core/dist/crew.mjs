@@ -14260,10 +14260,10 @@ function spendWitness(paths, agentId, agent) {
       const entries = readEntries(paths);
       if (entries === null)
         return false;
-      const at = entries.findIndex((e) => e.agentId === agentId && e.agent === agent);
-      if (at === -1)
+      const others = entries.filter((e) => e.agentId !== agentId || e.agent !== agent);
+      if (others.length === entries.length)
         return false;
-      writeProtectedJson(paths, logFile(paths), { entries: entries.filter((_, n) => n !== at) });
+      writeProtectedJson(paths, logFile(paths), { entries: others });
       return true;
     }, LOCK);
   } catch {
@@ -18845,7 +18845,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   const personality = personalityOf(answer);
   const team = saved.agent === "tech-lead" ? leadAnswer(answer)?.team ?? null : teamOf(saved.agent);
   const filedText = saved.file ? readTextQuietly(join55(dir, saved.file)) : null;
-  const witnessed = input.filedBy === "hook" && !!input.agentId && spendWitness(ctx.paths, input.agentId, role);
+  const witnessed = input.filedBy === "hook" && saved.file !== null && !!input.agentId && spendWitness(ctx.paths, input.agentId, role);
   evidence.roles = [
     ...roles,
     {

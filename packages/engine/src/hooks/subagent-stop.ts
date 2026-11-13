@@ -666,9 +666,14 @@ export function fileAnswer(
   // The content as it stands on disk right after the filing (finding 242): read back, since each
   // kind of answer is written in its own shape.
   const filedText = saved.file ? readTextQuietly(join(dir, saved.file)) : null;
-  // The runtime's witness of this agent as this role, spent by the filing it marks (finding 243).
+  // The runtime's witness of this agent as this role, spent by the filing it marks (finding 243):
+  // one that saved an answer. A stop with no answer leaves the entry for the role's next filing
+  // (finding 244).
   const witnessed =
-    input.filedBy === "hook" && !!input.agentId && spendWitness(ctx.paths, input.agentId, role);
+    input.filedBy === "hook" &&
+    saved.file !== null &&
+    !!input.agentId &&
+    spendWitness(ctx.paths, input.agentId, role);
   evidence.roles = [
     ...roles,
     {

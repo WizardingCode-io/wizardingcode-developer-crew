@@ -2194,7 +2194,7 @@ test("2026-11-12-007 AC-18 (finding 243): the runtimes reference says what the r
     "A role the runtime continues after its last text stops twice in one run: its second filing has no witness and is named, although a role made it.",
     "Four points stay open under finding 213 (a session's own process is not confined):",
     "a script that runs `crew hook agent-spawn` before `crew hook subagent-stop` with the same id reads as witnessed",
-    "a script that files with a real role's id before that role stops takes its mark",
+    "a script that files with a real role's id before that role stops, or after it stopped with no answer, takes its mark",
     "a script that runs `crew hook agent-spawn` 500 times, or changes the log, pushes the real entries out, so real roles in flight are filed with no witness",
     "the other verbs of `crew hook` take their payload on trust",
   ])

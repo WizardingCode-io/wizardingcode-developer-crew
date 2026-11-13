@@ -598,3 +598,108 @@ test("2026-11-12-007 AC-13: a role record written before this item, with no witn
   expect(report.out).toMatch(/\| tech-lead \|[^\n]*\| conclave\/lead-qa\.md \| hook \|/);
   expect((await t.run(["status"])).code).toBe(0);
 });
+
+test("2026-11-13-001 AC-6 (finding 244): a stop with no answer leaves the witness entry for that agent's next filing, and a filing with an answer spends every entry of its agent id and role", async () => {
+  const t = await item();
+  const entries = () => t.log().map((e) => `${e.agentId} ${e.agent}`);
+  // A role cut off: its end is recorded with no file and no mark, and the entry stays.
+  await t.spawned("lead-1");
+  await t.stopped("lead-1", "tech-lead");
+  expect(t.roles().at(-1)).toMatchObject({ agentId: "lead-1", file: null });
+  expect(t.roles().at(-1)?.witnessed).toBeUndefined();
+  expect(entries()).toEqual(["lead-1 tech-lead"]);
+  // Its next stop, with an answer, is the filing the entry marks.
+  await t.stopped("lead-1", "tech-lead", leadAnswerText(t.id, "lead-qa", "spec"));
+  expect(t.roles().at(-1)).toMatchObject({ file: "conclave/lead-qa.md", witnessed: true });
+  expect(entries()).toEqual([]);
+  // A role that stopped with no answer and was resumed holds two entries of one id.
+  await t.spawned("lead-2");
+  await t.stopped("lead-2", "tech-lead");
+  expect(entries()).toEqual(["lead-2 tech-lead"]);
+  await t.spawned("lead-2");
+  expect(entries()).toEqual(["lead-2 tech-lead", "lead-2 tech-lead"]);
+  // An entry of another role under the same id is not this filing's to spend.
+  await t.spawned("lead-2", "judge");
+  await t.stopped("lead-2", "tech-lead", leadAnswerText(t.id, "lead-security", "spec"));
+  expect(t.roles().at(-1)).toMatchObject({ file: "conclave/lead-security.md", witnessed: true });
+  expect(entries()).toEqual(["lead-2 judge"]);
+  // None is left for a later filing with that id: it is not witnessed.
+  await t.stopped(
+    "lead-2",
+    "tech-lead",
+    leadAnswerText(t.id, "lead-security", "spec", { note: "later" }),
+  );
+  expect(t.roles().at(-1)).toMatchObject({ agentId: "lead-2", file: "conclave/lead-security.md" });
+  expect(t.roles().at(-1)?.witnessed).toBeUndefined();
+  expect(entries()).toEqual(["lead-2 judge"]);
+});
+
+test("2026-11-13-001 AC-5: on an item whose hook filings are none witnessed, the gate run, crew judgement record and the report each print the item's line in their own output, the report after its Roles table", async () => {
+  const t = await item();
+  await t.stopped("lead-1", "tech-lead", leadAnswerText(t.id, "lead-qa", "spec"));
+  const current = t.work();
+  current.phase = "build";
+  saveWork(t.paths, current);
+  write(t.root, "src/a.ts", "x = 1");
+  await t.run(["tdd", "red", t.id, "AC-1", "--", "sh tests/crew-red.test.sh"]);
+  await t.run(["tdd", "green", t.id, "AC-1", "--", "sh tests/crew-green.test.sh"]);
+  await t.run(["skip", t.id, "gate:e2e", "--reason", "no environment in the fixture"]);
+  const gate = await t.run(["gate", "run", t.id]);
+  expect(gate.out.split("\n")).toContain(NO_WITNESS_ON_ITEM);
+  const ruling = JSON.stringify({
+    rulings: ["code-quality", "test-quality"].map((gateName) => ({
+      gate: gateName,
+      verdict: "proven",
+      reviewer: `review-${gateName}`,
+      judge: "judge",
+      findings: [],
+    })),
+  });
+  await t.stopped("judge-1", "judge", ruling);
+  const judged = await t.run([
+    "judgement",
+    t.id,
+    "record",
+    "--ruling",
+    `.crew/work/${t.id}/review/ruling.json`,
+  ]);
+  expect(judged.err).toBe("");
+  expect(judged.out.split("\n")).toContain(NO_WITNESS_ON_ITEM);
+  const report = (await t.run(["evidence", t.id])).out.split("\n");
+  const roles = report.indexOf("## Roles");
+  expect(roles).toBeGreaterThan(-1);
+  const line = report.indexOf(NO_WITNESS_ON_ITEM);
+  expect(line).toBeGreaterThan(roles);
+  // The line closes the table: between the heading and it there are only blanks and table rows.
+  expect(report.slice(roles + 1, line).every((l) => l === "" || l.startsWith("|"))).toBe(true);
+});
+
+test("2026-11-13-001 AC-5: on an item whose hook filings are none witnessed, the brainstorm record and the spec review's record each print the item's line in their own output", async () => {
+  const t = await item("full");
+  write(t.root, `.crew/work/${t.id}/plan.md`, "# Plan\n\n1. The plan.\n");
+  write(
+    t.root,
+    `.crew/work/${t.id}/concepts_brief.md`,
+    "## Overview\nx\n## Analysis\nx\n## Goals vs. Non-Goals\nx\n## Alternatives Weighed\nx\n## Key Decisions\nx\n",
+  );
+  for (const [n, role] of SPEC_LENSES.entries())
+    await t.stopped(
+      `lens-${n}`,
+      role,
+      `mode: brainstorm\n# findings\nreviewer: ${role}\n\n## Findings\nnone`,
+    );
+  const brief = await t.run(["spec-review", t.id, "brief"]);
+  expect(brief.code, brief.err).toBe(0);
+  expect(brief.out.split("\n")).toContain(NO_WITNESS_ON_ITEM);
+  const current = t.work();
+  current.phase = "spec-review";
+  saveWork(t.paths, current);
+  expect((await t.run(["spec-review", t.id, "check"])).code).toBe(0);
+  const stage = STAGES[0];
+  if (!stage) throw new Error("no stage");
+  for (const [n, role] of stage.reviewers.entries())
+    await t.stopped(`stage-${n}`, role, `# findings\nreviewer: ${role}\n\n## Findings\nnone`);
+  const recorded = await t.run(["spec-review", t.id, "record", String(stage.stage)]);
+  expect(recorded.code, recorded.err).toBe(0);
+  expect(recorded.out.split("\n")).toContain(NO_WITNESS_ON_ITEM);
+});

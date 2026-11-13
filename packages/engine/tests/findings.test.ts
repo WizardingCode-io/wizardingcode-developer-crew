@@ -97,7 +97,27 @@ function openFindings(text: string): number[] {
 // recorded 243 (a script the session writes and runs can call crew hook and file a role's answer) from a probe.
 // 243 fixed by 2026-11-12-007 as far as its design goes (a runtime's witness tells a role's filing from a script's,
 // and a filing with no witness is named); the four points that stay are in 213's record, which stays open.
-const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224];
+// 244 (what the leads of 2026-11-12-007 left on the runtime's witness) recorded by 2026-11-13-001, which fixed its two
+// code points; it stays open until a live session after the release shows roles in parallel and a short role keeping their mark.
+const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 244];
+
+test("2026-11-13-001 AC-7 (finding 244): the record holds what the leads of 2026-11-12-007 left, open on the live session's record alone, with what a stop with no answer leaves behind", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const start = text.indexOf("\n### 244. ");
+  expect(start).toBeGreaterThan(-1);
+  const section = text.slice(start);
+  expect(openFindings(text)).toContain(244);
+  for (const sentence of [
+    "Category: `false-proof`. Severity: low.",
+    "(1) fixed in `2026-11-13-001`: a filing of the hook spends the witness only when it saved an answer to a file, and then spends every entry of its agent id and role",
+    "(2) fixed in `2026-11-13-001`: the item's line is asserted in the own output of each of its six readers",
+    "(3) is what keeps this finding open: no record shows crew roles launched in parallel, or a role shorter than the engine's start, keeping their mark in a live session",
+    "It closes with the record of a real session after the release that shows both",
+    "(4) is a fact of the observation: a project whose folder is gone reads as gone, and nothing in the engine changes",
+    "An entry of a role that stopped with no answer stays in the log until that agent id files an answer or 500 later spawns push it out, and a script that files with that id and role in that time is recorded `witnessed`, after the role stopped (finding 213, its second point)",
+  ])
+    expect(section, sentence).toContain(sentence);
+});
 
 test("2026-11-12-007 AC-19 (finding 243): 243 reads closed as far as the design goes, and finding 213's own record holds the four points that stay open", () => {
   const text = readFileSync(FINDINGS, "utf8");
@@ -110,7 +130,7 @@ test("2026-11-12-007 AC-19 (finding 243): 243 reads closed as far as the design 
   );
   for (const point of [
     "a script that runs `crew hook agent-spawn` before `crew hook subagent-stop` with the same id reads as witnessed",
-    "a script that files with a real role's id before that role stops takes its mark",
+    "a script that files with a real role's id before that role stops, or after it stopped with no answer, takes its mark",
     "a script that runs `crew hook agent-spawn` 500 times, or changes the log, pushes the real entries out, so real roles in flight are filed with no witness",
     "the other verbs of `crew hook` take their payload on trust",
   ])
