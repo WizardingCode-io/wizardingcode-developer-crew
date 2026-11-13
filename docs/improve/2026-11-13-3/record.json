@@ -1,0 +1,174 @@
+{
+  "run": "2026-11-13-3",
+  "at": "2026-11-13T13:00:11.132Z",
+  "targets": [
+    "ui-missing-screen-named",
+    "ui-motion-frequency-found"
+  ],
+  "baseline": {
+    "ui-missing-screen-named": {
+      "name": "ui-missing-screen-named",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "error-state",
+              "explanation": "pattern not found in file public/inbox.js"
+            },
+            {
+              "grader": "missing-named",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md"
+          ]
+        },
+        {
+          "score": 0.4,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "error-state",
+              "explanation": "pattern not found in file public/inbox.js"
+            },
+            {
+              "grader": "missing-named",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "not-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0.6,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 6.526387000000001
+    },
+    "ui-motion-frequency-found": {
+      "name": "ui-motion-frequency-found",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 0.25,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "hover-not-300ms",
+              "explanation": "pattern not found in file public/styles/inbox.css"
+            },
+            {
+              "grader": "review-names-hover",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "review-recorded",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "skipped: cost ceiling"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0.75,
+      "reads": [
+        "plugins/core/skills/crew/references/frontend.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 16.1241402
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no harness file. Both cases fail in a way that says the run never built anything, not that a page misled the lead: `ui-missing-screen-named` left `public/inbox.js` untouched and printed neither the missing-screen line nor the verdict, and `ui-motion-frequency-found` left `public/styles/inbox.css` untouched, recorded no review, and had its `honest-ending` judge skipped at the cost ceiling. Both cases scored 1.00 in all three runs on 2026-11-06, and I found no later edit made for either. There is no trace or `reads` list for any failing run, because the 2026-11-13-2 run that targeted `ui-missing-screen-named` stopped at the ceiling before recording its baseline. Two other inbox cases with the `ui` tag dropped in the same way earlier today, which points at something shared (the engine's recent changes to how a lead's validation is recorded, or the kit's cost ceiling), though I did not establish which. An edit from that inference would be a guess against pages that passed a week ago, and the skill page sits at its byte cap. The next step is a rerun that keeps the failing run's trace, to see the phase where the item stopped. I extended the existing memory note on the inbox cases to cover these two.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. The failing evidence for `ui-missing-screen-named` and `ui-motion-frequency-found` describes runs that never built: `public/inbox.js` and `public/styles/inbox.css` are untouched, there is no review or verdict line in the trace, and one ending was skipped at the kit's cost ceiling. Both cases scored 1.00 three times on 2026-11-06, and no harness page has been edited for them since. There is still no trace or `reads` list for the failing runs: `docs/improve/` holds records only for 2026-11-13-1 and -2, and the -2 run stopped at the improve ceiling before recording a baseline. Without knowing where the item stopped (a returned validation, a wait for the user, or the cost cut), any edit would be a guess at the cause. Four `ui` inbox cases dropping together on one day also points at something shared in the engine or the kit's cost rather than a misleading page. The next step is a trace of one failing run, not a harness change.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 23.6444634,
+  "lessons": [],
+  "exit": 0,
+  "judge": "claude-fable-5-2",
+  "judgeSkipped": [],
+  "unmeasured": []
+}
