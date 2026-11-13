@@ -278,6 +278,8 @@ test("2026-11-12-004 AC-10: crew validation record prints the verdict line under
     "validation of spec by lead-qa: validated (round 1)",
     `Not proven: ${[owed("spec", "lead-security"), owed("delivery", "lead-qa"), owed("delivery", "lead-security")].join("; ")}`,
     "answers filed by the session: judge",
+    // The leads' answers are the hook's, none witnessed (finding 243).
+    "no runtime witness on this item: its role filings rest on the hook's payload alone",
   ]);
   // A record that does not prove writes the verdict as it stands and moves no phase.
   expect(loadEvidence(paths, id).evidence.unproven).toEqual([
@@ -305,6 +307,7 @@ test("2026-11-12-004 AC-10: crew validation record prints the verdict line under
     "validation of delivery by lead-security: validated (round 1)",
     `Proven: ${id}`,
     "answers filed by the session: judge",
+    "no runtime witness on this item: its role filings rest on the hook's payload alone",
   ]);
   expect(loadEvidence(paths, id).evidence.verdict).toBe("proven");
   expect(work().phase).toBe("deliver");

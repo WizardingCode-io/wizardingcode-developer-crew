@@ -47,6 +47,7 @@ import { safeText, type UiEvidence } from "./ui.ts";
 import { leadsMissing } from "./validation.ts";
 import { CODE_CHANGED, GATES_NOT_RUN, NOT_ON_CURRENT_CODE } from "./verdict-reasons.ts";
 import { decisionMarkText } from "./verify.ts";
+import { witnessLine } from "./witness.ts";
 import { currentCriterion, isSkipped, kindOfItem, tddDone } from "./work.ts";
 
 type Decided = {
@@ -631,7 +632,16 @@ export function renderReport(
     : evidence.verdict === "proven"
       ? "Proven"
       : "Not proven";
-  lines.push(`- Verdict: **${verdictLine}**${waivedNote}`, "");
+  lines.push(
+    `- Verdict: **${verdictLine}**${waivedNote}`,
+    // The answers the verdict rests on that no runtime witnessed, beside it (finding 243).
+    ...(evidence.unwitnessed?.length
+      ? [
+          `- The verdict rests on answers with no runtime witness: ${evidence.unwitnessed.join(", ")}`,
+        ]
+      : []),
+    "",
+  );
   if (evidence.unproven.length) {
     lines.push("## Not proven", "");
     for (const reason of evidence.unproven) lines.push(`- ${reason}`);
@@ -950,8 +960,10 @@ export function renderReport(
     );
     for (const r of evidence.roles)
       lines.push(
-        `| ${r.agent} | ${r.model ?? "-"} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} | ${r.filedBy ?? "hook"} |`,
+        `| ${r.agent} | ${r.model ?? "-"} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} | ${r.filedBy ?? "hook"}${r.witnessed ? ", witnessed" : ""} |`,
       );
+    const witness = witnessLine(evidence.roles);
+    if (witness) lines.push("", witness);
   }
   // The tasks handed to implementers (SP2c §7), filled by `crew task`.
   if (work.tasks?.length) {

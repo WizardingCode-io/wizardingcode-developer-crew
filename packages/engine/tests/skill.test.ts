@@ -2184,3 +2184,19 @@ test("2026-11-12-005 AC-7 (finding 242): the method says a lead's file is filed 
     "A lead's validation is recorded only from an answer filed this way or by the hook: `crew validation record` refuses a file written at the lead's place by hand, and one changed after its filing.",
   );
 });
+
+test("2026-11-12-007 AC-18 (finding 243): the runtimes reference says what the runtime's witness means, what is named, which runtimes have none and the four points that stay open", () => {
+  const reference = readReference("runtimes.md");
+  for (const sentence of [
+    "The engine trusts nothing more than before: `witnessed` means the Claude Code mod saw that agent id spawned, and is not proof of who filed.",
+    "What is named is a filing with no witness (`answers with no runtime witness: <roles>`, once the item holds a witnessed one) and an item with no witness (`no runtime witness on this item: its role filings rest on the hook's payload alone`)",
+    "Codex, Cursor, Copilot, Gemini and OpenCode have no witness, having no module in the runtime's process.",
+    "A role the runtime continues after its last text stops twice in one run: its second filing has no witness and is named, although a role made it.",
+    "Four points stay open under finding 213 (a session's own process is not confined):",
+    "a script that runs `crew hook agent-spawn` before `crew hook subagent-stop` with the same id reads as witnessed",
+    "a script that files with a real role's id before that role stops takes its mark",
+    "a script that runs `crew hook agent-spawn` 500 times, or changes the log, pushes the real entries out, so real roles in flight are filed with no witness",
+    "the other verbs of `crew hook` take their payload on trust",
+  ])
+    expect(reference, sentence).toContain(sentence);
+});

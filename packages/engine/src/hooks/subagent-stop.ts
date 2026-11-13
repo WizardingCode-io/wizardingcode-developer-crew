@@ -11,6 +11,7 @@ import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName, WorkItem, WorkKind } from "../types.ts";
 import { fileHash, LEAD_LINE, leadSuffix, replyFile } from "../validation.ts";
+import { spendWitness } from "../witness.ts";
 import { activeWork, kindOfItem, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -665,6 +666,9 @@ export function fileAnswer(
   // The content as it stands on disk right after the filing (finding 242): read back, since each
   // kind of answer is written in its own shape.
   const filedText = saved.file ? readTextQuietly(join(dir, saved.file)) : null;
+  // The runtime's witness of this agent as this role, spent by the filing it marks (finding 243).
+  const witnessed =
+    input.filedBy === "hook" && !!input.agentId && spendWitness(ctx.paths, input.agentId, role);
   evidence.roles = [
     ...roles,
     {
@@ -679,6 +683,7 @@ export function fileAnswer(
       ...(team ? { team } : {}),
       ...(input.filedBy === "session" ? { filedBy: "session" as const } : {}),
       ...(filedText !== null ? { fileHash: fileHash(filedText) } : {}),
+      ...(witnessed ? { witnessed: true as const } : {}),
     },
   ];
   saveEvidence(ctx.paths, id, evidence);

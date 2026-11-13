@@ -1237,3 +1237,70 @@ test("the panel prints no captures line when the status has no ui block or no de
   expect(await plain.find({ type: "Text", text: "captures 2/0" })).toBeUndefined();
   await plain.unmount();
 });
+
+// The runtime's witness of a crew role (finding 243): the spawn is told to the engine with the agent's id.
+function witnessed(on, run: () => unknown = () => ({ value: { exitCode: 0, stdout: "{}", stderr: "" } })) {
+  const runs: { argv: string[]; init: Record<string, unknown>; started: boolean; finished: boolean }[] = [];
+  let started = false;
+  on("session.cwd", () => ({ value: "/work" }));
+  on("session.id", () => ({ value: "session-1" }));
+  on("command.register", () => ({ value: undefined }));
+  on("session.start", () => ({ cwd: "/work" }));
+  on("model.complete", () => ({ value: ANSWERED }));
+  on("store.get", () => ({ value: undefined }));
+  on("store.set", () => ({ value: undefined }));
+  on("agent.spawn", () => {
+    started = true;
+    return { model: "claude-fable-5-2", agentId: "agent-7" };
+  });
+  on("process.run", (_$, e) => {
+    if (!e.argv.includes("agent-spawn")) return { value: { exitCode: 0, stdout: JSON.stringify(NONE), stderr: "" } };
+    // The run answers later, as a process does: only an awaited run is finished when the spawn resolves.
+    const mine = { argv: e.argv, init: e.init ?? {}, started, finished: false };
+    runs.push(mine);
+    return new Promise((done) =>
+      setTimeout(() => {
+        mine.finished = true;
+        done(run());
+      }, 30),
+    );
+  });
+  return runs;
+}
+
+test("2026-11-12-007 AC-6 (finding 243): a crew role's spawn runs crew hook agent-spawn with the agent's id, its type and the session's id on standard input, after the runtime started it and before the handler returns; another subagent runs nothing", async ($, on) => {
+  const runs = witnessed(on);
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const started = await $.agent.spawn({ prompt: "validate", subagentType: "wizardingcode-developer-crew:tech-lead" });
+  expect(started.agentId).toBe("agent-7");
+  // The run is over when the spawn resolves: it was awaited, after the runtime's own start.
+  expect(runs.length).toBe(1);
+  expect(runs[0].started).toBe(true);
+  expect(runs[0].finished).toBe(true);
+  expect(runs[0].argv.slice(1).map((a) => a.replace(/^.*\/dist\//, "dist/"))).toEqual(["dist/crew.mjs", "hook", "agent-spawn"]);
+  expect(JSON.parse(String(runs[0].init.stdin))).toEqual({
+    agent_id: "agent-7",
+    agent_type: "wizardingcode-developer-crew:tech-lead",
+    session_id: "session-1",
+  });
+  expect(runs[0].argv.join(" ")).not.toContain("agent-7");
+  expect(runs[0].init.cwd).toBe("/work");
+  for (const other of ["general-purpose", "wizardingcode-developer-crew:nobody"]) await $.agent.spawn({ prompt: "x", subagentType: other });
+  expect(runs.length).toBe(1);
+});
+
+test("2026-11-12-007 AC-21: a witness run that throws, exits non-zero or passes its 10000 ms returns the started agent unchanged", async ($, on) => {
+  const answers = [
+    () => ({ deny: "spawn node ENOENT" }),
+    () => ({ value: { exitCode: 1, stdout: "", stderr: "boom" } }),
+    () => ({ deny: "timed out after 10000 ms" }),
+  ];
+  let n = 0;
+  const runs = witnessed(on, () => answers[n++]());
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  for (const _ of answers) {
+    const started = await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+    expect(started).toEqual({ model: "claude-fable-5-2", agentId: "agent-7" });
+  }
+  expect(runs.map((r) => r.init.timeoutMs)).toEqual([10000, 10000, 10000]);
+});

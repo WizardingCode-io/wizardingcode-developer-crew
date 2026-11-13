@@ -95,7 +95,27 @@ function openFindings(text: string): number[] {
 // 242 (a lead's file no role filed) fixed by 2026-11-12-005, with the two lines 2026-11-12-004 left on the same records.
 // 241 (the continuations line on a record no writer makes, and what its leads left) fixed by 2026-11-12-006, which
 // recorded 243 (a script the session writes and runs can call crew hook and file a role's answer) from a probe.
-const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224, 243];
+// 243 fixed by 2026-11-12-007 as far as its design goes (a runtime's witness tells a role's filing from a script's,
+// and a filing with no witness is named); the four points that stay are in 213's record, which stays open.
+const OPEN = [77, 114, 177, 178, 181, 183, 206, 210, 212, 213, 214, 215, 221, 222, 224];
+
+test("2026-11-12-007 AC-19 (finding 243): 243 reads closed as far as the design goes, and finding 213's own record holds the four points that stay open", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = (n: number) =>
+    text.slice(text.indexOf(`\n### ${n}. `), text.indexOf(`\n### ${n + 1}. `));
+  expect(openFindings(text)).toContain(213);
+  expect(openFindings(text)).not.toContain(243);
+  expect(section(243)).toContain(
+    "Outcome: closed by `2026-11-12-007`, as far as the design goes: the probe's one-line filing is told apart and named wherever a record is read.",
+  );
+  for (const point of [
+    "a script that runs `crew hook agent-spawn` before `crew hook subagent-stop` with the same id reads as witnessed",
+    "a script that files with a real role's id before that role stops takes its mark",
+    "a script that runs `crew hook agent-spawn` 500 times, or changes the log, pushes the real entries out, so real roles in flight are filed with no witness",
+    "the other verbs of `crew hook` take their payload on trust",
+  ])
+    expect(section(213), point).toContain(point);
+});
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
@@ -523,7 +543,7 @@ test("2026-11-12-005 AC-8: finding 242 reads fixed by the item, naming the role 
   expect(openFindings(text)).not.toContain(242);
 });
 
-test("2026-11-12-006 AC-13: finding 241 reads fixed with every point named, and finding 243 is recorded open as false-proof, of high severity, with its probe", () => {
+test("2026-11-12-006 AC-13: finding 241 reads fixed with every point named, and finding 243 is recorded as false-proof, of high severity, with its probe (open until 2026-11-12-007 closed it)", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const sectionOf = (n: number) =>
     text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith(`### ${n}. `)) ?? "";
@@ -548,5 +568,4 @@ test("2026-11-12-006 AC-13: finding 241 reads fixed with every point named, and 
   expect(probe).toContain("`crew hook subagent-stop`");
   expect(probe).toContain("no record of the item tells");
   expect(probe).toContain("finding 213");
-  expect(openFindings(text)).toContain(243);
 });

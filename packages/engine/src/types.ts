@@ -478,6 +478,12 @@ export interface RoleRecord {
    * existed, and on one with no file.
    */
   fileHash?: string;
+  /**
+   * True when the runtime's witness of this agent id and role was in the project's log at the
+   * filing (finding 243): the Claude Code mod saw the agent spawned. Absent otherwise, and on every
+   * record of a runtime with no module in its process. It is not proof of who filed.
+   */
+  witnessed?: true;
 }
 
 /** A project the engine has seen (`~/.wizardingcode/crew/projects.json`). */
@@ -1055,6 +1061,11 @@ export interface Evidence {
   verifications?: Verification[];
   /** The document's review before the code (ADR 0019); absent until `crew spec-review` first writes it. */
   specReview?: SpecReviewRecord;
+  /**
+   * The answers the verdict rests on whose role record has no runtime witness (finding 243): a lead
+   * as `<lead> (<spec|delivery>)`, and `judge`. Written with the verdict; absent when there are none.
+   */
+  unwitnessed?: string[];
 }
 
 export interface Policy {

@@ -165,14 +165,17 @@ export function register(on) {
       model = undefined
     }
     const started = await next(model ? { ...e, model } : e)
+    let role = false
     try {
-      if (roleOf(e.subagentType) && started?.agentId) {
+      role = !!roleOf(e.subagentType) && !!started?.agentId
+      if (role) {
         spawned.set(started.agentId, aliasOf(started.model))
         if (spawned.size > SPAWNED_MAX) spawned.delete(spawned.keys().next().value)
       }
     } catch {
       /* the ladder never holds up a spawn */
     }
+    if (role) await witnessSpawn($, e, started)
     return started
   })
 
@@ -538,6 +541,24 @@ async function readLimits($) {
 // A model's mark: when it was first found at its limit, and when it is probed again
 function marked(now, since) {
   return { since, probeAt: now + PROBE_EVERY_MS }
+}
+
+// The runtime's witness of a crew role the runtime has started (finding 243): the
+// engine is told its id, its type and the session's id, on standard input, and the run is awaited
+// so the entry is in the log before the role can stop. It says that this process saw the spawn,
+// nothing more. A run that throws, fails or passes its bound leaves the spawn as it was.
+async function witnessSpawn($, e, started) {
+  try {
+    const stdin = JSON.stringify({
+      agent_id: started.agentId,
+      agent_type: e.subagentType,
+      session_id: await $.session.id(),
+    })
+    const cwd = await $.session.cwd()
+    await $.process.run(['node', $.plugin.root + '/dist/crew.mjs', 'hook', 'agent-spawn'], { cwd, stdin, timeoutMs: 10000 })
+  } catch {
+    /* the witness never holds up a spawn */
+  }
 }
 
 // Runs the bundled CLI in the session's folder and returns its JSON answer.

@@ -257,6 +257,8 @@ test("2026-11-12-005 AC-13: the answers a role filed are recorded as today: the 
     "validation of spec by lead-security: validated (round 1)",
     expect.stringMatching(/^Not proven: /),
     "answers filed by the session: tech-lead (security)",
+    // The item also holds the hook's filings, none witnessed (finding 243).
+    "no runtime witness on this item: its role filings rest on the hook's payload alone",
   ]);
   // A record from before the content hash: taken by its file name, and said.
   const delivery = filedLead(env, root, id, leadAnswerText(id, "lead-qa", "delivery"));
@@ -321,6 +323,7 @@ test("2026-11-12-005 AC-11: when the save of the verdict is refused, crew valida
     "validation of spec by lead-qa: validated (round 1)",
     `the work folder of ${id} is busy (another crew command holds it); nothing recorded: run the command again`,
     `the verdict was not written: crew evidence ${id} reads it again`,
+    "no runtime witness on this item: its role filings rest on the hook's payload alone",
     "taken with no content check (its record predates the content hash): lead-qa",
   ]);
   expect(data.contentChecked).toBe(false);

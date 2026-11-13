@@ -51,6 +51,7 @@ import type {
   WorkItem,
 } from "./types.ts";
 import { e2eTarget, GATE_NAMES, isBuiltInGate } from "./types.ts";
+import { stampVerdict } from "./witness.ts";
 import { isSkipped, raiseRoute } from "./work.ts";
 
 const MANIFESTS = new Set([
@@ -892,9 +893,7 @@ export async function runGates(
   const saved = updateEvidence(paths, work.id, (fresh) => {
     fresh.runs = evidence.runs;
     fresh.fingerprint = stamp;
-    const merged = verdictOf(fresh);
-    fresh.verdict = merged.verdict;
-    fresh.unproven = merged.unproven;
+    stampVerdict(fresh, verdictOf(fresh), work);
   });
   if ("refused" in saved) {
     evidence.verdict = "unproven";

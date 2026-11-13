@@ -504,6 +504,7 @@ import {
   verifyValidator,
 } from "./verify.ts";
 import { VERSION } from "./version.ts";
+import { isTechLead, roleLabel, stampVerdict, witnessLine } from "./witness.ts";
 import {
   activeWork,
   addCriterion,
@@ -1665,8 +1666,7 @@ function verdictAfterRecord(
   const before = assess(env.paths, work, env.profile, env.policy, opened.tampered);
   const written = updateEvidence(env.paths, work.id, (fresh) => {
     const merged = reassess({ ...before, evidence: fresh }, work, env.policy);
-    fresh.verdict = merged.verdict;
-    fresh.unproven = merged.unproven;
+    stampVerdict(fresh, merged, work);
     return merged;
   });
   if ("refused" in written)
@@ -2983,16 +2983,13 @@ function gateSummary(
 
 /** `answers filed by the session: <agents>` when any role record was the session's (SP6 Task 4 AC-5); empty otherwise. */
 function sessionFiledLine(roles: readonly RoleRecord[]): string {
-  // Every lead is the agent tech-lead: its team is what tells two leads apart (finding 241's item).
-  const named = (r: RoleRecord): string =>
-    isTechLead(r) && r.team !== undefined ? `${r.agent} (${r.team})` : r.agent;
-  const agents = [...new Set(roles.filter((r) => r.filedBy === "session").map(named))];
+  const agents = [...new Set(roles.filter((r) => r.filedBy === "session").map(roleLabel))];
   return agents.length ? `answers filed by the session: ${agents.join(", ")}` : "";
 }
 
-/** Whether a role record is a tech lead's: the agent `tech-lead`, or `tech-lead-<n>` for an answer with no heading. */
-function isTechLead(record: RoleRecord): boolean {
-  return record.agent === "tech-lead" || record.agent.startsWith("tech-lead-");
+/** What a reader says of who filed an item's answers: the session's filings, then the hook's with no runtime witness (finding 243); empty when neither is to be said. */
+function filedLines(roles: readonly RoleRecord[]): string[] {
+  return [sessionFiledLine(roles), witnessLine(roles)].filter(Boolean);
 }
 
 /** A hook answer's `systemMessage` the runtime could not carry, left as a notice for the session's next context; nothing when no context can be built. */
@@ -3739,7 +3736,10 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
         })
         .join("");
       return ok(
-        `stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}${mended}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`,
+        [
+          `stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}${mended}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`,
+          ...filedLines(evidence.roles ?? []),
+        ].join("\n"),
         {},
       );
     }
@@ -3770,7 +3770,12 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
       record.agentIds = [...new Set([...record.agentIds, ...Object.values(agents)])];
       const unsaved = save();
       if (unsaved) return refuse(unsaved);
-      return ok(`the brief is recorded with its ${SPEC_LENSES.length} lenses`, {});
+      return ok(
+        [`the brief is recorded with its ${SPEC_LENSES.length} lenses`, ...filedLines(roles)].join(
+          "\n",
+        ),
+        {},
+      );
     }
     case "publish": {
       const published = publishedDesign(env, work, record, specText, planText);
@@ -5665,7 +5670,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         env.policy,
       ).filter((r) => r.status === "planned" || r.status === "stale");
       // The judge's launch line carries the answers the session filed (SP6 Task 4, decision 10).
-      const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
+      const filedBySession = filedLines(outcome.evidence.roles ?? []).join("\n");
       // The pack's knowledge beside the team, as crew team prints it: a session that runs no crew team still
       // has the path (2026-10-30-003 AC-5).
       const knowledge = pending.length
@@ -5838,8 +5843,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (defects?.records.length)
           fresh.verifications = [...(fresh.verifications ?? []), ...defects.records];
         const merged = reassess({ ...before, evidence: fresh }, opened.work, env.policy);
-        fresh.verdict = merged.verdict;
-        fresh.unproven = merged.unproven;
+        stampVerdict(fresh, merged, opened.work);
         return merged;
       });
       if ("refused" in saved) return refuse(saved.refused);
@@ -5894,8 +5898,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : `Not proven: ${result.unproven.join("; ")}`,
       );
       // The answers the session filed, said with the verdict (SP6 Task 4, decision 10).
-      const filedBySession = sessionFiledLine(before.evidence.roles ?? []);
-      if (filedBySession) lines.push(filedBySession);
+      lines.push(...filedLines(result.evidence.roles ?? []));
       if (jevWait) lines.push(jevWait);
       if (workNotSaved) lines.push(workNotSaved);
       // Like gate run: the exit code says whether the work is proven, so a chain stops at "Not proven".
@@ -5968,8 +5971,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         env.policy,
         env.tampered || opened.tampered,
       );
-      result.evidence.verdict = result.verdict;
-      result.evidence.unproven = result.unproven;
+      stampVerdict(result.evidence, result, opened.work);
       const report = reportOf(env, opened.work, result.evidence);
       // Tampered state is still shown, but never saved: saving would record it as the engine's own.
       if (refused)
@@ -5978,8 +5980,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           unproven: result.unproven,
         });
       const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
-        fresh.verdict = result.verdict;
-        fresh.unproven = result.unproven;
+        stampVerdict(fresh, result, opened.work);
       });
       if ("refused" in saved) return refuse(saved.refused);
       writeProtectedText(env.paths, join(workDir(env.paths, opened.work.id), "report.md"), report);
@@ -6387,14 +6388,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             after: [],
             data: {},
           };
-      const filedLine = sessionFiledLine(current.roles ?? []);
+      const whoFiled = filedLines(current.roles ?? []);
       const unchecked = contentChecked
         ? []
         : [`taken with no content check (its record predates the content hash): ${by}`];
       const lines = [
         `validation of ${what} by ${by}: ${said}`,
         ...verdictPart.lines,
-        ...(filedLine ? [filedLine] : []),
+        ...whoFiled,
         ...unchecked,
         ...verdictPart.after,
       ];

@@ -1,12 +1,13 @@
 import { nowIso } from "../fs.ts";
 import { updateSession } from "../state.ts";
+import { recordSpawn } from "../witness.ts";
 import { buildContext } from "./context.ts";
 import { onPostToolUse } from "./post-tool-use.ts";
 import { onPreToolUse } from "./pre-tool-use.ts";
 import { onPrompt } from "./prompt.ts";
 import { onSessionStart } from "./session-start.ts";
 import { onStop } from "./stop.ts";
-import { onSubagentStop } from "./subagent-stop.ts";
+import { onSubagentStop, roleOf } from "./subagent-stop.ts";
 import type { HookPayload, HookResponse } from "./types.ts";
 
 const EVENTS = new Set([
@@ -16,6 +17,7 @@ const EVENTS = new Set([
   "post-tool-use",
   "stop",
   "subagent-stop",
+  "agent-spawn",
   "session-end",
 ]);
 
@@ -52,6 +54,12 @@ export function handleHook(
         return onPostToolUse(ctx, payload);
       case "subagent-stop":
         return onSubagentStop(ctx, payload);
+      case "agent-spawn": {
+        // The runtime's witness of a crew role's spawn (finding 243); any other subagent leaves nothing.
+        const role = roleOf(payload.agent_type);
+        if (role && payload.agent_id) recordSpawn(ctx.paths, payload.agent_id, role);
+        return {};
+      }
       case "session-end":
         // Whatever the reason (`/clear` and logout among them), the session is no neighbour now.
         updateSession(ctx.paths, ctx.sessionId, (session) => {
