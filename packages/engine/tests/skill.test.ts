@@ -1696,6 +1696,57 @@ test("2026-10-31-004 AC-4: the Elephant-Goldfish Model has a row per rule of its
     expect(refused.find((r) => r.rule === rule)?.decision, rule).toBe(decision);
 });
 
+test("2026-11-14-004 AC-3: be-ambitious has its source, three rules in the Understand reference, its refusals with their decisions, and the limit on what the smallest change leaves out", () => {
+  const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as {
+    sources: { name: string; licence: string; commit: string }[];
+    rows: LedgerRow[];
+  };
+  expect(ledger.sources).toContainEqual({
+    name: "be-ambitious",
+    licence: "MIT",
+    commit: "dc116a3",
+  });
+  const rows = ledger.rows.filter((r) => r.source === "be-ambitious");
+  const reference = "plugins/core/skills/crew/references/understand.md";
+  const understand = repoFile(reference);
+  const taken = rows.filter((r) => r.status === "in");
+  expect(taken.map((r) => r.rule).sort()).toEqual([
+    "altitude: aim at the outcome, the goal beyond the goal",
+    "an outside judge decides if it worked",
+    "better, not bigger",
+  ]);
+  for (const row of taken) {
+    expect(row.file, row.rule).toBe(reference);
+    expect(understand, row.rule).toContain(row.text ?? "no text");
+    expect(row.proof, row.rule).toBe("skill.test.ts");
+  }
+  const refused = rows.filter((r) => r.status === "refused");
+  for (const [rule, decision] of [
+    ["altitude: the ladder of three rungs", "D-1"],
+    ["next: start on the highest rung that can be finished", "D-1"],
+    ["depth: an unreasonable goal treated as reasonable", "D-2"],
+    ["depth: the four questions of a top professional", "D-3"],
+    ["range: nouns to verbs, the crew of other fields", "D-3"],
+  ]) {
+    const row = refused.find((r) => r.rule === rule);
+    expect(row?.decision, rule).toBe(decision);
+    expect(row?.reason, rule).toContain("2026-11-14-004");
+  }
+  expect(refused.length).toBe(5);
+  // The limit is the crew's own, beside the rule it bounds: what the method asks is never "wider".
+  expect(understand).toContain(
+    "What the method asks of the change is part of it and is never left out as wider: its route and risk areas, the gates, what stays green, and the gap round's assumed practice and warnings.",
+  );
+  // The three entries stand right after the problem, before the assumptions.
+  const at = (text: string) => understand.indexOf(text);
+  expect(at("- **The problem**")).toBeLessThan(at("- **The outcome**"));
+  expect(at("- **The outcome**")).toBeLessThan(at("- **The judge**"));
+  expect(at("- **The judge**")).toBeLessThan(at("- **The smallest change that reaches it**"));
+  expect(at("- **The smallest change that reaches it**")).toBeLessThan(
+    at("- **Assumptions you are making**"),
+  );
+});
+
 const SPEC_SKILLS = ["draft", "review", "review-loop", "resolve"].map(
   (s) => `wizardingcode-spec-${s}`,
 );

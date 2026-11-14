@@ -115,6 +115,7 @@ const SPEC_CASES = [
 ];
 const CASES = [
   ...SPEC_CASES,
+  "outcome-before-scope",
   "false-done",
   "proven-test-first",
   "risk-escalation",
@@ -203,7 +204,7 @@ const PACK_BY_PREFIX: Record<string, string> = {
 /** The with halves of the pack pairs, the cases that register a pack (SP9 Task 11): derived once for the two tests that read them. */
 const WITH_CASES = PACK_CASES.filter((name) => !name.endsWith("-absent"));
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the sixty-one cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the sixty-two cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     // benchmark.json is the benchmark set (SP6 Task 5), not a case.
     .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
@@ -233,6 +234,7 @@ test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the sixty-one c
     "issue-root-cause-named",
     "confidential-entry-not-reused",
     "root-cause-not-repeated",
+    "outcome-before-scope",
   ])
     expect(readFileSync(`${EVALS}${name}/fixture.sh`, "utf8")).toContain("fixtures/node-plain.sh");
   for (const name of [

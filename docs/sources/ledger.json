@@ -90,6 +90,11 @@
    "name": "egm",
    "licence": "Apache-2.0",
    "commit": "403d888"
+  },
+  {
+   "name": "be-ambitious",
+   "licence": "MIT",
+   "commit": "dc116a3"
   }
  ],
  "unread": [
@@ -2262,6 +2267,65 @@
    "status": "refused",
    "decision": "D-1",
    "reason": "item 2026-11-08-001 (finding 227): with at most two rounds the review is done after round 2, so no stop on progress is needed, the user's D-1 of 2026-11-08"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "altitude: aim at the outcome, the goal beyond the goal",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/understand.md",
+   "text": "what do you want to happen next",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "an outside judge decides if it worked",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/understand.md",
+   "text": "is neither you nor the user",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "better, not bigger",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/understand.md",
+   "text": "what makes the work larger without making it better is left out",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "altitude: the ladder of three rungs",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-11-14-004: it widens a request nobody asked to widen, the user's D-1 of 2026-11-14"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "next: start on the highest rung that can be finished",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-11-14-004: it widens a request nobody asked to widen, the user's D-1 of 2026-11-14"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "depth: an unreasonable goal treated as reasonable",
+   "status": "refused",
+   "decision": "D-2",
+   "reason": "item 2026-11-14-004: the research the article cites says a hard performance goal can lower results on a complex new task, the user's D-2 of 2026-11-14"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "depth: the four questions of a top professional",
+   "status": "refused",
+   "decision": "D-3",
+   "reason": "item 2026-11-14-004: refused for now, until the rule taken here (the outcome, its judge, the smallest change) is measured by the eval case outcome-before-scope, the user's D-3 of 2026-11-14"
+  },
+  {
+   "source": "be-ambitious",
+   "rule": "range: nouns to verbs, the crew of other fields",
+   "status": "refused",
+   "decision": "D-3",
+   "reason": "item 2026-11-14-004: refused for now, until the rule taken here (the outcome, its judge, the smallest change) is measured by the eval case outcome-before-scope, the user's D-3 of 2026-11-14"
   }
  ]
 }
