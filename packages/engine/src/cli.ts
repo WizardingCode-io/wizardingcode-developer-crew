@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   type AdapterStatus,
   foreignText,
@@ -380,6 +380,7 @@ import {
   workingRoles,
 } from "./state.ts";
 import {
+  adoptFirstUse,
   integrityOf,
   readProtectedJson,
   recordIntegrity,
@@ -4352,6 +4353,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths) return refuse(INACTIVE);
+  // First use of this project on this machine: its files are recorded as they stand before
+  // anything writes a protected file, a worktree's copies from its main included (2026-11-14-003).
+  try {
+    const adopted = adoptFirstUse(paths);
+    if (adopted.length)
+      io.stderr(
+        `first use of this project on this machine: ${adopted.length} file(s) recorded as they stand (${dirname(paths.integrityFile)})\n`,
+      );
+  } catch (error) {
+    io.stderr(`the project's files were not recorded: ${(error as Error).message}\n`);
+  }
   // A worktree takes its main checkout's policy and profile before anything reads them (AC-5).
   try {
     for (const note of adoptMainFiles(paths)) io.stderr(`${note}\n`);

@@ -5,6 +5,7 @@ import { resolvePaths } from "../paths.ts";
 import { loadPolicy } from "../policy.ts";
 import { ensureProfile } from "../profile.ts";
 import { adoptMainFiles, liveOf, loadState, recordSeen } from "../state.ts";
+import { adoptFirstUse } from "../store.ts";
 import type { Message } from "../types.ts";
 import { openItems } from "../work.ts";
 import type { HookContext, HookPayload } from "./types.ts";
@@ -50,6 +51,13 @@ export function buildContext(
   const cwd = payload.cwd ?? process.cwd();
   const paths = resolvePaths(cwd, env);
   if (!paths) return null;
+  // First use of this project on this machine: its files are recorded as they stand before
+  // anything here writes a protected file (2026-11-14-003). A failure costs the hook nothing.
+  try {
+    adoptFirstUse(paths);
+  } catch {
+    // the record stays as it was
+  }
   // A worktree's policy and profile come from its main checkout before anything reads them (AC-5);
   // the session's heartbeat is liveness data (AC-1). Neither may cost the hook its rule.
   try {

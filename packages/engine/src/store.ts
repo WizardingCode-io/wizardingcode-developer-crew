@@ -1,7 +1,8 @@
-import { basename, dirname, relative } from "node:path";
-import { readText, sha256, writeJson, writeText } from "./fs.ts";
+import { readdirSync } from "node:fs";
+import { basename, dirname, join, relative } from "node:path";
+import { readText, readTextQuietly, sha256, writeJson, writeText } from "./fs.ts";
 import { readUnderLock, withLock } from "./lock.ts";
-import type { CrewPaths } from "./paths.ts";
+import { type CrewPaths, PROTECTED_WORK_FILES } from "./paths.ts";
 
 type Integrity = Record<string, string>;
 
@@ -86,6 +87,65 @@ export function recordIntegrity(paths: CrewPaths, absPath: string): boolean {
     if (text === null) return false;
     rememberIn(paths.integrityFile, rel(paths, absPath), text);
     return true;
+  });
+}
+
+/**
+ * The protected files a project may hold, as absolute paths: the profile, the register, and in
+ * each folder of `.crew/work` that holds a `work.json`, the files of `PROTECTED_WORK_FILES`. The
+ * policy is not among them: it is hand-written by design and trusted with no hash.
+ */
+function projectFiles(paths: CrewPaths): string[] {
+  const files = [join(paths.crewDir, "profile.json"), join(paths.crewDir, "decisions.json")];
+  const work = join(paths.crewDir, "work");
+  let ids: string[] = [];
+  try {
+    ids = readdirSync(work);
+  } catch {
+    // no item yet
+  }
+  for (const id of ids) {
+    const dir = join(work, id);
+    if (readTextQuietly(join(dir, "work.json")) === null) continue;
+    for (const name of PROTECTED_WORK_FILES) files.push(join(dir, name));
+  }
+  return files;
+}
+
+/** Whether a project's trust record holds nothing yet: absent or an empty object, never one that does not parse or cannot be read. */
+function recordIsEmpty(file: string): boolean {
+  const { map, corrupt } = readIntegrityFile(file);
+  return !corrupt && Object.keys(map).length === 0;
+}
+
+/**
+ * First use of a project on this machine (the user folder was removed, or the project was
+ * cloned): while its trust record holds nothing, the tamper rule trusts every file with no hash,
+ * and the engine's first write would then leave the others reading as changed outside the engine,
+ * one file at a time. So the files the project already has are recorded as they stand, once.
+ *
+ * The record is looked at first with no lock: one that holds a hash, does not parse or cannot be
+ * read ends it there, with nothing written and no lock taken. Otherwise everything happens in one
+ * hold of the store's lock: the record is read again (a hook and a command start together, and
+ * only one of them adopts), each file's text is read, and the record is written once. A file that
+ * cannot be read is skipped. Answers the recorded paths from the project's root, sorted.
+ */
+export function adoptFirstUse(paths: CrewPaths): string[] {
+  if (!recordIsEmpty(paths.integrityFile)) return [];
+  const candidates = projectFiles(paths);
+  // A project with no protected file gets no record and takes no lock.
+  if (!candidates.some((file) => readTextQuietly(file) !== null)) return [];
+  return withStoreLock(paths, () => {
+    if (!recordIsEmpty(paths.integrityFile)) return [];
+    const record: Integrity = {};
+    for (const file of candidates) {
+      const text = readTextQuietly(file);
+      if (text !== null) record[rel(paths, file)] = sha256(text);
+    }
+    const recorded = Object.keys(record).sort();
+    if (!recorded.length) return [];
+    writeJson(paths.integrityFile, Object.fromEntries(recorded.map((key) => [key, record[key]])));
+    return recorded;
   });
 }
 

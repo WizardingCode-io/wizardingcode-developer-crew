@@ -805,8 +805,13 @@ test("SP2c AC-4: the child records origin and parent, its reply fills the task, 
     WIZARDINGCODE_CREW_MAIL_ID: message,
     WIZARDINGCODE_CREW_MAIL_AGENT: "T-2",
   });
+  // The worktree's first command also says its files were recorded (2026-11-14-003): the refusal
+  // is the last line.
   expect(
-    (await stray.run("start", "T-2", "--answers", answers, "--origin", "M-nope")).err.trim(),
+    (await stray.run("start", "T-2", "--answers", answers, "--origin", "M-nope")).err
+      .trim()
+      .split("\n")
+      .at(-1),
   ).toBe("no message M-nope addressed to this session (crew mail inbox)");
   // The command refuses a task of the implementer's own, as the hook denies it.
   expect((await stray.run("task", id, "open", "T-3", "--criteria", "AC-2")).err.trim()).toBe(

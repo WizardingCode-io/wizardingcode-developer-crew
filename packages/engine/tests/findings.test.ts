@@ -107,7 +107,7 @@ function openFindings(text: string): number[] {
 // records item's advisories, a release killed mid-step, steps with no bound) closed by 2026-11-13-004.
 // 206 (the loop's shell at the sync, its any-build check, its commands with no bound, an errored baseline measured)
 // closed by 2026-11-13-005, with what 2026-11-13-004 left to the loop; the limit that stays is in its record.
-const OPEN = [77, 114, 210, 213, 214, 215, 222, 224, 244];
+const OPEN = [77, 114, 210, 213, 214, 215, 222, 224, 244, 246];
 
 test("2026-11-13-005 AC-52: finding 206 reads closed with its four points, its limit and what keeps no bound; the ADR's note and the loop's README say what changed", () => {
   const text = readFileSync(FINDINGS, "utf8");
