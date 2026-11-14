@@ -1,0 +1,77 @@
+{
+  "run": "2026-11-14-2",
+  "at": "2026-11-14T11:00:11.189Z",
+  "targets": [
+    "ui-reduced-motion-fails",
+    "ui-ux-generic-tells"
+  ],
+  "baseline": {
+    "ui-reduced-motion-fails": {
+      "name": "ui-reduced-motion-fails",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/frontend.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 18.3984907
+    }
+  },
+  "proposals": [],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-2",
+    "claudeModels": true
+  },
+  "costUsd": 22.9237922,
+  "lessons": [],
+  "exit": 2,
+  "judge": "claude-fable-5-2",
+  "judgeSkipped": [],
+  "unmeasured": []
+}
