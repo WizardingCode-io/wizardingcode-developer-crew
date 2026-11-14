@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -62,6 +63,7 @@ import {
   redactingLogger,
   relaunchCommand,
   resumeLoop,
+  runLoopCommand,
   runProbe,
   secretReadCommand,
   secretSetCommand,
@@ -5041,12 +5043,30 @@ test("2026-11-13-005 AC-49: the clearing waits for a lock made in the last minut
   aged(old);
   const logged: string[] = [];
   const waits: number[] = [];
+  // The log and the wait in the order they happened (2026-11-14-001 AC-3).
+  const order: string[] = [];
   clearClone(
     repo,
     noGit,
-    (l) => logged.push(l),
-    (ms) => waits.push(ms),
+    (l) => {
+      logged.push(l);
+      order.push(`log: ${l}`);
+    },
+    (ms) => {
+      waits.push(ms);
+      order.push("wait");
+    },
   );
+  const saidBefore = order.findIndex((o) =>
+    o.startsWith("log: a git lock made in the last minute: waiting"),
+  );
+  const waited = order.indexOf("wait");
+  const removed = order.indexOf(
+    "log: a lock made in the last minute was waited for and removed: .git/index.lock",
+  );
+  expect(saidBefore).toBeGreaterThanOrEqual(0);
+  expect(saidBefore).toBeLessThan(waited);
+  expect(waited).toBeLessThan(removed);
   expect(existsSync(old)).toBe(false);
   expect(existsSync(fresh)).toBe(false);
   expect(waits.length).toBe(1);
@@ -5197,4 +5217,179 @@ test("2026-11-13-005 AC-50: the install's wait for the first tick's probe covers
   const never = installDeps(freshHome(), null);
   expect(await install({ cloneFrom: loopSeed() }, never.deps)).toBe(1);
   expect(never.log.join("\n")).toContain("the agent wrote no probe in 150 s");
+});
+
+test("2026-11-14-001 AC-7: the clearing leaves a lock replaced by another file with the time it had, and one rewritten in place within a millisecond, and takes one untouched", () => {
+  const noGit = () => ({ status: 0, stdout: "", stderr: "" });
+  const fresh = () => {
+    const repo = join(tempDir("lock-identity-"), "repo");
+    mkdirSync(join(repo, ".git"), { recursive: true });
+    return { repo, lock: join(repo, ".git/index.lock") };
+  };
+  const identity = (path: string) => {
+    const stat = statSync(path, { bigint: true });
+    return { ino: stat.ino, ns: stat.mtimeNs, ms: stat.mtimeMs };
+  };
+  const left = "a lock a git still holds is left: .git/index.lock";
+  // Ten seconds back, in whole milliseconds: a new file's own time has a part a Date cannot carry.
+  const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 10_000);
+
+  // Replaced during the wait by another file with the same time: two files that existed at once.
+  const replaced = fresh();
+  writeFileSync(replaced.lock, "");
+  utimesSync(replaced.lock, pinned, pinned);
+  const before = identity(replaced.lock);
+  const logReplaced: string[] = [];
+  clearClone(
+    replaced.repo,
+    noGit,
+    (l) => logReplaced.push(l),
+    () => {
+      const next = `${replaced.lock}.next`;
+      writeFileSync(next, "another git's");
+      utimesSync(next, pinned, pinned);
+      renameSync(next, replaced.lock);
+    },
+  );
+  expect(existsSync(replaced.lock)).toBe(true);
+  const after = identity(replaced.lock);
+  expect(after.ino).not.toBe(before.ino);
+  expect(after.ns).toBe(before.ns);
+  expect(logReplaced).toContain(left);
+
+  // Rewritten in place during the wait, its time 0.4 ms later: the same inode, the same millisecond.
+  const rewritten = fresh();
+  writeFileSync(rewritten.lock, "");
+  const seconds = Math.floor(Date.now() / 1000) - 10;
+  utimesSync(rewritten.lock, seconds, seconds);
+  const first = identity(rewritten.lock);
+  const logRewritten: string[] = [];
+  clearClone(
+    rewritten.repo,
+    noGit,
+    (l) => logRewritten.push(l),
+    () => utimesSync(rewritten.lock, seconds + 0.0004, seconds + 0.0004),
+  );
+  expect(existsSync(rewritten.lock)).toBe(true);
+  const second = identity(rewritten.lock);
+  // The staging proves itself: this file system keeps the time below a millisecond.
+  expect(second.ino).toBe(first.ino);
+  expect(second.ns).not.toBe(first.ns);
+  expect(second.ms).toBe(first.ms);
+  expect(logRewritten).toContain(left);
+
+  // Untouched during the wait: taken, as before.
+  const untouched = fresh();
+  writeFileSync(untouched.lock, "");
+  utimesSync(untouched.lock, pinned, pinned);
+  const logUntouched: string[] = [];
+  clearClone(
+    untouched.repo,
+    noGit,
+    (l) => logUntouched.push(l),
+    () => {},
+  );
+  expect(existsSync(untouched.lock)).toBe(false);
+  expect(logUntouched).toContain(
+    "a lock made in the last minute was waited for and removed: .git/index.lock",
+  );
+});
+
+test("2026-11-14-001 AC-8: each command of the script gets the dependencies built for it: the tick's command file for the tick, the install's for the install, none for uninstall, status and stop, and the options its arguments name", async () => {
+  const home = join(tempDir("loop-command-"), "home");
+  mkdirSync(home, { recursive: true });
+  const fileOf = async (
+    argv: string[],
+    actions: Parameters<typeof runLoopCommand>[1]["actions"],
+  ) => {
+    const recorded = recordingRunner();
+    const out: string[] = [];
+    const err: string[] = [];
+    const code = await runLoopCommand(argv, {
+      home,
+      run: recorded.run,
+      actions,
+      out: (l) => out.push(l),
+      err: (l) => err.push(l),
+    });
+    const own = recorded.calls.find((c) => c.cmd[0] === "true");
+    return { code, out, err, named: own?.cmd[1], file: own?.commandFile };
+  };
+  const tickFile = join(home, TICK_COMMAND_FILE);
+  const installFile = join(home, INSTALL_COMMAND_FILE);
+  let tickOptions: unknown;
+  let installOptions: unknown;
+
+  const ticked = await fileOf(["tick"], {
+    tick: async (options, deps) => {
+      tickOptions = options;
+      deps.sh(["true", "tick"], { cwd: home });
+      return 7;
+    },
+  });
+  expect(ticked).toMatchObject({ code: 7, named: "tick", file: tickFile });
+  expect(tickOptions).toEqual({ dryRun: false, relaunched: false });
+  await fileOf(["tick", "--relaunched", "--dry-run"], {
+    tick: async (options) => {
+      tickOptions = options;
+      return 0;
+    },
+  });
+  expect(tickOptions).toEqual({ dryRun: true, relaunched: true });
+
+  const installed = await fileOf(["install"], {
+    install: async (options, deps) => {
+      installOptions = options;
+      deps.sh(["true", "install"], { cwd: home });
+      return 8;
+    },
+  });
+  expect(installed).toMatchObject({ code: 8, named: "install", file: installFile });
+  expect(installOptions).toEqual({ cloneFrom: undefined });
+  const checkout = join(home, "..", "a-checkout");
+  await fileOf(["install", "--clone-from", checkout], {
+    install: async (options) => {
+      installOptions = options;
+      return 0;
+    },
+  });
+  expect(installOptions).toEqual({ cloneFrom: checkout });
+  expect(JSON.parse(readFileSync(join(home, "config.json"), "utf8")).userCheckout).toBe(checkout);
+
+  const uninstalled = await fileOf(["uninstall"], {
+    uninstall: async (deps) => {
+      // What only the install's dependencies hold, so another builder's would fail here.
+      expect(typeof deps.which).toBe("function");
+      deps.sh(["true", "uninstall"], { cwd: home });
+      return 9;
+    },
+  });
+  expect(uninstalled).toMatchObject({ code: 9, named: "uninstall" });
+  expect(uninstalled.file).toBeUndefined();
+
+  const status = await fileOf(["status"], {
+    statusText: (deps) => {
+      expect(typeof deps.which).toBe("function");
+      deps.sh(["true", "status"], { cwd: home });
+      return "the status's own text";
+    },
+  });
+  expect(status).toMatchObject({ code: 0, named: "status", out: ["the status's own text"] });
+  expect(status.file).toBeUndefined();
+
+  const stopped = await fileOf(["stop"], {
+    stopLoop: async (deps) => {
+      // What only the stop's dependencies hold.
+      expect(typeof deps.kill).toBe("function");
+      expect(typeof deps.boot).toBe("function");
+      deps.sh(["true", "stop"], { cwd: home });
+      return "the stop's own text";
+    },
+  });
+  expect(stopped).toMatchObject({ code: 0, named: "stop", out: ["the stop's own text"] });
+  expect(stopped.file).toBeUndefined();
+
+  const unknown = await fileOf(["no-such-command"], {});
+  expect(unknown.code).toBe(1);
+  expect(unknown.err.join("\n")).toContain("usage: bun scripts/improve-loop.ts");
 });

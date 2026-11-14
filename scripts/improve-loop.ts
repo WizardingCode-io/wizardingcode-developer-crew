@@ -805,11 +805,11 @@ function sleepSync(ms: number): void {
  * loop's own commands is writing there. A lock made in the last minute can still be a living
  * git's: git's own maintenance, started by the tick before, or a dead tick's git that no command
  * file named. So such a lock is waited for until it is a minute old, and taken only if it is
- * there with the same modification time then; one a git released meanwhile, or wrote again, is
- * left. A lock of a
- * git that was just killed, as by the install's kickstart, is taken after that wait, so the
- * tick's first git command does not fail on it. The release keeps a narrower rule for the same
- * folder (its own `index.lock` alone), since a release can run by hand beside a person's git.
+ * there with the same inode and modification time then (2026-11-14-001); one a git released
+ * meanwhile, replaced or wrote again is left. A lock of a git that was just killed, as by the
+ * install's kickstart, is taken after that wait, so the tick's first git command does not fail on
+ * it. The release keeps a narrower rule for the same folder (its own `index.lock` alone), since a
+ * release can run by hand beside a person's git.
  */
 export function clearClone(
   repo: string,
@@ -826,9 +826,15 @@ export function clearClone(
       return entry.name.endsWith(".lock") ? [path] : [];
     });
   };
-  const madeAt = (path: string): number | null => {
+  /**
+   * What tells one lock file from another at the same path: its inode, and its modification time
+   * at the file system's resolution. Read as bigints: an inode as a number could round, and the
+   * millisecond field of such a reading is cut to whole milliseconds, so it serves the age alone.
+   */
+  const identityOf = (path: string): { ino: bigint; mtimeNs: bigint; mtimeMs: number } | null => {
     try {
-      return statSync(path).mtimeMs;
+      const stat = statSync(path, { bigint: true });
+      return { ino: stat.ino, mtimeNs: stat.mtimeNs, mtimeMs: Number(stat.mtimeMs) };
     } catch {
       return null;
     }
@@ -836,9 +842,9 @@ export function clearClone(
   for (const path of [...locksIn(gitDir, false), ...locksIn(join(gitDir, "refs"), true)]) {
     const rel = relative(repo, path);
     try {
-      const made = madeAt(path);
+      const made = identityOf(path);
       if (made === null) continue;
-      const age = Date.now() - made;
+      const age = Date.now() - made.mtimeMs;
       if (age >= CLEAR_LOCK_AGE_MS) {
         rmSync(path, { force: true });
         log(`a lock a killed git left was removed: ${rel}`);
@@ -849,10 +855,10 @@ export function clearClone(
         `a git lock made in the last minute: waiting ${Math.ceil(rest / 1000)} s before it is taken: ${rel}`,
       );
       wait(rest);
-      const now = madeAt(path);
+      const now = identityOf(path);
       // Released by a living git during the wait: nothing of this tick's to remove.
       if (now === null) continue;
-      if (now !== made) {
+      if (now.ino !== made.ino || now.mtimeNs !== made.mtimeNs) {
         log(`a lock a git still holds is left: ${rel}`);
         continue;
       }
@@ -2690,17 +2696,17 @@ const plistPath = (deps: Pick<InstallDeps, "userHome">): string =>
   join(deps.userHome, "Library", "LaunchAgents", `${LABEL}.plist`);
 
 /**
- * The install (AC-8): the tools found, the clone made and bootstrapped (from a checkout when the
- * loop's commit is not on origin yet), the plist written, the agent booted and kicked, the probe
- * waited for and printed with the fallback when the login is not there.
- */
-/**
  * How long an install waits for its first tick's probe, in seconds: the probe's own commands,
  * and the minute that tick may first wait for a git lock the kickstart's kill left
  * (2026-11-13-005).
  */
 const PROBE_WAIT_S = 90 + CLEAR_LOCK_AGE_MS / 1000;
 
+/**
+ * The install (AC-8): the tools found, the clone made and bootstrapped (from a checkout when the
+ * loop's commit is not on origin yet), the plist written, the agent booted and kicked, the probe
+ * waited for and printed with the fallback when the login is not there.
+ */
 export async function install(options: { cloneFrom?: string }, deps: InstallDeps): Promise<number> {
   const { home, log } = deps;
   const repo = join(home, "repo");
@@ -3096,23 +3102,51 @@ export function realStopDeps(home: string, run: CommandRunner = spawnRunner(fals
 
 const USAGE = `usage: bun scripts/improve-loop.ts tick [--dry-run] | install [--clone-from <checkout>] | uninstall | status | pause | resume | stop | secret set <account>`;
 
-if (import.meta.main) {
-  const [command, ...rest] = process.argv.slice(2);
-  const home = improveHome(process.env);
+/** The implementations of the script's commands that act on the machine: the real ones, or a test's. */
+export interface LoopActions {
+  tick: typeof tick;
+  install: typeof install;
+  uninstall: typeof uninstall;
+  statusText: typeof statusText;
+  stopLoop: typeof stopLoop;
+}
+
+/**
+ * The script's commands, by name (2026-11-14-001): what the entry block runs, as a function a
+ * test can call with its own runner and implementations. Each command gets the real dependencies
+ * built for it: the tick's with the tick's command file, the install's with the install's, the
+ * uninstall's, the status's and the stop's with none, which would replace a running tick's
+ * record. The exit code is returned.
+ */
+export async function runLoopCommand(
+  argv: readonly string[],
+  at: {
+    home: string;
+    run?: CommandRunner;
+    actions?: Partial<LoopActions>;
+    out?: (line: string) => void;
+    err?: (line: string) => void;
+  },
+): Promise<number> {
+  const [command, ...rest] = argv;
+  const { home, run } = at;
+  const actions: LoopActions = { tick, install, uninstall, statusText, stopLoop, ...at.actions };
+  const out = at.out ?? ((line: string) => console.log(line));
+  const err = at.err ?? ((line: string) => console.error(line));
   const config = readConfig(home);
   let code = 0;
   if (command === "tick")
-    code = await tick(
+    code = await actions.tick(
       { dryRun: rest.includes("--dry-run"), relaunched: rest.includes("--relaunched") },
-      realTickDeps(home, config),
+      realTickDeps(home, config, run),
     );
-  else if (command === "pause") console.log(pauseLoop(home));
-  else if (command === "resume") console.log(resumeLoop(home));
+  else if (command === "pause") out(pauseLoop(home));
+  else if (command === "resume") out(resumeLoop(home));
   else if (command === "stop") {
-    console.log(await stopLoop(realStopDeps(home)));
+    out(await actions.stopLoop(realStopDeps(home, run)));
   } else if (command === "install") {
-    const at = rest.indexOf("--clone-from");
-    const cloneFrom = at >= 0 ? rest[at + 1] : undefined;
+    const flag = rest.indexOf("--clone-from");
+    const cloneFrom = flag >= 0 ? rest[flag + 1] : undefined;
     // The checkout the install clones from is the user's, fast-forwarded after each run (D-1), when the configuration names none.
     if (cloneFrom && !config.userCheckout) {
       mkdirSync(home, { recursive: true });
@@ -3122,32 +3156,35 @@ if (import.meta.main) {
         { mode: 0o600 },
       );
     }
-    code = await install(
+    code = await actions.install(
       { cloneFrom },
-      realInstallDeps(home, undefined, join(home, INSTALL_COMMAND_FILE)),
+      realInstallDeps(home, run, join(home, INSTALL_COMMAND_FILE)),
     );
-  } else if (command === "uninstall") code = await uninstall(realInstallDeps(home));
-  else if (command === "status") console.log(statusText(realInstallDeps(home)));
+  } else if (command === "uninstall") code = await actions.uninstall(realInstallDeps(home, run));
+  else if (command === "status") out(actions.statusText(realInstallDeps(home, run)));
   else if (command === "secret" && rest[0] === "set" && rest[1]) {
     const token = process.stdin.isTTY
       ? (prompt(`token for ${rest[1]}:`) ?? "")
       : readFileSync(0, "utf8").trim();
     if (!token) {
-      console.error("no token given");
+      err("no token given");
       code = 1;
     } else {
       const { cmd, input } = secretSetCommand(rest[1], token);
       const r = spawnSync(cmd[0] as string, cmd.slice(1), { input, encoding: "utf8" });
       code = r.status ?? 1;
-      console.log(
+      out(
         code === 0
           ? `${rest[1]} stored under ${SERVICE}`
           : `security failed: ${(r.stderr ?? "").trim()}`,
       );
     }
   } else {
-    console.error(USAGE);
+    err(USAGE);
     code = 1;
   }
-  process.exit(code);
+  return code;
 }
+
+if (import.meta.main)
+  process.exit(await runLoopCommand(process.argv.slice(2), { home: improveHome(process.env) }));
