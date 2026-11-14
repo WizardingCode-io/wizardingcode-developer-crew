@@ -28,7 +28,7 @@ The team covers five stacks. Each has four kinds of source: the official documen
 | Go | https://go.dev/doc/ (the documentation, Effective Go, the release notes); https://go.dev/ref/spec; https://go.dev/learn/#tutorials; https://go.dev/wiki (Code Review Comments, common mistakes); https://go.dev/blog | `golang/go` on GitHub | https://pkg.go.dev | the Google Go Style Guide; the Uber Go Style Guide (`uber-go/guide`); https://go.dev/doc/security (govulncheck and the vulnerability database); OWASP |
 | Rust | https://doc.rust-lang.org (The Book, the Reference, the standard library, the Cargo Book, the Edition Guide); Rust by Example; the Rust API Guidelines; Clippy's list of lints; the Rustonomicon; the Async Book; https://blog.rust-lang.org | `rust-lang/rust` on GitHub (`RELEASES.md`) | https://docs.rs; https://crates.io | RustSec, https://rustsec.org (with cargo-audit); OWASP |
 
-`https://dominikwro.github.io/` is "Python: The Right Way", a community guide by Dominik Wronski under CC BY-NC 4.0. Read on 2026-11-14, some of its entries were unfinished placeholders. The user chose it as a source.
+`https://dominikwro.github.io/` is "Python: The Right Way", a community guide by Dominik Wronski under CC BY-NC 4.0. Its author, its licence and its state were read on 2026-11-14 on the site's one page, `https://dominikwro.github.io/`: some of its entries were unfinished placeholders. The user chose it as a source.
 
 ## 4. Frameworks
 
@@ -64,8 +64,8 @@ Laravel is the one framework with a pack today (`packs/laravel`).
 | Errors in production: Datadog | hosted; Datadog says it is "under significant development" | https://docs.datadoghq.com/bits_ai/mcp_server/setup/ | `claude mcp add --transport http datadog-mcp <YOUR_MCP_SERVER_ENDPOINT>` |
 | Errors in production: Bugsnag | SmartBear's server, hosted or run on the machine | https://developer.smartbear.com/smartbear-mcp | the page read gave no command |
 | Database: PostgreSQL and MySQL | Google MCP Toolbox for Databases, run on the machine. It has no read-only switch: it connects with a SELECT-only database user | https://mcp-toolbox.dev/documentation/introduction/ | `npx -y @toolbox-sdk/server --prebuilt=postgres` |
-| Database: a project hosted on Supabase | Supabase's hosted server, read-only (`?read_only=true`) | https://supabase.com/docs/guides/getting-started/mcp | `claude mcp add --scope project --transport http supabase "https://mcp.supabase.com/mcp"` |
-| Database: a project hosted on Neon | Neon's hosted server, read-only (`?readonly=true`) | https://neon.com/docs/ai/neon-mcp-server | `npx neon@latest mcp` |
+| Database: a project hosted on Supabase | Supabase's hosted server, read-only (`?read_only=true`) | https://supabase.com/docs/guides/getting-started/mcp | `claude mcp add --scope project --transport http supabase "https://mcp.supabase.com/mcp?read_only=true"`. The page's own command has no parameter; `?read_only=true` is the page's way to "allow only read queries" |
+| Database: a project hosted on Neon | Neon's hosted server, read-only (`?readonly=true`) | https://neon.com/docs/ai/neon-mcp-server | `npx neon@latest mcp`. As the page gives it, the command sets no read-only mode: the server's URL in the session's configuration is then `https://mcp.neon.tech/mcp?readonly=true` |
 
 The error server used is the one of the service the project already sends its errors to. For the database, a framework's own server comes first where it gives the schema and the queries (Laravel Boost, Drizzle Kit, Prisma); Google MCP Toolbox serves the other projects, and Supabase's and Neon's serve the projects hosted there.
 
@@ -86,7 +86,7 @@ The error server used is the one of the service the project already sends its er
 | Node / TypeScript | Deno's skills. Deno has no MCP server | https://github.com/denoland/skills | `npx skills add denoland/skills` |
 | Python | FastAPI's skill, shipped inside the installed package | https://fastapi.tiangolo.com/ai-development/ | `uvx library-skills install --skill fastapi --yes --claude` |
 | Python | Litestar's skills (20) | https://github.com/litestar-org/litestar-skills | `claude plugin marketplace add litestar-org/litestar-skills`, then `claude plugin install litestar@litestar` |
-| Python | Astral's plugin: skills for uv, ruff and ty | https://github.com/astral-sh/claude-code-plugins | `/plugin marketplace add astral-sh/agent-plugins`, then `/plugin install astral@astral-sh` |
+| Python | Astral's plugin: skills for uv, ruff and ty. `https://github.com/astral-sh/claude-code-plugins` showed this same repository when read on 2026-11-14 | https://github.com/astral-sh/agent-plugins | `/plugin marketplace add astral-sh/agent-plugins`, then `/plugin install astral@astral-sh` |
 | Python | Pydantic's skills | https://github.com/pydantic/skills | `claude plugin marketplace add pydantic/skills`, then `claude plugin install pydantic@pydantic-skills` |
 | Go | gopls's built-in MCP server, labelled experimental: the workspace, a package's API, diagnostics, references, a search, govulncheck | https://github.com/golang/tools/blob/master/gopls/doc/features/mcp.md | `claude mcp add gopls -- gopls mcp` |
 | Rust | none found | | |
@@ -105,5 +105,5 @@ The item that builds this definition settles each of these:
   - where each server's credential is held and with what scope (GitHub, the error services, the databases);
   - that the hosted servers (GitHub's remote form, Prisma's, Supabase's, Neon's and the error services') send project data outside the machine;
   - that an install command runs its publisher's code in the project and on our side, so the version and the page are checked again at the install;
-  - that two servers are not stable: Drizzle Kit's is a release candidate and gopls's is experimental.
+  - that three servers are not stable: Drizzle Kit's is a release candidate, gopls's is experimental and Datadog's is "under significant development" by Datadog's word.
 - The backend team itself: its members beyond `review-code-quality`, its lead's agent file, and whether it validates.
