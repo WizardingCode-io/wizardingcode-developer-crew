@@ -98,7 +98,8 @@ function openFindings(text: string): number[] {
 // 243 fixed by 2026-11-12-007 as far as its design goes (a runtime's witness tells a role's filing from a script's,
 // and a filing with no witness is named); the four points that stay are in 213's record, which stays open.
 // 244 (what the leads of 2026-11-12-007 left on the runtime's witness) recorded by 2026-11-13-001, which fixed its two
-// code points; it stays open until a live session after the release shows roles in parallel and a short role keeping their mark.
+// code points; closed by 2026-11-14-005 on a live session of the released 0.24.0: three roles in parallel, one of one line, each marked.
+// 247 (a role's second stop is filed as a reply with no mark, and the readers name the role) recorded by 2026-11-14-005, no item.
 // 177, 178 and 181 (the advisories three items left: the loop's sweeps, the capture fixture and the design lint,
 // crew tdd's recordTdd and its pytest pattern) closed by 2026-11-13-002, each point done or left with its reason.
 // 183 (a role wait ends the turn where nobody watches) closed by 2026-11-13-003: the Stop hook holds such an end while
@@ -107,7 +108,7 @@ function openFindings(text: string): number[] {
 // records item's advisories, a release killed mid-step, steps with no bound) closed by 2026-11-13-004.
 // 206 (the loop's shell at the sync, its any-build check, its commands with no bound, an errored baseline measured)
 // closed by 2026-11-13-005, with what 2026-11-13-004 left to the loop; the limit that stays is in its record.
-const OPEN = [77, 114, 210, 213, 214, 215, 222, 224, 244, 246];
+const OPEN = [77, 114, 210, 213, 214, 215, 222, 224, 246, 247];
 
 test("2026-11-13-005 AC-52: finding 206 reads closed with its four points, its limit and what keeps no bound; the ADR's note and the loop's README say what changed", () => {
   const text = readFileSync(FINDINGS, "utf8");
@@ -249,20 +250,39 @@ test("2026-11-13-002 AC-4: findings 177, 178 and 181 read closed, each point nam
     expect(outcome(181), point).toContain(point);
 });
 
-test("2026-11-13-001 AC-7 (finding 244): the record holds what the leads of 2026-11-12-007 left, open on the live session's record alone, with what a stop with no answer leaves behind", () => {
+test("2026-11-13-001 AC-7 and 2026-11-14-005 AC-2 (finding 244): the record holds what the leads of 2026-11-12-007 left, closed on the live session's record, with what a stop with no answer leaves behind", () => {
   const text = readFileSync(FINDINGS, "utf8");
   const start = text.indexOf("\n### 244. ");
   expect(start).toBeGreaterThan(-1);
-  const section = text.slice(start);
-  expect(openFindings(text)).toContain(244);
+  const section = text.slice(start, text.indexOf("\n### 245. "));
+  expect(openFindings(text)).not.toContain(244);
   for (const sentence of [
     "Category: `false-proof`. Severity: low.",
+    "Outcome: closed by `2026-11-14-005`.",
     "(1) fixed in `2026-11-13-001`: a filing of the hook spends the witness only when it saved an answer to a file, and then spends every entry of its agent id and role",
     "(2) fixed in `2026-11-13-001`: the item's line is asserted in the own output of each of its six readers",
-    "(3) is what keeps this finding open: no record shows crew roles launched in parallel, or a role shorter than the engine's start, keeping their mark in a live session",
-    "It closes with the record of a real session after the release that shows both",
+    "(3) closed by the record of a session of this repository on the released 0.24.0, on 2026-11-14: three crew roles launched in one message",
+    "each first filing reads `witnessed: true`",
+    "The short role's only tool call was the runtime's hand-back",
+    "finding 247",
     "(4) is a fact of the observation: a project whose folder is gone reads as gone, and nothing in the engine changes",
     "An entry of a role that stopped with no answer stays in the log until that agent id files an answer or 500 later spawns push it out, and a script that files with that id and role in that time is recorded `witnessed`, after the role stopped (finding 213, its second point)",
+  ])
+    expect(section, sentence).toContain(sentence);
+});
+
+test("2026-11-14-005 AC-2 (finding 247): the second stop of a role the runtime saw is on record, open, with what the readers then say and what was not traced", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const start = text.indexOf("\n### 247. ");
+  expect(start).toBeGreaterThan(-1);
+  const section = text.slice(start);
+  expect(openFindings(text)).toContain(247);
+  for (const sentence of [
+    "Category: `friction`. Severity: low.",
+    "a second record 3.05 seconds after the first, with the same agent id and the same answer (one hash)",
+    "`answers with no runtime witness: devils-advocate`",
+    "Why the runtime stopped that role twice and the two others once was not traced",
+    "Outcome: open.",
   ])
     expect(section, sentence).toContain(sentence);
 });
