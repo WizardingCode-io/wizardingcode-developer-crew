@@ -14,9 +14,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { backoffHours } from "../packages/engine/src/backoff.ts";
 import { readJson, writeTextNew } from "../packages/engine/src/fs.ts";
+import { processStart } from "../packages/engine/src/open.ts";
 import { userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
 import { singleQuoted } from "../packages/engine/src/shell-words.ts";
@@ -53,11 +54,19 @@ import {
 } from "./improve-home.ts";
 import {
   accountToken,
+  boundOf,
+  type CommandRunner,
+  gitEnv,
+  LOCAL_MS,
   leftCommand,
+  leftCommandOf,
   notificationCommand,
+  type ProcessDeps,
   RELEASE_STEP_NAMES,
   type ReleaseOptions,
   type ReleaseOutcome,
+  readCommandFile,
+  recordedProcess,
   release,
   spawnRunner,
 } from "./release.ts";
@@ -380,6 +389,25 @@ export interface DayRun {
 
 const usd = (n: number): string => `${n.toFixed(2)} USD`;
 
+/**
+ * The name of a release's stop, as a pushed file may hold it (2026-11-13-005): the line's first
+ * line, redacted as every line of the loop is, with the loop's home and the user's home replaced,
+ * cut to 200 characters. A stop's line is free text of this machine (a filesystem error's path,
+ * git's words, a string read from a file), and the day's report is public.
+ */
+export function stopName(
+  line: string,
+  home: string,
+  userHome: string,
+  secrets: readonly string[],
+): string {
+  let name = redact(line.split("\n")[0] ?? "", secrets);
+  // The loop's home first: it is usually under the user's. An empty home replaces nothing.
+  if (home) name = name.split(home).join("<loop home>");
+  if (userHome) name = name.split(userHome).join("~");
+  return name.length > 200 ? `${name.slice(0, 199)}…` : name;
+}
+
 /** `docs/improve/daily/<date>.md`: the day's runs, the totals by provider, the releases and the failed steps (AC-10). */
 export function dailyReport(
   date: string,
@@ -389,6 +417,10 @@ export function dailyReport(
   skipped: {
     budget: { at: string; reason: string } | null;
     judge: { at: string } | null;
+    /** No token for the release's account (2026-11-13-005). */
+    token?: { at: string } | null;
+    /** A release still pending after its resume (2026-11-13-005): the reason as it was written. */
+    pending?: { at: string; reason: string } | null;
   } | null = null,
   extras: { deadTicks?: readonly DeadTick[]; stoppedRuns?: readonly string[] } = {},
 ): string {
@@ -432,12 +464,17 @@ export function dailyReport(
     "## Failed steps",
     "",
     ...(failures.length
-      ? failures.map((f) => `- run ${f.run}: step ${f.step} (${f.name}) failed`)
+      ? failures.map((f) =>
+          // Step 0 is a release that stopped before step 1 (2026-11-13-005): its name is the stop's.
+          f.step === 0
+            ? `- run ${f.run}: the release stopped before step 1: ${f.name}`
+            : `- run ${f.run}: step ${f.step} (${f.name}) failed`,
+        )
       : ["- none"]),
     "",
   ];
   // One line per kind of skip, each with its own sentence: both can stand on the same day.
-  if (skipped?.budget || skipped?.judge)
+  if (skipped?.budget || skipped?.judge || skipped?.token || skipped?.pending)
     lines.push(
       "",
       "## Skipped ticks",
@@ -449,6 +486,14 @@ export function dailyReport(
         : []),
       ...(skipped.judge
         ? [`- ${hhmm(skipped.judge.at)} UTC: no judge answered; a later due tick probes again`]
+        : []),
+      ...(skipped.token
+        ? [
+            `- ${hhmm(skipped.token.at)} UTC: the release's account has no token; a later tick probes again`,
+          ]
+        : []),
+      ...(skipped.pending
+        ? [`- ${hhmm(skipped.pending.at)} UTC: ${skipped.pending.reason.replace(": ", "; ")}`]
         : []),
     );
   // The ticks that died before their run ended (2026-10-28-001 AC-9), each by what its lock said once checked.
@@ -584,29 +629,50 @@ export interface StopDeps {
   kill: (pid: number, signal: "SIGTERM" | "SIGKILL") => void;
   /** The command a release of the stopped tick waits on, by its pid, or null: the release's own check when not given. */
   leftCommand?: (root: string, startedBy: number) => number | null;
+  /** The stopped tick's own command, as the home's command file names it, or null (2026-11-13-005): the file's own check when not given. */
+  tickCommand?: (home: string, startedBy: number) => number | null;
   wait: (ms: number) => Promise<void>;
   now: () => Date;
 }
 
+/** A door to a command a tick started: the group to signal, or null. */
+type CommandDoor = (startedBy: number) => number | null;
+
+/** The command a tick's release waits on, as the clone's command file names it (2026-11-13-004); a fake when given. */
+const releaseDoor =
+  (home: string, fake?: (root: string, startedBy: number) => number | null): CommandDoor =>
+  (by) =>
+    (fake ?? ((root, startedBy) => leftCommand(root, {}, startedBy)))(join(home, "repo"), by);
+
+/** A tick's own command, as the home's command file names it (2026-11-13-005); a fake when given. */
+const ownDoor =
+  (home: string, fake?: (home: string, startedBy: number) => number | null): CommandDoor =>
+  (by) =>
+    (fake ?? ((root, startedBy) => leftCommand(root, {}, startedBy, TICK_COMMAND_FILE)))(home, by);
+
 /**
- * Ends the command a release of a tick waits on (2026-11-13-004, D-2): such a command leads a
- * process group of its own, which a signal to the tick, or launchd ending the tick, does not
- * reach. `find` is the release's own check of its command file when not given, and answers the
- * group to kill only for a command that tick's release started and that is still that process.
+ * Signals the commands a tick started (2026-11-13-004, D-2; 2026-11-13-005): a bounded command
+ * leads a process group of its own, which a signal to the tick, or launchd ending the tick, does
+ * not reach. Each door answers the group to signal only for a command that tick started and that
+ * is still that process; a door not in the list is not asked. The groups signalled are returned.
  */
 function endTickCommand(
-  home: string,
   tick: number,
-  find: ((root: string, startedBy: number) => number | null) | undefined,
+  doors: readonly CommandDoor[],
   kill: (group: number) => void,
-): void {
-  const group = (find ?? ((root, by) => leftCommand(root, {}, by)))(join(home, "repo"), tick);
-  if (group === null) return;
-  try {
-    kill(group);
-  } catch {
-    // The command ended between the check and the signal.
+): number[] {
+  const ended: number[] = [];
+  for (const door of doors) {
+    const group = door(tick);
+    if (group === null) continue;
+    try {
+      kill(group);
+      ended.push(group);
+    } catch {
+      // The command ended between the check and the signal.
+    }
   }
+  return ended;
 }
 
 /** The pid of the tick the lock file names, when it names one. */
@@ -646,7 +712,15 @@ export async function stopLoop(deps: StopDeps): Promise<string> {
   // did when the command shared the tick's group. Asked again on each turn of the wait, for a tick
   // caught between two commands.
   const killCommand = () =>
-    endTickCommand(home, lock.pid, deps.leftCommand, (group) => deps.kill(-group, "SIGKILL"));
+    endTickCommand(lock.pid, [releaseDoor(home, deps.leftCommand)], (group) =>
+      deps.kill(-group, "SIGKILL"),
+    );
+  // The tick's own command (2026-11-13-005): once, with the signal it got when it shared the
+  // tick's group, and not again, so the commands a stopped tick then runs to write the stopped
+  // run's record are left alone.
+  endTickCommand(lock.pid, [ownDoor(home, deps.tickCommand)], (group) =>
+    deps.kill(-group, "SIGTERM"),
+  );
   killCommand();
   const ended = () => !existsSync(join(home, "lock.json"));
   for (let waited = 0; waited < STOP_WAIT_MS && !ended(); waited += STOP_POLL_MS) {
@@ -663,16 +737,187 @@ export function relaunchCommand(args: readonly string[]): { cmd: string; args: s
   return { cmd: process.execPath, args: [process.argv[1] as string, ...args] };
 }
 
+/** Where a tick's running command says who it is, under the loop's home (2026-11-13-005). */
+export const TICK_COMMAND_FILE = "tick-in-progress.command";
+/** Where an install's running command says who it is, under the loop's home (2026-11-13-005). */
+export const INSTALL_COMMAND_FILE = "install-in-progress.command";
+
+/**
+ * The loop's commands over a runner (2026-11-13-005): every one with a bound, so none waits for
+ * ever. `sh` gives a call that names none the bound of a local command. `git` gives each command
+ * the release's bound for it and the release's environment for git, so a credential that would
+ * ask fails at once; the ssh command git's configuration names is read per folder a command runs
+ * in, once, since the loop's git runs in its home, its clone and the user's checkout, and one
+ * folder's key must not reach another's. A git command killed at its bound says so on the first
+ * line of its stderr. Given a command file, every command carries it, so who ends a tick can end
+ * its command (a bounded command leads a group of its own).
+ */
+export function loopCommands(
+  run: CommandRunner,
+  env: NodeJS.ProcessEnv,
+  commandFile?: string,
+): { sh: TickDeps["sh"]; git: TickDeps["git"] } {
+  const file = commandFile ? { commandFile } : {};
+  const sh: TickDeps["sh"] = (cmd, opts) =>
+    run(cmd, { ...opts, timeoutMs: opts.timeoutMs ?? LOCAL_MS, ...file });
+  const envOf = new Map<string, Record<string, string>>();
+  const git: TickDeps["git"] = (args, cwd) => {
+    let gitEnvironment = envOf.get(cwd);
+    if (!gitEnvironment) {
+      const configured = env.GIT_SSH_COMMAND
+        ? ""
+        : run(["git", "config", "--get", "core.sshCommand"], {
+            cwd,
+            timeoutMs: LOCAL_MS,
+            env: { GIT_TERMINAL_PROMPT: "0" },
+            ...file,
+          });
+      gitEnvironment = gitEnv(
+        env,
+        configured && configured.status === 0 ? configured.stdout.trim() : "",
+      );
+      // Kept for the folder when git answered: a command or none set (status 1). A read that
+      // could not be made, as in a folder that is not there yet, is made again at the next call.
+      const answered =
+        configured === "" || (!configured.timedOut && !configured.error && configured.status <= 1);
+      if (answered) envOf.set(cwd, gitEnvironment);
+    }
+    const cmd = ["git", ...args];
+    const bound = boundOf(cmd);
+    const r = run(cmd, { cwd, timeoutMs: bound, env: gitEnvironment, ...file });
+    return r.timedOut ? { ...r, stderr: `timed out after ${bound / 1000} s\n${r.stderr}` } : r;
+  };
+  return { sh, git };
+}
+
+/** How old a lock file must be before the clearing takes it for a killed git's. */
+const CLEAR_LOCK_AGE_MS = 60_000;
+
+/** A wait inside the tick's own process, which runs its commands one at a time. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * What a killed git left in the loop's clone, cleared (2026-11-13-005): the lock files directly
+ * in `.git` and under `.git/refs`, and a rebase left in progress, each said. Only a tick that
+ * holds the loop's lock calls it, after the commands of a dead tick are ended, so no git of the
+ * loop's own commands is writing there. A lock made in the last minute can still be a living
+ * git's: git's own maintenance, started by the tick before, or a dead tick's git that no command
+ * file named. So such a lock is waited for until it is a minute old, and taken only if it is
+ * there with the same modification time then; one a git released meanwhile, or wrote again, is
+ * left. A lock of a
+ * git that was just killed, as by the install's kickstart, is taken after that wait, so the
+ * tick's first git command does not fail on it. The release keeps a narrower rule for the same
+ * folder (its own `index.lock` alone), since a release can run by hand beside a person's git.
+ */
+export function clearClone(
+  repo: string,
+  git: TickDeps["git"],
+  log: (line: string) => void,
+  wait: (ms: number) => void = sleepSync,
+): void {
+  const gitDir = join(repo, ".git");
+  const locksIn = (dir: string, deep: boolean): string[] => {
+    if (!existsSync(dir)) return [];
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return deep ? locksIn(path, true) : [];
+      return entry.name.endsWith(".lock") ? [path] : [];
+    });
+  };
+  const madeAt = (path: string): number | null => {
+    try {
+      return statSync(path).mtimeMs;
+    } catch {
+      return null;
+    }
+  };
+  for (const path of [...locksIn(gitDir, false), ...locksIn(join(gitDir, "refs"), true)]) {
+    const rel = relative(repo, path);
+    try {
+      const made = madeAt(path);
+      if (made === null) continue;
+      const age = Date.now() - made;
+      if (age >= CLEAR_LOCK_AGE_MS) {
+        rmSync(path, { force: true });
+        log(`a lock a killed git left was removed: ${rel}`);
+        continue;
+      }
+      const rest = CLEAR_LOCK_AGE_MS - Math.max(age, 0);
+      log(
+        `a git lock made in the last minute: waiting ${Math.ceil(rest / 1000)} s before it is taken: ${rel}`,
+      );
+      wait(rest);
+      const now = madeAt(path);
+      // Released by a living git during the wait: nothing of this tick's to remove.
+      if (now === null) continue;
+      if (now !== made) {
+        log(`a lock a git still holds is left: ${rel}`);
+        continue;
+      }
+      rmSync(path, { force: true });
+      log(`a lock made in the last minute was waited for and removed: ${rel}`);
+    } catch {
+      // Not removable: git says so itself at this tick's first command there.
+    }
+  }
+  if (existsSync(join(gitDir, "rebase-merge")) || existsSync(join(gitDir, "rebase-apply"))) {
+    const aborted = git(["rebase", "--abort"], repo);
+    log(
+      aborted.status === 0
+        ? "a rebase left in progress was aborted"
+        : `a rebase left in progress could not be aborted: ${aborted.stderr.trim().split("\n")[0] ?? ""}`,
+    );
+  }
+}
+
+/**
+ * A clone made beside its place and moved there when it is whole (2026-11-13-005), so a folder
+ * with `.git` at the clone's place is always a finished clone: a clone killed at its bound leaves
+ * git no chance to remove a half-made one. A folder an earlier clone left is removed first.
+ * Null when the clone is in place; the error's line otherwise, with nothing left beside it and
+ * whatever stood at the clone's place untouched.
+ */
+export function cloneInto(
+  git: TickDeps["git"],
+  url: string,
+  repo: string,
+  cwd: string,
+): string | null {
+  const making = `${repo}.cloning`;
+  rmSync(making, { recursive: true, force: true });
+  const cloned = git(["clone", "-q", url, making], cwd);
+  if (cloned.status !== 0) {
+    rmSync(making, { recursive: true, force: true });
+    return cloned.stderr.trim().split("\n")[0] ?? "";
+  }
+  try {
+    renameSync(making, repo);
+    return null;
+  } catch (error) {
+    rmSync(making, { recursive: true, force: true });
+    return `${repo} is in the way: ${(error as Error).message}`;
+  }
+}
+
 /** What a command needs of this machine (2026-10-28-001 AC-7): the shell, this boot's identity, whether a pid is alive. */
-function machineDeps(home: string): {
-  run: ReturnType<typeof spawnRunner>;
+function machineDeps(
+  home: string,
+  run: CommandRunner = spawnRunner(false),
+): {
+  run: CommandRunner;
   boot: TickDeps["boot"];
   alive: TickDeps["alive"];
 } {
-  const run = spawnRunner(false);
   return {
     run,
-    boot: () => run(["/usr/sbin/sysctl", "-n", "kern.boottime"], { cwd: home }).stdout.trim(),
+    // Before the tick holds its lock: a bound and no command file, which a tick that then leaves would replace.
+    boot: () =>
+      run(["/usr/sbin/sysctl", "-n", "kern.boottime"], {
+        cwd: home,
+        timeoutMs: LOCAL_MS,
+      }).stdout.trim(),
     alive: (pid) => {
       try {
         process.kill(pid, 0);
@@ -837,7 +1082,7 @@ export interface AdoptDeps {
   release: (call: {
     reason: string;
     notes: string[];
-  }) => Promise<{ code: number; version: string | null }>;
+  }) => Promise<{ code: number; version: string | null; stopped?: string }>;
   log: (line: string) => void;
 }
 
@@ -1012,7 +1257,9 @@ export async function adoptRun(
     deps.log(`adoption of ${record.run}: the release did not finish`);
     return {
       released: null,
-      reason: "the release did not finish: see the log and crew improve status",
+      reason: released.stopped
+        ? `the release stopped before step 1: ${released.stopped}`
+        : "the release did not finish: see the log and crew improve status",
     };
   }
   deps.git(["push", "-q", "origin", "--delete", branch], repo);
@@ -1146,24 +1393,42 @@ function unjudgedFigures(record: Pick<LoopRecord, "baseline" | "proposals" | "co
   ].filter((f) => (f as { unjudged?: unknown })?.unjudged === true);
 }
 
-/** Each case's last measurement across the records (AC-4): a baseline or a probe, by the run's time; a measurement not judged at a limit is none (2026-11-09-004). */
+/**
+ * Each case's last measurement across the records (AC-4): a baseline or a probe, by the run's
+ * time; a measurement not judged at a limit is none (2026-11-09-004). A record whose baseline for
+ * a case errored does not measure it, unless the last record before it with a judged baseline for
+ * the case errored too (2026-11-13-005): one error is tried again at the next due tick, and a
+ * case that errors every time waits the stale window from its second error.
+ */
 export function lastMeasuredOf(
   records: readonly LoopRecord[],
   cases: readonly string[],
 ): Record<string, string | null> {
   const out: Record<string, string | null> = Object.fromEntries(cases.map((c) => [c, null]));
-  for (const record of records) {
-    const judged = (figures: Record<string, unknown> | undefined): string[] =>
-      Object.entries(figures ?? {})
-        .filter(([, f]) => !unjudgedAtLimit(f))
-        .map(([name]) => name);
+  // Whether the last record with a judged baseline for the case errored for it (2026-11-13-005).
+  const lastBaselineErrored: Record<string, boolean> = {};
+  const judged = (figures: Record<string, unknown> | undefined): string[] =>
+    Object.entries(figures ?? {})
+      .filter(([, f]) => !unjudgedAtLimit(f))
+      .map(([name]) => name);
+  for (const record of [...records].sort((a, b) => a.at.localeCompare(b.at))) {
+    const baselines = new Set(judged(record.baseline));
     const names = new Set([
-      ...judged(record.baseline),
+      ...baselines,
       ...(record.proposals ?? []).flatMap((p) => judged(p.probe)),
     ]);
-    for (const name of names)
-      if (name in out && (out[name] === null || (out[name] as string) < record.at))
-        out[name] = record.at;
+    for (const name of names) {
+      if (!(name in out)) continue;
+      if (baselines.has(name)) {
+        const errored =
+          (record.baseline?.[name] as { errored?: unknown } | undefined)?.errored === true;
+        const first = errored && lastBaselineErrored[name] !== true;
+        lastBaselineErrored[name] = errored;
+        // A baseline that errored once is to be measured again; twice running, the case waits as any measured one.
+        if (first) continue;
+      }
+      if (out[name] === null || (out[name] as string) < record.at) out[name] = record.at;
+    }
   }
   return out;
 }
@@ -1226,7 +1491,10 @@ export interface TickDeps {
   /** This boot's identity, so a lock from before a reboot is stale. */
   boot: () => string;
   alive: (pid: number) => boolean;
-  git: (args: string[], cwd: string) => { status: number; stdout: string; stderr: string };
+  git: (
+    args: string[],
+    cwd: string,
+  ) => { status: number; stdout: string; stderr: string; timedOut?: boolean };
   sh: (
     cmd: string[],
     opts: {
@@ -1257,6 +1525,18 @@ export interface TickDeps {
   userCheckout: string | null;
   tmpdir: string;
   log: (line: string) => void;
+  /** A dead tick's own command, as the home's command file names it (2026-11-13-005): the file's own check when not given. */
+  tickCommand?: (home: string, startedBy: number) => number | null;
+  /** A dead tick's release's command, as the clone's command file names it: the release's own check when not given. */
+  leftCommand?: (root: string, startedBy: number) => number | null;
+  /** Kills a process group by its leader's pid: SIGKILL to the group when not given. */
+  killGroup?: (group: number) => void;
+  /** A wait inside the tick, for a git lock made in the last minute (2026-11-13-005): the process's own when not given. */
+  pause?: (ms: number) => void;
+  /** The pid of an install that still runs, or null (2026-11-13-005): none when not given. */
+  installRunning?: () => number | null;
+  /** The user's home, which a stop's name writes as `~`: none when not given. */
+  userHome?: string;
 }
 
 const LOOP_TEMP = /^improve-(?:trees|hooks)-/;
@@ -1327,8 +1607,13 @@ function fastForwardUserCheckout(user: string, git: TickDeps["git"]): string {
   const branch = git(["rev-parse", "--abbrev-ref", "HEAD"], user).stdout.trim();
   if (status !== "") return "the user's checkout has uncommitted changes: left as it is";
   if (branch !== "main") return `the user's checkout is on ${branch}: left as it is`;
-  git(["fetch", "-q", "origin"], user);
+  // A command killed at its bound here can leave a lock the loop must not remove: the note names it (2026-11-13-005).
+  const cut = (command: string) =>
+    `the user's checkout: git ${command} timed out after ${boundOf(["git", command]) / 1000} s; if git then says a lock exists, remove ${join(user, ".git", "index.lock")}`;
+  const fetched = git(["fetch", "-q", "origin"], user);
+  if (fetched.timedOut) return cut("fetch");
   const ff = git(["merge", "-q", "--ff-only", "origin/main"], user);
+  if (ff.timedOut) return cut("merge");
   return ff.status === 0 ? "" : "the user's checkout could not be fast-forwarded: left as it is";
 }
 
@@ -1337,20 +1622,6 @@ export interface TickLock {
   pid: number;
   startedAt: string;
   boot: string;
-}
-
-/** Whether a clone holds a finished headless shell in its own folder: an install killed midway leaves a build with no mark. A new Playwright comes with a lockfile, which bootstraps anyway. */
-function cloneHasShell(repo: string): boolean {
-  const folder = join(repo, "node_modules/.cache/ms-playwright");
-  try {
-    return readdirSync(folder).some(
-      (name) =>
-        name.startsWith("chromium_headless_shell-") &&
-        existsSync(join(folder, name, "INSTALLATION_COMPLETE")),
-    );
-  } catch {
-    return false;
-  }
 }
 
 /** Installs the shell into the clone's `node_modules/.cache/ms-playwright`; a no-op once it is there. */
@@ -1367,17 +1638,55 @@ export function readLock(home: string): TickLock | null {
   return readJson<TickLock>(join(home, "lock.json"));
 }
 
+/** The bounds of the bootstrap's two commands (2026-11-13-005): the packages, and the shell's download. */
+const PACKAGES_MS = 300_000;
+const SHELL_INSTALL_MS = 900_000;
+
+/** One command of the bootstrap under its bound: null when it passed, the bootstrap's error otherwise. */
+function bootstrapStep(
+  sh: TickDeps["sh"],
+  cmd: string[],
+  repo: string,
+  ms: number,
+  what: string,
+): string | null {
+  const r = sh(cmd, { cwd: repo, timeoutMs: ms });
+  if (r.status === 0) return null;
+  return r.timedOut
+    ? `${what} timed out after ${ms / 1000} s`
+    : `${what} failed: ${r.stderr.trim().split("\n")[0] ?? ""}`;
+}
+
+/** The clone's packages, as its lockfile pins them: a no-op when they are there, so every tick runs it (2026-11-13-005). */
+export function installPackages(repo: string, sh: TickDeps["sh"]): string | null {
+  return bootstrapStep(
+    sh,
+    ["bun", "install", "--frozen-lockfile"],
+    repo,
+    PACKAGES_MS,
+    "bun install",
+  );
+}
+
 /**
- * The repository's clone bootstrapped (`bun install --frozen-lockfile`, then the headless shell the ui cases copy,
- * in the clone's own folder, since the shared cache's clean-up can take it): the error's first line, or null.
+ * The shell the ui cases copy, in the clone's own folder (the shared cache's clean-up can take
+ * it), by Playwright's own install (2026-11-13-005): it downloads the
+ * build the clone's Playwright names when that build is not finished, whatever older builds sit
+ * beside it, and does nothing when it is. Run before every run, with no check of this loop's.
  */
+export function ensureShell(repo: string, sh: TickDeps["sh"]): string | null {
+  return bootstrapStep(
+    sh,
+    CLONE_SHELL_INSTALL,
+    repo,
+    SHELL_INSTALL_MS,
+    "the headless shell's install",
+  );
+}
+
+/** The clone made able to run, as the install does it: the packages, then the shell; null when both passed. */
 export function bootstrapClone(repo: string, sh: TickDeps["sh"]): string | null {
-  const r = sh(["bun", "install", "--frozen-lockfile"], { cwd: repo });
-  if (r.status !== 0) return `bun install failed: ${r.stderr.trim().split("\n")[0] ?? ""}`;
-  const shell = sh(CLONE_SHELL_INSTALL, { cwd: repo });
-  return shell.status === 0
-    ? null
-    : `the headless shell's install failed: ${shell.stderr.trim().split("\n")[0] ?? ""}`;
+  return installPackages(repo, sh) ?? ensureShell(repo, sh);
 }
 
 /** The dated logs older than two weeks, removed. */
@@ -1456,6 +1765,12 @@ export async function tick(
       lockPath,
       `${JSON.stringify({ pid: deps.pid, startedAt: now.toISOString(), boot: deps.boot() })}\n`,
     );
+  // An install writes in the clone under a lock of its own (2026-11-13-005): no tick works beside it.
+  const installing = deps.installRunning?.() ?? null;
+  if (installing !== null) {
+    log(`an install is running (pid ${installing}); leaving`);
+    return 0;
+  }
   if (!takeLock()) {
     const held = readJson<unknown>(lockPath);
     const shown = (held as Record<string, unknown> | null)?.pid;
@@ -1472,12 +1787,27 @@ export async function tick(
     log(
       `a stale lock (pid ${heldPid ?? "unknown"}) is taken over; ${dead.run ? `run ${dead.run} left without a record, folder removed` : "no run left"}`,
     );
+    // What the dead tick left running, its own command or its release's (2026-11-13-005): ended
+    // before this tick runs anything, so no push or download of a dead tick works beside it.
+    if (heldPid !== null && heldPid > 1)
+      for (const group of endTickCommand(
+        heldPid,
+        [releaseDoor(home, deps.leftCommand), ownDoor(home, deps.tickCommand)],
+        deps.killGroup ?? ((g) => process.kill(-g, "SIGKILL")),
+      ))
+        log(`the command the dead tick left running was killed (pid ${group})`);
     rmSync(lockPath, { force: true });
     if (!takeLock()) {
       log("another tick took the lock first; leaving");
       return 0;
     }
   }
+  // Whether a stop's marker was there before this tick: only one that appears during it is a stop
+  // that landed on it (2026-11-13-005).
+  const markerAtStart = existsSync(stopMarkerOf(home));
+  const stopLanded = () => !markerAtStart && existsSync(stopMarkerOf(home));
+  // What a killed git left in the clone, cleared before this tick's first git command there.
+  if (existsSync(join(repo, ".git"))) clearClone(repo, deps.git, log, deps.pause);
   // The handler keeps the tick alive through a stop's SIGTERM so the record is written; the kit's
   // child dies with the group signal and the run ends at its next step (2026-10-28-001 AC-7, D-1).
   const offSignal = deps.onSignal("SIGTERM", () =>
@@ -1492,8 +1822,8 @@ export async function tick(
       throw new Error(`git ${args[0]} failed: ${r.stderr.trim().split("\n")[0] ?? ""}`);
     return r.stdout;
   };
-  const bootstrap = () => {
-    const error = bootstrapClone(repo, deps.sh);
+  /** A step of the bootstrap, its error thrown. */
+  const bootstrapped = (error: string | null) => {
     if (error) throw new Error(error);
   };
   /** The improve folder's changes committed; false when there is nothing to commit. */
@@ -1546,6 +1876,9 @@ export async function tick(
         {
           budget: day.budgetSkip ? { at: day.budgetSkip.at, reason: day.budgetSkip.reason } : null,
           judge: day.judgeSkip ?? null,
+          token: day.tokenSkip ?? null,
+          // The day's own record of the skip, never the state's present pending release.
+          pending: day.pendingSkip ?? null,
         },
         { deadTicks: day.deadTicks ?? [], stoppedRuns: day.stoppedRuns ?? [] },
       ),
@@ -1569,30 +1902,54 @@ export async function tick(
    * of the kind logs alone (the tick's finally saves the state). No record folder, no lastRun: what
    * made the tick due is unchanged.
    */
-  const skipTick = (kind: "budget" | "judge", reason: string, costUsd = 0): void => {
-    const earlier = kind === "budget" ? day.budgetSkip : day.judgeSkip;
+  const skipTick = (
+    kind: "budget" | "judge" | "token" | "pending",
+    reason: string,
+    costUsd = 0,
+  ): void => {
+    const earlier = {
+      budget: day.budgetSkip,
+      judge: day.judgeSkip,
+      token: day.tokenSkip,
+      pending: day.pendingSkip,
+    }[kind];
     if (earlier) {
       log(`skipped: ${reason}; reported at ${hhmm(earlier.at)} UTC`);
       return;
     }
-    const after =
-      kind === "budget"
-        ? "every later tick of the day skips the same way"
-        : "a later due tick probes again";
-    if (kind === "budget") day.budgetSkip = { at: now.toISOString(), costUsd, reason };
-    else day.judgeSkip = { at: now.toISOString() };
+    const at = now.toISOString();
+    if (kind === "budget") day.budgetSkip = { at, costUsd, reason };
+    else if (kind === "judge") day.judgeSkip = { at };
+    else if (kind === "token") day.tokenSkip = { at };
+    else day.pendingSkip = { at, reason };
     saveState();
-    log(`skipped: ${reason}; ${after}`);
+    // What the log says after the reason; a pending release's reason says it all.
+    const after = {
+      budget: "; every later tick of the day skips the same way",
+      judge: "; a later due tick probes again",
+      token: "; a later tick probes again",
+      pending: "",
+    }[kind];
+    log(`skipped: ${reason}${after}`);
     writeDayReport();
     commitDocs(
-      `Improvement tick ${date}: ${kind === "budget" ? "the day's budget is spent" : reason}`,
+      `Improvement tick ${date}: ${
+        {
+          budget: "the day's budget is spent",
+          judge: reason,
+          token: "the release's account has no token",
+          pending: "a release is pending",
+        }[kind]
+      }`,
     );
     pushMain([]);
     notify(
       "crew improve",
       kind === "budget"
         ? `skipped: ${reason}. Every later tick of the day skips the same way.`
-        : `skipped: ${reason}. The tick's log has each model's answer.`,
+        : kind === "judge"
+          ? `skipped: ${reason}. The tick's log has each model's answer.`
+          : `skipped: ${reason}${after}`,
     );
   };
 
@@ -1601,14 +1958,14 @@ export async function tick(
     pruneDatedLogs(home, now);
     // The clone, made and bootstrapped when absent.
     if (!existsSync(join(repo, ".git"))) {
-      must(["clone", "-q", deps.originUrl, repo], home);
-      bootstrap();
+      const failed = cloneInto(deps.git, deps.originUrl, repo, home);
+      if (failed !== null) throw new Error(`git clone failed: ${failed}`);
     }
     // The provider, and with it the secrets every line and file is redacted of.
     const provider = providerEnv(config, deps.readSecret);
     secrets = provider.secrets;
     // The first tick writes the probe the install waits for (D-8).
-    if (needsProbe(home)) {
+    if (needsProbe(home, config.paused === true)) {
       const probe = runProbe(config, repo, deps.sh, deps.git);
       writeRedacted(join(home, "probe.json"), `${JSON.stringify(probe, null, 2)}\n`, secrets);
       state.probe = probe as unknown as Record<string, unknown>;
@@ -1619,10 +1976,7 @@ export async function tick(
       return 0;
     }
     // The clone brought to origin/main: a run's commits an earlier tick could not push go first,
-    // then the fetch and the reset; stale worktrees and old temp folders pruned; a changed lockfile bootstraps.
-    const lockfile = () =>
-      existsSync(join(repo, "bun.lock")) ? readFileSync(join(repo, "bun.lock"), "utf8") : "";
-    const before = lockfile();
+    // then the fetch and the reset; stale worktrees and old temp folders pruned; then the packages.
     must(["fetch", "-q", "origin"]);
     // The loop never removes itself from the clone (finding 169): an origin/main without the
     // script is waited for, not synced to; nothing is pushed or reset until it holds the loop.
@@ -1672,7 +2026,9 @@ export async function tick(
     const syncedMain = must(["rev-parse", "HEAD"]).trim();
     git(["worktree", "prune"]);
     sweepLeftovers(deps.tmpdir, join(repo, "plugins", "core", "evals", "results"), now);
-    if (lockfile() !== before) bootstrap();
+    // The packages at every tick, and not only when the lockfile changed: an install that failed is
+    // tried again by the next tick, and a no-op costs milliseconds (2026-11-13-005).
+    bootstrapped(installPackages(repo, deps.sh));
     // The code this tick runs is the one bun loaded at launch; when the sync brought another, the
     // tick hands over to one on the new code, once (2026-10-28-001 AC-2, D-2, finding 188).
     if (!options.relaunched && headBefore !== syncedMain) {
@@ -1711,7 +2067,15 @@ export async function tick(
         day.releases.push({ version, run: "resumed" });
       } else if (resumed.failedStep !== null)
         state.pendingRelease = pendingAt(version, resumed.failedStep);
-      else {
+      else if (resumed.stopped) {
+        // The resume stopped, beside a running release or a command that did not end: the release
+        // is still to be resumed, where "nothing to resume" would forget a version that is on
+        // origin (2026-11-13-005). One line of the day's report, however many ticks meet it.
+        log(`the resume of ${version} stopped: ${resumed.stopped}`);
+        const name = stopName(resumed.stopped, home, deps.userHome ?? "", secrets);
+        if (!day.failures.some((f) => f.run === "resumed" && f.name === name))
+          day.failures.push({ run: "resumed", step: 0, name });
+      } else {
         state.pendingRelease = null;
         log(`nothing to resume for ${version}: cleared`);
       }
@@ -1740,8 +2104,48 @@ export async function tick(
     const targets = pickTargets(cases, facts.lastMeasured, config.casesPerRun);
     if (options.dryRun) {
       log(
-        `dry run: due (${due.reason}); targets: ${targets.join(", ")}; provider: ${provider.name}; nothing run`,
+        `dry run: due (${due.reason}); targets: ${targets.join(", ")}; provider: ${provider.name}; nothing run${
+          readJson<Partial<Probe>>(join(home, "probe.json"))?.releaseToken === "missing"
+            ? "; the release's account has no token: a real tick would skip"
+            : ""
+        }`,
       );
+      return 0;
+    }
+    // A release still pending after its resume (2026-11-13-005): the adoption's release would stop
+    // at it, so no run is paid for; said once a day, as any skip.
+    if (state.pendingRelease) {
+      const held = state.pendingRelease;
+      skipTick(
+        "pending",
+        `release ${held.version} is pending at step ${held.failedStep}: no improvement run until it is resumed`,
+      );
+      state.lastTick = now.toISOString();
+      return 0;
+    }
+    // The release's token, read by the due tick itself before it pays for a run (2026-11-13-005,
+    // the user's decision of 2026-11-13): the probe's word can be old, since a word "found" is
+    // never taken again. A read killed at its bound is no logged-out account: the tick fails.
+    const account = config.marketplace.account;
+    const read = accountToken(deps.sh, account, repo);
+    if (read.timedOut)
+      throw new Error(
+        `the release's token could not be read: gh auth token timed out after ${LOCAL_MS / 1000} s`,
+      );
+    const releaseToken = read.token === null ? "missing" : "found";
+    const probeFile = join(home, "probe.json");
+    const probeNow = readJson<Record<string, unknown>>(probeFile);
+    if (probeNow && probeNow.releaseToken !== releaseToken) {
+      const updated = { ...probeNow, releaseToken };
+      writeRedacted(probeFile, `${JSON.stringify(updated, null, 2)}\n`, secrets);
+      state.probe = updated;
+    }
+    if (read.token === null) {
+      skipTick(
+        "token",
+        `the release's account (${account}) has no token: log in to it with gh auth login`,
+      );
+      state.lastTick = now.toISOString();
       return 0;
     }
     // The two ceilings (2026-10-27-006 D-2): the run's goes to the run; the day's is read here from
@@ -1758,9 +2162,15 @@ export async function tick(
     }
     log(`due: ${due.reason}; targets: ${targets.join(", ")}; provider: ${provider.name}`);
     // A run needs the browser the ui cases copy. Here and not at the sync, so a download gates no tick that would
-    // not run, no pending release and no dry run: the clone deployed before the ui cases gets it, a failed install
-    // fails this tick under the back-off, and the next due tick tries again (2026-10-30-001 AC-28).
-    if (!cloneHasShell(repo)) bootstrap();
+    // not run, no pending release and no dry run; a failed install fails this tick under the back-off, and the
+    // next due tick installs again (2026-10-30-001 AC-28, 2026-11-13-005).
+    if (stopLanded()) {
+      // A stop that found no command to signal: the download does not start.
+      state.lastTick = now.toISOString();
+      log("stop requested: nothing run");
+      return 0;
+    }
+    bootstrapped(ensureShell(repo, deps.sh));
     // The run; then the last run on record before anything can fail, its files through the
     // redaction, and the record and the day's report committed and pushed with the kept branch (D-3).
     const code = await deps.improve(
@@ -1870,9 +2280,17 @@ export async function tick(
               pending: state.pendingRelease ?? null,
               rollbackTo: mainBefore,
             });
+            // A stop before step 1 (2026-11-13-005): the whole line to the log, its name to what is kept.
+            const stoppedAs =
+              outcome.failedStep === null && outcome.stopped
+                ? stopName(outcome.stopped, home, deps.userHome ?? "", secrets)
+                : null;
+            if (stoppedAs !== null) log(`the release stopped before step 1: ${outcome.stopped}`);
             const failure =
               outcome.failedStep === null
-                ? null
+                ? stoppedAs === null
+                  ? null
+                  : { run: latest.run, step: 0, name: stoppedAs }
                 : {
                     run: latest.run,
                     step: outcome.failedStep,
@@ -1900,7 +2318,11 @@ export async function tick(
               if (failure) day.failures.push(failure);
             }
             saveState();
-            return { code: outcome.code, version: outcome.code === 0 ? outcome.version : null };
+            return {
+              code: outcome.code,
+              version: outcome.code === 0 ? outcome.version : null,
+              ...(stoppedAs === null ? {} : { stopped: stoppedAs }),
+            };
           },
         },
       ).catch((error: unknown) => {
@@ -1939,6 +2361,11 @@ export async function tick(
     return 0;
   } catch (error) {
     const message = (error as Error).message;
+    if (stopLanded()) {
+      // A command of this tick ended by a stop a person asked for: no failed tick, no back-off.
+      log(`stop requested: the tick ends (${message})`);
+      return 0;
+    }
     state.failures = (state.failures ?? 0) + 1;
     const hours = backoffHours(state.failures);
     state.backoffUntil = new Date(now.getTime() + hours * 60 * 60 * 1000).toISOString();
@@ -2080,15 +2507,72 @@ export interface InstallDeps {
   leftCommand?: (root: string, startedBy: number) => number | null;
   /** Kills a process group by its leader's pid: SIGKILL to the group when not given. */
   killGroup?: (pid: number) => void;
+  /** The ended tick's own command, as the home's command file names it (2026-11-13-005): the file's own check when not given. */
+  tickCommand?: (home: string, startedBy: number) => number | null;
+  /** The install's lock and its command file, each read once (2026-11-13-005): the real doors when not given. */
+  installLock?: () => InstallLockAnswer;
+  installCommand?: () => InstallCommandAnswer;
+}
+
+/** Where an install says it runs, under the loop's home (2026-11-13-005): its pid and start time. */
+export const INSTALL_LOCK = "install.lock";
+
+export type InstallLockAnswer = "absent" | "stale" | { running: number };
+export type InstallCommandAnswer =
+  | "absent"
+  | "off-shape"
+  | { running: number }
+  | { left: number | null };
+
+/**
+ * The install's lock as it stands (2026-11-13-005): absent; an install that still runs, by the
+ * release's rule for a recorded process, when it is not this one; stale otherwise (its install is
+ * gone or another process, it names this process, or it does not parse).
+ */
+export function installLockOf(home: string, deps: ProcessDeps = {}): InstallLockAnswer {
+  const path = join(home, INSTALL_LOCK);
+  if (!existsSync(path)) return "absent";
+  const held = readJson<{ pid?: unknown; start?: unknown }>(path);
+  const pid = held?.pid;
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 1) return "stale";
+  if (typeof held?.start !== "string" || pid === process.pid) return "stale";
+  return recordedProcess(pid, held.start, deps) === "same" ? { running: pid } : "stale";
+}
+
+/**
+ * The install's command file, read once (2026-11-13-005). The file names its own starter, which
+ * is asked too, since a lock removed or damaged by hand says nothing of an install that still
+ * runs: a starter that still runs and is not this process is a running install. Otherwise the
+ * command is judged on that same reading by the check a kill needs.
+ */
+export function installCommandOf(home: string, deps: ProcessDeps = {}): InstallCommandAnswer {
+  const read = readCommandFile(home, INSTALL_COMMAND_FILE);
+  if (typeof read === "string") return read;
+  if (
+    read.releasePid !== process.pid &&
+    recordedProcess(read.releasePid, read.releaseStart, deps) === "same"
+  )
+    return { running: read.releasePid };
+  return { left: leftCommandOf(read, deps) };
+}
+
+/** The install's lock taken (2026-11-13-005): created exclusively, a lock just read as stale removed first; false when another install created it first. */
+function takeInstallLock(home: string, was: InstallLockAnswer): boolean {
+  const path = join(home, INSTALL_LOCK);
+  mkdirSync(home, { recursive: true });
+  if (was === "stale") rmSync(path, { force: true });
+  return writeTextNew(
+    path,
+    `${JSON.stringify({ pid: process.pid, start: processStart(process.pid) })}\n`,
+  );
 }
 
 /** Ends the command of the tick launchd just ended for an install or an uninstall: launchd's kill does not reach it. */
 function endEndedTickCommand(deps: InstallDeps, tick: number | null): void {
   if (tick === null) return;
   endTickCommand(
-    deps.home,
     tick,
-    deps.leftCommand,
+    [releaseDoor(deps.home, deps.leftCommand), ownDoor(deps.home, deps.tickCommand)],
     deps.killGroup ?? ((group) => process.kill(-group, "SIGKILL")),
   );
 }
@@ -2113,15 +2597,18 @@ export interface Probe {
 /** The bound of each of the probe's two `gh` calls. */
 const PROBE_GH_MS = 120_000;
 
-/** Whether the tick has a probe to write (2026-11-13-004): the file is absent, does not parse, or does not say the release's token was found. */
-function needsProbe(home: string): boolean {
+/**
+ * Whether the tick has a probe to write: the file is absent or does not parse, or, for a loop
+ * that is not paused, does not say the release's token was found (2026-11-13-004), so the word
+ * follows a login within the hour. A paused loop takes a probe only when it has none
+ * (2026-11-13-005): it runs nothing the word could change.
+ */
+function needsProbe(home: string, paused: boolean): boolean {
   const file = join(home, "probe.json");
   if (!existsSync(file)) return true;
   try {
-    // A probe that says missing is taken again, so the word follows a login.
-    return (
-      (JSON.parse(readFileSync(file, "utf8")) as Partial<Probe> | null)?.releaseToken !== "found"
-    );
+    const word = (JSON.parse(readFileSync(file, "utf8")) as Partial<Probe> | null)?.releaseToken;
+    return !paused && word !== "found";
   } catch {
     return true;
   }
@@ -2207,97 +2694,163 @@ const plistPath = (deps: Pick<InstallDeps, "userHome">): string =>
  * loop's commit is not on origin yet), the plist written, the agent booted and kicked, the probe
  * waited for and printed with the fallback when the login is not there.
  */
+/**
+ * How long an install waits for its first tick's probe, in seconds: the probe's own commands,
+ * and the minute that tick may first wait for a git lock the kickstart's kill left
+ * (2026-11-13-005).
+ */
+const PROBE_WAIT_S = 90 + CLEAR_LOCK_AGE_MS / 1000;
+
 export async function install(options: { cloneFrom?: string }, deps: InstallDeps): Promise<number> {
   const { home, log } = deps;
   const repo = join(home, "repo");
-  const tools: Record<string, string> = {};
-  for (const tool of TOOLS) {
-    const found = deps.which(tool);
-    if (!found) {
-      log(`${tool} is not on PATH: install it first`);
-      return 1;
-    }
-    tools[tool] = found;
+  // The install's two doors, read before any command of its own, which would replace the command
+  // file (2026-11-13-005): another install that still runs stops this one; what an interrupted one
+  // left running is ended.
+  const held = (deps.installLock ?? (() => installLockOf(home)))();
+  const beside = (pid: number): number => {
+    log(`another install is running (pid ${pid}): wait for it`);
+    return 1;
+  };
+  if (typeof held === "object") return beside(held.running);
+  const left = (deps.installCommand ?? (() => installCommandOf(home)))();
+  if (typeof left === "object" && "running" in left) return beside(left.running);
+  const commandFile = join(home, INSTALL_COMMAND_FILE);
+  if (left === "off-shape") rmSync(commandFile, { force: true });
+  else if (typeof left === "object") {
+    if (left.left !== null) {
+      (deps.killGroup ?? ((group) => process.kill(-group, "SIGKILL")))(left.left);
+      log(`the command an interrupted install left running was killed (pid ${left.left})`);
+    } else log("the file an interrupted install left was removed");
+    rmSync(commandFile, { force: true });
   }
-  mkdirSync(join(home, "log"), { recursive: true });
-  if (!existsSync(join(repo, ".git"))) {
-    const cloned = deps.git(["clone", "-q", options.cloneFrom ?? deps.originUrl, repo], home);
-    if (cloned.status !== 0) {
-      log(`the clone failed: ${cloned.stderr.trim().split("\n")[0] ?? ""}`);
-      return 1;
-    }
-    if (options.cloneFrom) deps.git(["remote", "set-url", "origin", deps.originUrl], repo);
-    const error = bootstrapClone(repo, deps.sh);
-    if (error) {
-      log(error);
-      return 1;
-    }
-  }
-  const script = join(repo, "scripts", "improve-loop.ts");
-  // A clone synced to an origin/main that had no loop yet (finding 169): brought to one that has it.
-  if (!existsSync(script)) {
-    const healed = healClone(repo, deps.git);
-    if ("sha" in healed) {
-      const error = bootstrapClone(repo, deps.sh);
-      if (error) {
-        log(error);
-        return 1;
-      }
-      log(`the clone had no scripts/improve-loop.ts: brought to origin/main (${healed.sha})`);
-    } else log(`the clone has no scripts/improve-loop.ts and ${healed.why}`);
-  }
-  if (!existsSync(script)) {
-    log(
-      "the clone has no scripts/improve-loop.ts: push the loop's commit to origin first, or install with --clone-from <checkout>",
-    );
+  if (!takeInstallLock(home, held)) {
+    const now = installLockOf(home);
+    if (typeof now === "object") return beside(now.running);
+    log("another install took the lock first: wait for it");
     return 1;
   }
-  const path = [
-    ...new Set([...TOOLS.map((t) => dirname(tools[t] as string)), "/usr/bin", "/bin", "/usr/sbin"]),
-  ];
-  // The launcher, the agent's own and nobody else's to read or run (its mode set again on an existing file).
-  const launcher = join(home, "tick.sh");
-  writeFileSync(launcher, launcherScript({ bun: tools.bun as string, repo }), { mode: 0o700 });
-  chmodSync(launcher, 0o700);
-  const plist = plistPath(deps);
-  mkdirSync(dirname(plist), { recursive: true });
-  writeFileSync(
-    plist,
-    launchdPlist({
-      launcher,
-      home,
-      path,
-      userHome: deps.userHome,
-      wizardingcodeHome: deps.env.WIZARDINGCODE_HOME,
-    }),
-  );
+  /** The install's lock freed, only while it is this install's: one another install took since is left. */
+  const unlock = () => {
+    const path = join(home, INSTALL_LOCK);
+    if (readJson<{ pid?: unknown }>(path)?.pid === process.pid) rmSync(path, { force: true });
+  };
   const target = `gui/${deps.uid}/${LABEL}`;
-  // An earlier copy booted out (a bootout of nothing fails, and that is fine), then this one in.
-  deps.sh(["launchctl", "bootout", target], { cwd: home });
-  const booted = deps.sh(["launchctl", "bootstrap", `gui/${deps.uid}`, plist], { cwd: home });
-  if (booted.status !== 0) {
-    log(`launchctl bootstrap failed: ${booted.stderr.trim().split("\n")[0] ?? ""}`);
+  const plist = plistPath(deps);
+  /** Whether the bootout booted an agent out: one that was loaded is loaded again when a later step fails. */
+  let booted = false;
+  /** A step failed: said, the lock freed, and a loaded agent never left unloaded. */
+  const failed = (line: string): number => {
+    log(line);
+    unlock();
+    if (booted && existsSync(plist)) {
+      const again = deps.sh(["launchctl", "bootstrap", `gui/${deps.uid}`, plist], { cwd: home });
+      log(
+        again.status === 0
+          ? "the agent that was loaded is loaded again: run the install again"
+          : `the agent that was loaded could not be loaded again (${again.stderr.trim().split("\n")[0] ?? ""}): no agent is loaded: run the install again`,
+      );
+    }
     return 1;
+  };
+  try {
+    const tools: Record<string, string> = {};
+    for (const tool of TOOLS) {
+      const found = deps.which(tool);
+      if (!found) return failed(`${tool} is not on PATH: install it first`);
+      tools[tool] = found;
+    }
+    mkdirSync(join(home, "log"), { recursive: true });
+    // The agent out first, and the commands of the tick it ended: no tick then works in the clone
+    // while the install writes there (a bootout of nothing fails, and that is fine).
+    const ended = lockedTick(home);
+    booted = deps.sh(["launchctl", "bootout", target], { cwd: home }).status === 0;
+    endEndedTickCommand(deps, ended);
+    const live = lockedTick(home);
+    if (live !== null && (deps.alive ?? (() => false))(live))
+      return failed(`a tick is running (pid ${live}): wait for it or stop it`);
+    if (!existsSync(join(repo, ".git"))) {
+      const error = cloneInto(deps.git, options.cloneFrom ?? deps.originUrl, repo, home);
+      if (error !== null) return failed(`the clone failed: ${error}`);
+      if (options.cloneFrom) deps.git(["remote", "set-url", "origin", deps.originUrl], repo);
+    }
+    const script = join(repo, "scripts", "improve-loop.ts");
+    // A clone synced to an origin/main that had no loop yet (finding 169): brought to one that has it.
+    if (!existsSync(script)) {
+      const healed = healClone(repo, deps.git);
+      if ("sha" in healed)
+        log(`the clone had no scripts/improve-loop.ts: brought to origin/main (${healed.sha})`);
+      else log(`the clone has no scripts/improve-loop.ts and ${healed.why}`);
+    }
+    if (!existsSync(script))
+      return failed(
+        "the clone has no scripts/improve-loop.ts: push the loop's commit to origin first, or install with --clone-from <checkout>",
+      );
+    // The bootstrap on every install, so one interrupted during the packages or the shell is completed.
+    const error = bootstrapClone(repo, deps.sh);
+    if (error) return failed(error);
+    // The install's work in the clone is done: the lock goes before the agent is loaded, since
+    // the tick that load starts must run for the install to read its probe.
+    unlock();
+    const path = [
+      ...new Set([
+        ...TOOLS.map((t) => dirname(tools[t] as string)),
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+      ]),
+    ];
+    // The launcher, the agent's own and nobody else's to read or run (its mode set again on an existing file).
+    const launcher = join(home, "tick.sh");
+    writeFileSync(launcher, launcherScript({ bun: tools.bun as string, repo }), { mode: 0o700 });
+    chmodSync(launcher, 0o700);
+    mkdirSync(dirname(plist), { recursive: true });
+    writeFileSync(
+      plist,
+      launchdPlist({
+        launcher,
+        home,
+        path,
+        userHome: deps.userHome,
+        wizardingcodeHome: deps.env.WIZARDINGCODE_HOME,
+      }),
+    );
+    const loaded = deps.sh(["launchctl", "bootstrap", `gui/${deps.uid}`, plist], { cwd: home });
+    // Past this point nothing is put back: the agent that was loaded is this install's own.
+    booted = false;
+    if (loaded.status !== 0) {
+      log(
+        `launchctl bootstrap failed: ${loaded.stderr.trim().split("\n")[0] ?? ""}; no agent is loaded: run the install again`,
+      );
+      return 1;
+    }
+    rmSync(join(home, "probe.json"), { force: true });
+    const running = lockedTick(home);
+    deps.sh(["launchctl", "kickstart", "-k", target], { cwd: home });
+    endEndedTickCommand(deps, running);
+    log(`agent ${LABEL} installed: ${plist}; waiting for its first tick's probe`);
+    for (let waited = 0; waited < PROBE_WAIT_S; waited++) {
+      if (existsSync(join(home, "probe.json"))) break;
+      await deps.wait(1000);
+    }
+    if (!existsSync(join(home, "probe.json"))) {
+      log(
+        `the agent wrote no probe in ${PROBE_WAIT_S} s: see launchctl print ${target} and ${join(home, "log")}`,
+      );
+      return 1;
+    }
+    printProbe(
+      JSON.parse(readFileSync(join(home, "probe.json"), "utf8")) as Probe,
+      readConfig(home).marketplace.account,
+      log,
+    );
+    return 0;
+  } catch (error) {
+    // A step that threw, as a command that could not be started: the same way out as one that failed.
+    return failed((error as Error).message);
+  } finally {
+    unlock();
   }
-  rmSync(join(home, "probe.json"), { force: true });
-  const running = lockedTick(home);
-  deps.sh(["launchctl", "kickstart", "-k", target], { cwd: home });
-  endEndedTickCommand(deps, running);
-  log(`agent ${LABEL} installed: ${plist}; waiting for its first tick's probe`);
-  for (let waited = 0; waited < 90; waited++) {
-    if (existsSync(join(home, "probe.json"))) break;
-    await deps.wait(1000);
-  }
-  if (!existsSync(join(home, "probe.json"))) {
-    log(`the agent wrote no probe in 90 s: see launchctl print ${target} and ${join(home, "log")}`);
-    return 1;
-  }
-  printProbe(
-    JSON.parse(readFileSync(join(home, "probe.json"), "utf8")) as Probe,
-    readConfig(home).marketplace.account,
-    log,
-  );
-  return 0;
 }
 
 /** The agent booted out and its plist removed; the home and its clone stay. */
@@ -2410,10 +2963,13 @@ export function statusText(deps: InstallDeps): string {
 }
 
 /** The real deps of a tick on this machine: git and the commands through spawnSync, the improvement through `runImprove`, the judge and the kit through `claude`. */
-function realTickDeps(home: string, config: LoopConfig): TickDeps {
-  const machine = machineDeps(home);
-  const run = machine.run;
-  const git: TickDeps["git"] = (args, cwd) => run(["git", ...args], { cwd });
+export function realTickDeps(
+  home: string,
+  config: LoopConfig,
+  run: CommandRunner = spawnRunner(false),
+): TickDeps {
+  const machine = machineDeps(home, run);
+  const { sh, git } = loopCommands(run, process.env, join(home, TICK_COMMAND_FILE));
   const userDir = userDirOf(process.env);
   return {
     home,
@@ -2424,7 +2980,12 @@ function realTickDeps(home: string, config: LoopConfig): TickDeps {
     boot: machine.boot,
     alive: machine.alive,
     git,
-    sh: run,
+    sh,
+    userHome: homedir(),
+    installRunning: () => {
+      const lock = installLockOf(home);
+      return typeof lock === "object" ? lock.running : null;
+    },
     improve: async (options, repo) => {
       const deps = realDeps(repo);
       deps.stopRequested = () => existsSync(stopMarkerOf(home));
@@ -2476,7 +3037,7 @@ function realTickDeps(home: string, config: LoopConfig): TickDeps {
       return outcome;
     },
     readSecret: (account) => {
-      const r = run(secretReadCommand(account), { cwd: home });
+      const r = sh(secretReadCommand(account), { cwd: home, quiet: true });
       return r.status === 0 ? r.stdout.trim() : null;
     },
     plan: (repo) => {
@@ -2492,32 +3053,53 @@ function realTickDeps(home: string, config: LoopConfig): TickDeps {
 
 export const ORIGIN_URL = "git@github.com:WizardingCode-io/wizardingcode-developer-crew.git";
 
+/** The real deps of the install, the uninstall and the status: every command bounded; the install's carry its command file (2026-11-13-005). */
+export function realInstallDeps(
+  home: string,
+  run: CommandRunner = spawnRunner(false),
+  commandFile?: string,
+): InstallDeps {
+  const { sh, git } = loopCommands(run, process.env, commandFile);
+  const machine = machineDeps(home, run);
+  return {
+    home,
+    originUrl: ORIGIN_URL,
+    userHome: homedir(),
+    uid: process.getuid?.() ?? 501,
+    env: process.env,
+    which: (tool) => {
+      const r = sh(["which", tool], { cwd: home });
+      return r.status === 0 ? r.stdout.trim() : null;
+    },
+    git,
+    sh,
+    alive: machine.alive,
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => new Date(),
+    log: (line) => console.log(line),
+  };
+}
+
+/** The real deps of `stop`: its commands bounded, with no command file, which would replace a running tick's. */
+export function realStopDeps(home: string, run: CommandRunner = spawnRunner(false)): StopDeps {
+  const machine = machineDeps(home, run);
+  return {
+    home,
+    sh: loopCommands(run, process.env).sh,
+    boot: machine.boot,
+    alive: machine.alive,
+    kill: (pid, signal) => process.kill(pid, signal),
+    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => new Date(),
+  };
+}
+
 const USAGE = `usage: bun scripts/improve-loop.ts tick [--dry-run] | install [--clone-from <checkout>] | uninstall | status | pause | resume | stop | secret set <account>`;
 
 if (import.meta.main) {
   const [command, ...rest] = process.argv.slice(2);
   const home = improveHome(process.env);
   const config = readConfig(home);
-  const userHome = homedir();
-  const installDeps = (): InstallDeps => {
-    const deps = realTickDeps(home, config);
-    return {
-      home,
-      originUrl: ORIGIN_URL,
-      userHome,
-      uid: process.getuid?.() ?? 501,
-      env: process.env,
-      which: (tool) => {
-        const r = deps.sh(["which", tool], { cwd: home });
-        return r.status === 0 ? r.stdout.trim() : null;
-      },
-      git: deps.git,
-      sh: deps.sh,
-      wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-      now: () => new Date(),
-      log: (line) => console.log(line),
-    };
-  };
   let code = 0;
   if (command === "tick")
     code = await tick(
@@ -2527,18 +3109,7 @@ if (import.meta.main) {
   else if (command === "pause") console.log(pauseLoop(home));
   else if (command === "resume") console.log(resumeLoop(home));
   else if (command === "stop") {
-    const machine = machineDeps(home);
-    console.log(
-      await stopLoop({
-        home,
-        sh: machine.run,
-        boot: machine.boot,
-        alive: machine.alive,
-        kill: (pid, signal) => process.kill(pid, signal),
-        wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-        now: () => new Date(),
-      }),
-    );
+    console.log(await stopLoop(realStopDeps(home)));
   } else if (command === "install") {
     const at = rest.indexOf("--clone-from");
     const cloneFrom = at >= 0 ? rest[at + 1] : undefined;
@@ -2551,9 +3122,12 @@ if (import.meta.main) {
         { mode: 0o600 },
       );
     }
-    code = await install({ cloneFrom }, installDeps());
-  } else if (command === "uninstall") code = await uninstall(installDeps());
-  else if (command === "status") console.log(statusText(installDeps()));
+    code = await install(
+      { cloneFrom },
+      realInstallDeps(home, undefined, join(home, INSTALL_COMMAND_FILE)),
+    );
+  } else if (command === "uninstall") code = await uninstall(realInstallDeps(home));
+  else if (command === "status") console.log(statusText(realInstallDeps(home)));
   else if (command === "secret" && rest[0] === "set" && rest[1]) {
     const token = process.stdin.isTTY
       ? (prompt(`token for ${rest[1]}:`) ?? "")

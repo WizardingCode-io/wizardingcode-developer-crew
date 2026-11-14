@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   appendFileSync,
   chmodSync,
@@ -14,6 +14,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   DEFAULT_AGENT_MODEL,
@@ -29,11 +30,16 @@ import {
   bootstrapClone,
   CLONE_SHELL_INSTALL,
   ceilingOf,
+  clearClone,
   dailyReport,
   dayCostOf,
   dueRun,
+  INSTALL_COMMAND_FILE,
+  INSTALL_LOCK,
   type InstallDeps,
   install,
+  installCommandOf,
+  installLockOf,
   judgeArgs,
   keptNote,
   LABEL,
@@ -41,6 +47,7 @@ import {
   lastMeasuredOf,
   launchdPlist,
   launcherScript,
+  loopCommands,
   parseRuling,
   pauseLoop,
   pickTargets,
@@ -48,6 +55,9 @@ import {
   providerEnv,
   providerUnpriced,
   readConfig,
+  realInstallDeps,
+  realStopDeps,
+  realTickDeps,
   redact,
   redactingLogger,
   relaunchCommand,
@@ -57,7 +67,9 @@ import {
   secretSetCommand,
   statusText,
   stopLoop,
+  stopName,
   sweepLeftovers,
+  TICK_COMMAND_FILE,
   type TickDeps,
   tick,
   tickNotification,
@@ -67,7 +79,13 @@ import {
   verdictText,
   writeRedacted,
 } from "../../../scripts/improve-loop.ts";
-import { notificationCommand } from "../../../scripts/release.ts";
+import {
+  boundOf,
+  leftCommand,
+  notificationCommand,
+  spawnRunner,
+} from "../../../scripts/release.ts";
+import { processStart } from "../src/open.ts";
 import { childEnv, tempDir } from "./helpers.ts";
 
 /** A keychain with two accounts, read by account name; anything else is absent. */
@@ -752,6 +770,14 @@ function loopWorld(options: { loop?: boolean } = {}): {
 
 type Seen = {
   sh: string[][];
+  /** Each wait the tick made for a young git lock, in milliseconds (2026-11-13-005). */
+  pauses: number[];
+  /** The groups the tick killed, each with how many commands it had run by then (2026-11-13-005). */
+  kills: { group: number; after: number }[];
+  /** Each git command asked, before the real git runs (2026-11-13-005). */
+  git: { args: string[]; cwd: string }[];
+  /** Each played command with the bound it was given (2026-11-13-005). */
+  shOptions: { cmd: string[]; timeoutMs?: number }[];
   /** The signal handler's installs and removals, in order (2026-10-28-001 AC-7), and the handler itself. */
   signals: string[];
   handler?: () => void;
@@ -819,12 +845,38 @@ function tickDeps(
      * that commit and tag on origin too).
      */
     unconfirmed?: "rule-3" | "unknown" | "landed";
-    /** `gh auth token -u` answers a token (2026-11-13-004): none when not given. */
-    releaseToken?: boolean;
+    /** What `gh auth token -u` answers: a token when not given (2026-11-13-005, where a due tick reads it), none for `false`, a read killed at its bound for `"hangs"`. */
+    releaseToken?: boolean | "hangs";
+    /** A new release stops before step 1 with this line (2026-11-13-005 AC-51). */
+    stopped?: string;
+    /** A resume stops with this line. */
+    resumeStopped?: string;
+    /** The command a dead tick left, as the home's file names it (2026-11-13-005 AC-49). */
+    tickCommand?: number | null;
+    /** The command a dead tick's release left, as the clone's file names it (2026-11-13-005 AC-49). */
+    leftCommand?: number | null;
+    /** An install still runs, by this pid (2026-11-13-005 AC-50). */
+    installRunning?: number;
+    /** The stop's marker appears during the tick: at the packages' install, or at the shell's, which then fails (2026-11-13-005 AC-49). */
+    stopMarker?: "during" | "at the install";
+    /** A clone writes a file into its target and fails (2026-11-13-005 AC-41). */
+    cloneFails?: boolean;
+    /** The fast-forward's merge in the user's checkout is killed at its bound (2026-11-13-005 AC-41). */
+    userMergeHangs?: boolean;
+    /** `bun install` fails (2026-11-13-005 AC-37). */
+    packagesFail?: boolean;
+    /** The shell's install is killed at its bound (2026-11-13-005 AC-39). */
+    shellInstall?: "hangs";
+    /** The run's baseline for this case errored (2026-11-13-005 AC-48). */
+    baselineErrored?: string;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
   const seen: Seen = {
     sh: [],
+    shOptions: [],
+    git: [],
+    kills: [],
+    pauses: [],
     signals: [],
     relaunch: [],
     improve: [],
@@ -839,6 +891,16 @@ function tickDeps(
   };
   const now = new Date(options.now ?? "2026-10-25T20:00:00.000Z");
   const deps: TickDeps = {
+    tickCommand: () => options.tickCommand ?? null,
+    leftCommand: () => options.leftCommand ?? null,
+    killGroup: (group) => {
+      seen.kills.push({ group, after: seen.sh.length + seen.git.length });
+    },
+    installRunning: () => options.installRunning ?? null,
+    pause: (ms) => {
+      seen.pauses.push(ms);
+    },
+    userHome: "/Users/someone",
     home: world.home,
     originUrl: world.origin,
     env: { PATH: process.env.PATH ?? "" },
@@ -856,6 +918,15 @@ function tickDeps(
       return options.relaunchStatus ?? 0;
     },
     git: (args, cwd) => {
+      seen.git.push({ args: [...args], cwd });
+      if (options.cloneFails && args[0] === "clone") {
+        const target = args[args.length - 1] as string;
+        mkdirSync(target, { recursive: true });
+        writeFileSync(join(target, "half"), "");
+        return { status: 128, stdout: "", stderr: "fatal: the remote hung up\nmore" };
+      }
+      if (options.userMergeHangs && args[0] === "merge" && cwd === world.user)
+        return { status: 1, stdout: "", stderr: "", timedOut: true };
       if (options.refusePush && args[0] === "push")
         return { status: 1, stdout: "", stderr: "! [remote rejected] main (refused)" };
       const r = spawnSync("git", args, {
@@ -873,8 +944,23 @@ function tickDeps(
     },
     sh: (cmd, shOptions) => {
       seen.sh.push([...cmd]);
-      if (options.releaseToken && cmd.join(" ").startsWith("gh auth token"))
-        return { status: 0, stdout: "a-token\n", stderr: "" };
+      seen.shOptions.push({ cmd: [...cmd], timeoutMs: shOptions?.timeoutMs });
+      const stopNow = () =>
+        writeFileSync(join(world.home, "stop.json"), '{"at":"now","by":"stop"}\n');
+      if (options.stopMarker === "during" && cmd[0] === "bun" && cmd[1] === "install") stopNow();
+      if (options.stopMarker === "at the install" && cmd[0] === "env") {
+        stopNow();
+        return { status: 143, stdout: "", stderr: "terminated" };
+      }
+      if (options.packagesFail && cmd[0] === "bun" && cmd[1] === "install")
+        return { status: 1, stdout: "", stderr: "the registry is away\nmore" };
+      if (options.shellInstall === "hangs" && cmd[0] === "env" && cmd.includes("install"))
+        return { status: 1, stdout: "", stderr: "", timedOut: true };
+      if (cmd.join(" ").startsWith("gh auth token")) {
+        if (options.releaseToken === "hangs")
+          return { status: 1, stdout: "", stderr: "", timedOut: true };
+        if (options.releaseToken !== false) return { status: 0, stdout: "a-token\n", stderr: "" };
+      }
       if (cmd[0] === "env" && cmd.includes("install") && shOptions?.cwd) {
         if (options.shellInstallFails)
           return { status: 1, stdout: "", stderr: "the download failed\nmore" };
@@ -915,7 +1001,7 @@ function tickDeps(
           opts.cases.map((c) => [
             c,
             options.unjudged === undefined
-              ? figures(0.5)
+              ? { ...figures(0.5), ...(options.baselineErrored === c ? { errored: true } : {}) }
               : { ...figures(0), unjudged: true, runs: [{ score: 0, unjudged: options.unjudged }] },
           ]),
         ),
@@ -977,10 +1063,20 @@ function tickDeps(
       const version = "0.15.1";
       if (opts.resume) {
         seen.fromSteps.push(opts.fromStep);
+        if (options.resumeStopped !== undefined)
+          return {
+            version: opts.resume,
+            code: 1,
+            failedStep: null,
+            pending: false,
+            stopped: options.resumeStopped,
+          };
         return options.resumeFails === undefined
           ? { version, code: 0, failedStep: null, pending: false }
           : { version, code: 1, failedStep: options.resumeFails, pending: true };
       }
+      if (options.stopped !== undefined)
+        return { version: "", code: 1, failedStep: null, pending: false, stopped: options.stopped };
       if (options.unconfirmed) {
         const at = (rev: string) => git(opts.root, "rev-parse", rev).trim();
         seen.heads = { ruling: at("HEAD"), merge: at("HEAD~1"), before: at("HEAD~1^1") };
@@ -1060,7 +1156,10 @@ test("2026-10-25-005 AC-5: a tick clones and bootstraps the loop's repository, r
   const second = tickDeps(world);
   expect(await tick({}, second.deps)).toBe(0);
   expect(second.seen.improve).toEqual([]);
-  expect(second.seen.sh.filter((c) => c[0] === "bun")).toEqual([]);
+  // The packages are installed at every tick, a no-op when they are there (2026-11-13-005).
+  expect(second.seen.sh.filter((c) => c[0] === "bun")).toEqual([
+    ["bun", "install", "--frozen-lockfile"],
+  ]);
   expect(second.seen.log.join("\n")).toContain(
     "not due: nothing new since the last run and no case older than 7 days",
   );
@@ -1232,13 +1331,46 @@ function installDeps(
     originUrl?: string;
     /** The command the ended tick's release left running, by its pid (2026-11-13-004). */
     leftCommand?: number | null;
+    /** A clone writes a file into its target and fails (2026-11-13-005 AC-41). */
+    cloneFails?: boolean;
+    /** The command the ended tick left, as the home's file names it (2026-11-13-005 AC-49). */
+    tickCommand?: number | null;
+    /** The install's two doors (2026-11-13-005 AC-50): the real ones when not given. */
+    installLock?: ReturnType<typeof installLockOf>;
+    installCommand?: ReturnType<typeof installCommandOf>;
+    /** The tick's lock still names a living tick after the bootout. */
+    liveTick?: boolean;
+    packagesFail?: boolean;
+    /** `bun install` throws, as a command that cannot be started does. */
+    packagesThrow?: boolean;
+    /** The agent's load fails. */
+    loadFails?: boolean;
+    /** The first tick's probe appears only after this many seconds of the install's wait (2026-11-13-005). */
+    probeAfterSeconds?: number;
   } = {},
 ) {
   const seen: string[][] = [];
+  /** Every command in order, git's among them, each with what `install.lock` held then. */
+  const order: { cmd: string; lock: string | null }[] = [];
+  const note = (cmd: string) =>
+    order.push({
+      cmd,
+      lock: existsSync(join(home, INSTALL_LOCK))
+        ? readFileSync(join(home, INSTALL_LOCK), "utf8")
+        : null,
+    });
+  const gits: { args: string[]; cwd: string }[] = [];
+  let waited = 0;
   const log: string[] = [];
   const asked: { root: string; startedBy: number }[] = [];
   const kills: number[] = [];
+  const lockAnswer = options.installLock;
+  const commandAnswer = options.installCommand;
   const deps: InstallDeps = {
+    tickCommand: () => options.tickCommand ?? null,
+    ...(lockAnswer === undefined ? {} : { installLock: () => lockAnswer }),
+    ...(commandAnswer === undefined ? {} : { installCommand: () => commandAnswer }),
+    alive: () => options.liveTick ?? false,
     leftCommand: (root, startedBy) => {
       asked.push({ root, startedBy });
       return options.leftCommand ?? null;
@@ -1259,18 +1391,32 @@ function installDeps(
         ? (options.which[tool] as string | null)
         : `/opt/tools/${tool}/bin/${tool}`,
     git: (args, cwd) => {
+      gits.push({ args: [...args], cwd });
+      note(`git ${args[0]}`);
+      if (options.cloneFails && args[0] === "clone") {
+        const target = args[args.length - 1] as string;
+        mkdirSync(target, { recursive: true });
+        writeFileSync(join(target, "half"), "");
+        return { status: 128, stdout: "", stderr: "fatal: the remote hung up\nmore" };
+      }
       const r = spawnSync("git", args, { cwd, encoding: "utf8" });
       return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
     },
     sh: (cmd) => {
       seen.push([...cmd]);
+      note(cmd.slice(0, 2).join(" "));
+      if (options.packagesFail && cmd[0] === "bun")
+        return { status: 1, stdout: "", stderr: "the registry is away" };
+      if (options.packagesThrow && cmd[0] === "bun") throw new Error("spawn bun ENOENT");
+      if (options.loadFails && cmd[0] === "launchctl" && cmd[1] === "bootstrap")
+        return { status: 5, stdout: "", stderr: "Bootstrap failed: 5: Input/output error" };
       if (cmd[0] === "launchctl" && cmd[1] === "bootout")
         return {
           status: options.bootoutStatus ?? 0,
           stdout: "",
           stderr: "Boot-out failed: 3: No such process",
         };
-      if (cmd[0] === "launchctl" && cmd[1] === "kickstart" && probe) {
+      if (cmd[0] === "launchctl" && cmd[1] === "kickstart" && probe && !options.probeAfterSeconds) {
         mkdirSync(home, { recursive: true });
         writeFileSync(join(home, "probe.json"), JSON.stringify(probe));
       }
@@ -1278,11 +1424,15 @@ function installDeps(
         return { status: 0, stdout: `${LABEL} = {\n\tstate = waiting\n}\n`, stderr: "" };
       return { status: 0, stdout: "", stderr: "" };
     },
-    wait: async () => {},
+    wait: async () => {
+      waited += 1;
+      if (probe && options.probeAfterSeconds && waited === options.probeAfterSeconds)
+        writeFileSync(join(home, "probe.json"), JSON.stringify(probe));
+    },
     now: () => new Date("2026-10-25T20:00:00.000Z"),
     log: (line) => log.push(line),
   };
-  return { deps, seen, log, asked, kills };
+  return { deps, seen, log, asked, kills, gits, order };
 }
 
 test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch-up on wake, the tools' PATH and the two logs; install clones, bootstraps, boots the agent and prints the probe; uninstall boots it out; status says where the loop stands", async () => {
@@ -1351,10 +1501,11 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   const launcher = readFileSync(join(home, "tick.sh"), "utf8");
   expect(launcher).toContain("bun='/opt/tools/bun/bin/bun'");
   expect(launcher).toContain(`repo='${join(home, "repo")}'`);
+  // The agent is booted out before the install writes in the clone (2026-11-13-005).
   expect(ok.seen.filter((c) => c[0] !== "git")).toEqual([
+    ["launchctl", "bootout", `gui/501/${LABEL}`],
     ["bun", "install", "--frozen-lockfile"],
     CLONE_SHELL_INSTALL,
-    ["launchctl", "bootout", `gui/501/${LABEL}`],
     ["launchctl", "bootstrap", "gui/501", plistPath],
     ["launchctl", "kickstart", "-k", `gui/501/${LABEL}`],
   ]);
@@ -1384,7 +1535,12 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   const bare = installDeps(join(base, "crew-improve-3"), null, { originUrl: bareOrigin });
   expect(await install({ cloneFrom: loopSeed(false) }, bare.deps)).toBe(1);
   expect(bare.log.join("\n")).toContain("the clone has no scripts/improve-loop.ts");
-  expect(bare.seen.filter((c) => c[0] === "launchctl")).toEqual([]);
+  // Since 2026-11-13-005 the agent is booted out first; an install that then fails loads again the one that was loaded.
+  expect(bare.seen.filter((c) => c[0] === "launchctl").map((c) => c[1])).toEqual([
+    "bootout",
+    "bootstrap",
+  ]);
+  expect(bare.log.join("\n")).toContain("the agent that was loaded is loaded again");
   // A tool missing from PATH is refused by name.
   const noPhp = installDeps(join(base, "crew-improve-4"), null, { which: { php: null } });
   expect(await install({ cloneFrom: seed }, noPhp.deps)).toBe(1);
@@ -1579,10 +1735,11 @@ test("2026-10-25-010 AC-3: install brings an existing clone without the loop to 
   expect(healed.log.join("\n")).toContain(
     "the clone had no scripts/improve-loop.ts: brought to origin/main",
   );
+  // The agent is booted out before the install writes in the clone (2026-11-13-005).
   expect(healed.seen.filter((c) => c[0] !== "git").slice(0, 3)).toEqual([
+    ["launchctl", "bootout", `gui/501/${LABEL}`],
     ["bun", "install", "--frozen-lockfile"],
     CLONE_SHELL_INSTALL,
-    ["launchctl", "bootout", `gui/501/${LABEL}`],
   ]);
   expect(statSync(join(home, "tick.sh")).mode & 0o777).toBe(0o700);
   expect(readFileSync(join(home, "tick.sh"), "utf8")).toContain(`repo='${join(home, "repo")}'`);
@@ -1600,7 +1757,12 @@ test("2026-10-25-010 AC-3: install brings an existing clone without the loop to 
   expect(bare.log.join("\n")).toContain(
     "the clone has no scripts/improve-loop.ts: push the loop's commit",
   );
-  expect(bare.seen.filter((c) => c[0] === "launchctl")).toEqual([]);
+  // Since 2026-11-13-005 the agent is booted out first; an install that then fails loads again the one that was loaded.
+  expect(bare.seen.filter((c) => c[0] === "launchctl").map((c) => c[1])).toEqual([
+    "bootout",
+    "bootstrap",
+  ]);
+  expect(bare.log.join("\n")).toContain("the agent that was loaded is loaded again");
   // The fetch failing is named as such, not as a missing loop.
   git(join(bareHome, "repo"), "remote", "set-url", "origin", join(base, "gone.git"));
   const unreachable = installDeps(bareHome, null);
@@ -2271,9 +2433,12 @@ function stopDeps(
     ends?: boolean;
     /** What the release's `leftCommand` answers on each call, in order, null once they run out (2026-11-13-004). */
     leftCommands?: (number | null)[];
+    /** What the home's file answers for the tick's own command (2026-11-13-005 AC-49). */
+    tickCommand?: number | null;
   } = {},
 ) {
   const asked: { root: string; startedBy: number }[] = [];
+  let ownAsked = 0;
   const kills: { pid: number; signal: string }[] = [];
   const ps: string[][] = [];
   let waited = 0;
@@ -2296,6 +2461,10 @@ function stopDeps(
     kill: (pid: number, signal: "SIGTERM" | "SIGKILL") => {
       kills.push({ pid, signal });
     },
+    tickCommand: () => {
+      ownAsked += 1;
+      return options.tickCommand ?? null;
+    },
     leftCommand: (root: string, startedBy: number) => {
       asked.push({ root, startedBy });
       return options.leftCommands?.[asked.length - 1] ?? null;
@@ -2306,7 +2475,7 @@ function stopDeps(
     },
     now: () => new Date("2026-10-28T03:00:00.000Z"),
   };
-  return { deps, kills, ps, asked, waited: () => waited };
+  return { deps, kills, ps, asked, waited: () => waited, ownAsked: () => ownAsked };
 }
 
 test("2026-10-28-001 AC-7: pause and resume write paused into the configuration, keep its other keys and say so; resume removes a stop marker", () => {
@@ -2696,7 +2865,10 @@ test("2026-10-30-001 AC-28: a tick about to run bootstraps a clone with no insta
   expect(await tick({}, idle.deps)).toBe(0);
   expect(idle.seen.log.join("\n")).toContain("not due:");
   expect(installs(idle.seen)).toBe(0);
-  expect(idle.seen.sh.filter((c) => c[0] === "bun")).toEqual([]);
+  // The packages are installed at every tick (2026-11-13-005); the shell is not.
+  expect(idle.seen.sh.filter((c) => c[0] === "bun")).toEqual([
+    ["bun", "install", "--frozen-lockfile"],
+  ]);
   // A dry run says what it would do and installs nothing.
   moveText();
   const dry = tickDeps(world, at(20));
@@ -2733,11 +2905,12 @@ test("2026-10-30-001 AC-28: a tick about to run bootstraps a clone with no insta
   expect(await tick({}, again.deps)).toBe(0);
   expect(installs(again.seen)).toBe(1);
   expect(again.seen.improve.length).toBe(1);
-  // With the shell in place a due tick installs nothing.
+  // With the shell in place a due tick still runs Playwright's install, which then does nothing
+  // (2026-11-13-005: the loop keeps no check of its own, so a bumped Playwright gets its build).
   moveText();
   const settled = tickDeps(world, { now: "2026-10-26T13:00:00.000Z" });
   expect(await tick({}, settled.deps)).toBe(0);
-  expect(installs(settled.seen)).toBe(0);
+  expect(installs(settled.seen)).toBe(1);
   expect(settled.seen.improve.length).toBe(1);
 });
 
@@ -3622,11 +3795,11 @@ test("2026-11-13-004 AC-32: the probe says whether the release's account gave a 
 test("2026-11-13-004 AC-32: a tick probes again when the probe file is absent, does not parse or has no release token, and runs no probe over a complete one", async () => {
   const world = loopWorld();
   const file = join(world.home, "probe.json");
-  mkdirSync(world.home, { recursive: true });
-  writeFileSync(join(world.home, "config.json"), JSON.stringify({ paused: true }));
+  // Dry runs of a loop that is not paused: since 2026-11-13-005 a paused loop probes only when
+  // it has no probe, and a dry run runs the probe and nothing after it.
   const probed = async (hour: number) => {
     const at = tickDeps(world, { now: `2026-10-25T${hour}:00:00.000Z`, releaseToken: true });
-    expect(await tick({}, at.deps)).toBe(0);
+    expect(await tick({ dryRun: true }, at.deps)).toBe(0);
     return at.seen.sh.filter((c) => c[0] === "gh").map((c) => c.join(" "));
   };
   const both = ["gh auth status", "gh auth token -u andreagroferreira"];
@@ -3783,11 +3956,11 @@ test("2026-11-13-004 AC-52: stop kills the command of the stopped tick's release
 test("2026-11-13-004 AC-57: a tick probes again while the probe says the release's token is missing, so the word follows a login", async () => {
   const world = loopWorld();
   const file = join(world.home, "probe.json");
-  mkdirSync(world.home, { recursive: true });
-  writeFileSync(join(world.home, "config.json"), JSON.stringify({ paused: true }));
+  // Dry runs of a loop that is not paused: since 2026-11-13-005 a paused loop probes only when
+  // it has no probe, and a dry run runs the probe and nothing after it.
   const probed = async (hour: number, releaseToken: boolean) => {
     const at = tickDeps(world, { now: `2026-10-25T${hour}:00:00.000Z`, releaseToken });
-    expect(await tick({}, at.deps)).toBe(0);
+    expect(await tick({ dryRun: true }, at.deps)).toBe(0);
     return {
       gh: at.seen.sh.filter((c) => c[0] === "gh").length,
       word: JSON.parse(readFileSync(file, "utf8")).releaseToken,
@@ -3843,8 +4016,1185 @@ test("2026-11-13-004 AC-57: install and uninstall kill the command of the tick t
     { leftCommand: 888 },
   );
   expect(await install({ cloneFrom: loopSeed() }, up.deps)).toBe(0);
-  expect(up.asked).toEqual([{ root: join(again, "repo"), startedBy: 4242 }]);
-  expect(up.kills).toEqual([888]);
+  // Asked twice since 2026-11-13-005: after the bootout, before the install writes in the clone,
+  // and after the kickstart, for a tick the load started.
+  const askedOnce = { root: join(again, "repo"), startedBy: 4242 };
+  expect(up.asked).toEqual([askedOnce, askedOnce]);
+  expect(up.kills).toEqual([888, 888]);
   const order = up.seen.map((c) => c.slice(0, 2).join(" "));
-  expect(order.indexOf("kill group 888")).toBeGreaterThan(order.indexOf("launchctl kickstart"));
+  expect(order.indexOf("kill group 888")).toBeGreaterThan(order.indexOf("launchctl bootout"));
+  expect(order.lastIndexOf("kill group 888")).toBeGreaterThan(order.indexOf("launchctl kickstart"));
+});
+
+test("2026-11-13-005 AC-48: a baseline that errored once is not measured, one that errors twice running is, and a probe's error changes nothing", async () => {
+  type Rec = Parameters<typeof lastMeasuredOf>[0][number];
+  const rec = (
+    at: string,
+    baseline: Record<string, unknown>,
+    probe?: Record<string, unknown>,
+  ): Rec =>
+    ({
+      run: at,
+      at,
+      baseline,
+      proposals: probe ? [{ id: "P-1", probe }] : [],
+    }) as unknown as Rec;
+  const bad = { ...figures(0), errored: true };
+  const good = figures(0.5);
+  const [d1, d2, d3] = [
+    "2026-10-25T10:00:00.000Z",
+    "2026-10-26T10:00:00.000Z",
+    "2026-10-27T10:00:00.000Z",
+  ] as [string, string, string];
+  // One error: the case is not measured, the one beside it is.
+  expect(lastMeasuredOf([rec(d1, { t: bad, u: good })], ["t", "u"])).toEqual({ t: null, u: d1 });
+  // Two errors running, given out of time order: measured at the second's time.
+  expect(lastMeasuredOf([rec(d2, { t: bad }), rec(d1, { t: bad })], ["t"])).toEqual({ t: d2 });
+  // An error after a good record is a first error again.
+  expect(
+    lastMeasuredOf([rec(d3, { t: bad }), rec(d1, { t: bad }), rec(d2, { t: good })], ["t"]),
+  ).toEqual({ t: d2 });
+  // A good baseline with an errored probe measures the case.
+  expect(lastMeasuredOf([rec(d1, { t: good }, { t: bad })], ["t"])).toEqual({ t: d1 });
+  // An errored baseline with a good probe, first error: nothing of that record counts for the case.
+  expect(lastMeasuredOf([rec(d1, { t: bad }, { t: good })], ["t"])).toEqual({ t: null });
+  // A record with no baseline for the case between two errors counts, and the second error is the second running.
+  expect(lastMeasuredOf([rec(d1, { t: bad }), rec(d2, { u: good }, { t: good })], ["t"])).toEqual({
+    t: d2,
+  });
+  expect(
+    lastMeasuredOf(
+      [rec(d1, { t: bad }), rec(d2, { u: good }, { t: good }), rec(d3, { t: bad })],
+      ["t"],
+    ),
+  ).toEqual({ t: d3 });
+  // A baseline with no errored field reads as not errored.
+  expect(lastMeasuredOf([rec(d1, { t: { mean: 0.5, runs: [] } })], ["t"])).toEqual({ t: d1 });
+
+  // A tick over a record whose baseline for t errored: t is still never measured, and due for it.
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world, { baselineErrored: "t" }).deps)).toBe(0);
+  const next = tickDeps(world, { now: "2026-10-25T23:00:00.000Z" });
+  expect(await tick({}, next.deps)).toBe(0);
+  const log = next.seen.log.join("\n");
+  expect(log).toContain("due: case t never measured");
+  expect(next.seen.improve).toEqual([{ cases: ["t", "u"], provider: "runtime" }]);
+});
+
+const packagesOf = (seen: { sh: string[][] }) =>
+  seen.sh.filter((c) => c[0] === "bun" && c[1] === "install").length;
+const shellsOf = (seen: { sh: string[][] }) => seen.sh.filter((c) => c[0] === "env").length;
+
+test("2026-11-13-005 AC-37: a tick installs the packages after its sync at every tick and never the shell there; a failed install is tried again by the next tick", async () => {
+  const world = loopWorld();
+  // The tick that makes the clone, as a dry run: the packages, no shell.
+  const making = tickDeps(world);
+  expect(await tick({ dryRun: true }, making.deps)).toBe(0);
+  expect(packagesOf(making.seen)).toBe(1);
+  expect(shellsOf(making.seen)).toBe(0);
+  const ran = tickDeps(world);
+  expect(await tick({}, ran.deps)).toBe(0);
+  expect(packagesOf(ran.seen)).toBe(1);
+  // Origin did not move and the tick is not due: the packages all the same, no shell.
+  const idle = tickDeps(world);
+  expect(await tick({}, idle.deps)).toBe(0);
+  expect(idle.seen.log.join("\n")).toContain("not due:");
+  expect(packagesOf(idle.seen)).toBe(1);
+  expect(shellsOf(idle.seen)).toBe(0);
+  // A new lockfile on origin and an install that fails: the tick fails.
+  moveOrigin(world, "bun.lock", "lock 2\n");
+  const failing = tickDeps(world, { packagesFail: true });
+  expect(await tick({}, failing.deps)).toBe(1);
+  expect(failing.seen.log.join("\n")).toContain("bun install failed: the registry is away");
+  expect(shellsOf(failing.seen)).toBe(0);
+  // The next tick sees no change of the lockfile, and installs again.
+  const again = tickDeps(world, { now: "2026-10-25T20:30:00.000Z" });
+  expect(await tick({}, again.deps)).toBe(0);
+  expect(packagesOf(again.seen)).toBe(1);
+  expect(shellsOf(again.seen)).toBe(0);
+  // bootstrapClone, as the install runs it: the packages, then the shell.
+  const calls: string[] = [];
+  const fake = ((argv: string[]) => {
+    calls.push(argv[0] as string);
+    return { status: 0, stdout: "", stderr: "" };
+  }) as never;
+  expect(bootstrapClone("/r", fake)).toBeNull();
+  expect(calls).toEqual(["bun", "env"]);
+});
+
+test("2026-11-13-005 AC-38: a due tick runs the shell's install before its run, with the build there or not; a failed install fails the tick before the run and the next due tick installs again", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(shellsOf(first.seen)).toBe(1);
+  const repo = join(world.home, "repo");
+  expect(
+    existsSync(
+      join(
+        repo,
+        "node_modules/.cache/ms-playwright/chromium_headless_shell-1/INSTALLATION_COMPLETE",
+      ),
+    ),
+  ).toBe(true);
+  let edition = 1;
+  const moveText = () => {
+    edition += 1;
+    moveOrigin(world, "plugins/core/skills/crew/SKILL.md", `# Crew\n\nRule ${edition}.\n`);
+  };
+  // Due again, the finished build there: the install runs all the same, and then the run.
+  moveText();
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(shellsOf(second.seen)).toBe(1);
+  expect(second.seen.improve.length).toBe(1);
+  // A dry run installs no shell.
+  moveText();
+  const dry = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({ dryRun: true }, dry.deps)).toBe(0);
+  expect(shellsOf(dry.seen)).toBe(0);
+  // The install fails: no run; the next due tick, past the back-off, installs again.
+  const failing = tickDeps(world, { now: "2026-10-25T22:00:00.000Z", shellInstallFails: true });
+  expect(await tick({}, failing.deps)).toBe(1);
+  expect(failing.seen.improve).toEqual([]);
+  const later = tickDeps(world, { now: "2026-10-26T02:00:00.000Z" });
+  expect(await tick({}, later.deps)).toBe(0);
+  expect(shellsOf(later.seen)).toBe(1);
+  expect(later.seen.improve.length).toBe(1);
+});
+
+test("2026-11-13-005 AC-39: the packages' install carries 5 minutes and the shell's 15, and one killed at its bound is the bootstrap's error", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  const boundOfPlayed = (head: string) =>
+    first.seen.shOptions.find((c) => c.cmd[0] === head && c.cmd.includes("install"))?.timeoutMs;
+  expect(boundOfPlayed("bun")).toBe(300_000);
+  expect(boundOfPlayed("env")).toBe(900_000);
+  const hung = (head: string) =>
+    ((argv: string[]) =>
+      argv[0] === head
+        ? { status: 1, stdout: "", stderr: "", timedOut: true }
+        : { status: 0, stdout: "", stderr: "" }) as never;
+  expect(bootstrapClone("/r", hung("bun"))).toBe("bun install timed out after 300 s");
+  expect(bootstrapClone("/r", hung("env"))).toBe(
+    "the headless shell's install timed out after 900 s",
+  );
+  moveOrigin(world, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nRule 9.\n");
+  const hanging = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", shellInstall: "hangs" });
+  expect(await tick({}, hanging.deps)).toBe(1);
+  expect(hanging.seen.log.join("\n")).toContain(
+    "the headless shell's install timed out after 900 s",
+  );
+  expect(hanging.seen.improve).toEqual([]);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(typeof state.backoffUntil).toBe("string");
+});
+
+/** A runner that records what it is asked and answers by a rule. */
+function recordingRunner(
+  answer: (
+    cmd: readonly string[],
+    cwd: string,
+  ) => Partial<ReturnType<ReturnType<typeof spawnRunner>>> = () => ({}),
+) {
+  const calls: {
+    cmd: string[];
+    cwd: string;
+    timeoutMs?: number;
+    env?: Record<string, string>;
+    commandFile?: string;
+  }[] = [];
+  const run = ((cmd, opts) => {
+    calls.push({
+      cmd: [...cmd],
+      cwd: opts.cwd,
+      timeoutMs: opts.timeoutMs,
+      env: opts.env,
+      commandFile: opts.commandFile,
+    });
+    return { status: 0, exit: 0, stdout: "", stderr: "", ...answer(cmd, opts.cwd) };
+  }) as ReturnType<typeof spawnRunner>;
+  return { run, calls };
+}
+
+test("2026-11-13-005 AC-41: the loop's git carries the release's bounds and asks no terminal, its ssh command read per folder", () => {
+  expect(boundOf(["git", "clone", "-q", "u", "r"])).toBe(300_000);
+  expect(boundOf(["git", "status"])).toBe(120_000);
+  const sshAsked = (c: { cmd: string[] }) => c.cmd.join(" ") === "git config --get core.sshCommand";
+  // No ssh command anywhere: batch mode on plain ssh, read once for the folder.
+  const plain = recordingRunner((cmd) => (cmd[1] === "config" ? { status: 1, exit: 1 } : {}));
+  const bounded = loopCommands(plain.run, {}).git;
+  for (const first of ["clone", "fetch", "ls-remote", "push"]) bounded([first, "x"], "/a");
+  bounded(["rev-parse", "HEAD"], "/a");
+  const asked = plain.calls.filter((c) => !sshAsked(c));
+  expect(asked.map((c) => c.timeoutMs)).toEqual([300_000, 300_000, 300_000, 300_000, 120_000]);
+  for (const c of asked)
+    expect(c.env).toEqual({ GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes" });
+  expect(plain.calls.filter(sshAsked).map((c) => [c.cwd, c.timeoutMs])).toEqual([["/a", 120_000]]);
+  // Two folders whose configurations name different commands: each its own, each read once.
+  const two = recordingRunner((cmd, cwd) =>
+    cmd[1] === "config" ? { stdout: cwd === "/a" ? "ssh -i a\n" : "ssh -i b\n" } : {},
+  );
+  const perFolder = loopCommands(two.run, {}).git;
+  for (const cwd of ["/a", "/b", "/a", "/b"]) perFolder(["fetch"], cwd);
+  expect(two.calls.filter((c) => !sshAsked(c)).map((c) => c.env?.GIT_SSH_COMMAND)).toEqual([
+    "ssh -i a -o BatchMode=yes",
+    "ssh -i b -o BatchMode=yes",
+    "ssh -i a -o BatchMode=yes",
+    "ssh -i b -o BatchMode=yes",
+  ]);
+  expect(two.calls.filter(sshAsked).map((c) => c.cwd)).toEqual(["/a", "/b"]);
+  // The environment names one: it is left, and no configuration is read.
+  const own = recordingRunner();
+  loopCommands(own.run, { GIT_SSH_COMMAND: "ssh -i mine" }).git(["fetch"], "/a");
+  expect(own.calls.map((c) => c.cmd[1])).toEqual(["fetch"]);
+  expect(own.calls[0]?.env).toEqual({ GIT_TERMINAL_PROMPT: "0" });
+  // A command killed at its bound: a failed result that says so first.
+  const hung = recordingRunner((cmd) =>
+    cmd[1] === "fetch" ? { status: 1, exit: null, stderr: "partial", timedOut: true } : {},
+  );
+  const result = loopCommands(hung.run, { GIT_SSH_COMMAND: "x" }).git(["fetch"], "/a");
+  expect(result.status).toBe(1);
+  expect(result.stderr.startsWith("timed out after 300 s")).toBe(true);
+  expect(result.stderr).toContain("partial");
+  // The real deps of a tick, on a real git: no prompt of git's.
+  const base = tempDir("real-git-");
+  const repo = join(base, "r");
+  mkdirSync(repo);
+  git(repo, "init", "-q", "-b", "main");
+  const home = join(base, "home");
+  mkdirSync(home);
+  const real = realTickDeps(home, readConfig(home));
+  const printed = real.git(["-c", "alias.p=!printenv GIT_TERMINAL_PROMPT", "p"], repo);
+  expect(printed.stdout.trim()).toBe("0");
+});
+
+test("2026-11-13-005 AC-41: a clone is made beside its place and moved when whole, in the tick and in the install; a timed-out command of the fast-forward names its lock", async () => {
+  const cloneOf = (gits: { args: string[] }[]) => gits.find((g) => g.args[0] === "clone")?.args;
+  // The tick: the clone's target, and the finished clone at its place.
+  const world = loopWorld();
+  const repo = join(world.home, "repo");
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(cloneOf(first.seen.git)?.at(-1)).toBe(`${repo}.cloning`);
+  expect(existsSync(join(repo, ".git"))).toBe(true);
+  expect(existsSync(`${repo}.cloning`)).toBe(false);
+  // A clone that fails leaves neither folder.
+  const failing = loopWorld();
+  const failed = tickDeps(failing, { cloneFails: true });
+  expect(await tick({}, failed.deps)).toBe(1);
+  expect(failed.seen.log.join("\n")).toContain("git clone failed: fatal: the remote hung up");
+  expect(existsSync(join(failing.home, "repo"))).toBe(false);
+  expect(existsSync(join(failing.home, "repo.cloning"))).toBe(false);
+  // A folder an earlier clone left is removed first.
+  const stale = loopWorld();
+  mkdirSync(join(stale.home, "repo.cloning"), { recursive: true });
+  writeFileSync(join(stale.home, "repo.cloning", "old"), "");
+  expect(await tick({}, tickDeps(stale).deps)).toBe(0);
+  expect(existsSync(join(stale.home, "repo", "old"))).toBe(false);
+  expect(existsSync(join(stale.home, "repo.cloning"))).toBe(false);
+  // Something that is no clone at the clone's place stays, and the error names it.
+  const blocked = loopWorld();
+  mkdirSync(join(blocked.home, "repo"), { recursive: true });
+  writeFileSync(join(blocked.home, "repo", "keep"), "mine");
+  const inTheWay = tickDeps(blocked);
+  expect(await tick({}, inTheWay.deps)).toBe(1);
+  expect(inTheWay.seen.log.join("\n")).toContain(`${join(blocked.home, "repo")} is in the way`);
+  expect(readFileSync(join(blocked.home, "repo", "keep"), "utf8")).toBe("mine");
+  expect(existsSync(join(blocked.home, "repo.cloning"))).toBe(false);
+  // The install: the same target, and a failed clone leaves neither folder.
+  const base = tempDir("install-clone-");
+  const home = join(base, "crew-improve");
+  const ok = installDeps(home, {
+    loggedIn: true,
+    authMethod: "claude.ai",
+    github: "someone",
+    remote: "ok",
+    push: "ok",
+    keychain: {},
+  });
+  expect(await install({ cloneFrom: loopSeed() }, ok.deps)).toBe(0);
+  expect(cloneOf(ok.gits)?.at(-1)).toBe(`${join(home, "repo")}.cloning`);
+  expect(existsSync(join(home, "repo", ".git"))).toBe(true);
+  const home2 = join(tempDir("install-clone-"), "crew-improve");
+  const bad = installDeps(home2, null, { cloneFails: true });
+  expect(await install({ cloneFrom: loopSeed() }, bad.deps)).toBe(1);
+  expect(bad.log.join("\n")).toContain("the clone failed: fatal: the remote hung up");
+  expect(existsSync(join(home2, "repo"))).toBe(false);
+  expect(existsSync(join(home2, "repo.cloning"))).toBe(false);
+  // The fast-forward of the user's checkout: a merge killed at its bound is said with the lock's path.
+  const ff = loopWorld();
+  const hanging = tickDeps(ff, { userMergeHangs: true });
+  expect(await tick({}, hanging.deps)).toBe(0);
+  expect(hanging.seen.log.join("\n")).toContain(
+    `the user's checkout: git merge timed out after 120 s; if git then says a lock exists, remove ${join(ff.user, ".git", "index.lock")}`,
+  );
+});
+
+test("2026-11-13-005 AC-42: every command of the loop's real deps has a bound: two minutes when its call names none", () => {
+  const home = join(tempDir("bounds-"), "home");
+  mkdirSync(home, { recursive: true });
+  const boundsOf = (calls: { cmd: string[]; timeoutMs?: number }[]) =>
+    calls.map((c) => [c.cmd[0], c.timeoutMs]);
+  const t = recordingRunner();
+  const tickReal = realTickDeps(home, readConfig(home), t.run);
+  tickReal.sh(["claude", "auth", "status"], { cwd: home });
+  tickReal.sh(["gh", "auth", "status"], { cwd: home, timeoutMs: 5000 });
+  tickReal.readSecret("an-account");
+  tickReal.boot();
+  expect(boundsOf(t.calls)).toEqual([
+    ["claude", 120_000],
+    ["gh", 5000],
+    [secretReadCommand("an-account")[0] as string, 120_000],
+    ["/usr/sbin/sysctl", 120_000],
+  ]);
+  const i = recordingRunner();
+  realInstallDeps(home, i.run).sh(["launchctl", "print", "x"], { cwd: home });
+  expect(boundsOf(i.calls)).toEqual([["launchctl", 120_000]]);
+  const st = recordingRunner();
+  const stop = realStopDeps(home, st.run);
+  stop.sh(["ps", "-o", "command=", "-p", "1"], { cwd: home });
+  stop.boot();
+  expect(boundsOf(st.calls)).toEqual([
+    ["ps", 120_000],
+    ["/usr/sbin/sysctl", 120_000],
+  ]);
+});
+
+const sleepMs = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const lstartOf = (pid: number) => processStart(pid);
+const alivePid = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+test("2026-11-13-005 AC-49: a tick's commands carry the home's command file, and the other commands of the loop none", async () => {
+  const base = tempDir("tick-file-");
+  const home = join(base, "home");
+  mkdirSync(home, { recursive: true });
+  const file = join(home, TICK_COMMAND_FILE);
+  // The wrapper over a recording runner: the file on every command, the configuration's read among them.
+  const withFile = recordingRunner();
+  const filed = loopCommands(withFile.run, {}, file);
+  filed.sh(["true"], { cwd: home });
+  filed.git(["status"], home);
+  expect(withFile.calls.map((c) => c.commandFile)).toEqual([file, file, file]);
+  const without = recordingRunner();
+  const bare = loopCommands(without.run, {});
+  bare.sh(["true"], { cwd: home });
+  bare.git(["status"], home);
+  expect(without.calls.map((c) => c.commandFile)).toEqual([undefined, undefined, undefined]);
+  // The real deps of a tick: a command reads its own file, four lines naming it and this process; the file goes with the command.
+  const real = realTickDeps(home, readConfig(home));
+  const lines = real.sh(["cat", file], { cwd: home }).stdout.trim().split("\n");
+  expect(lines.length).toBe(4);
+  expect(lines[2]).toBe(String(process.pid));
+  expect(existsSync(file)).toBe(false);
+  // The boot time's read, before the lock: a bound and no file.
+  const boots = recordingRunner();
+  realTickDeps(home, readConfig(home), boots.run).boot();
+  expect(boots.calls.map((c) => [c.timeoutMs, c.commandFile])).toEqual([[120_000, undefined]]);
+  // The install's, the uninstall's, the status's and the stop's: none, unless the install names its own.
+  const i = recordingRunner();
+  realInstallDeps(home, i.run).sh(["true"], { cwd: home });
+  const st = recordingRunner();
+  realStopDeps(home, st.run).sh(["true"], { cwd: home });
+  expect([...i.calls, ...st.calls].map((c) => c.commandFile)).toEqual([undefined, undefined]);
+  const named = recordingRunner();
+  realInstallDeps(home, named.run, join(home, INSTALL_COMMAND_FILE)).sh(["true"], { cwd: home });
+  expect(named.calls[0]?.commandFile).toBe(join(home, INSTALL_COMMAND_FILE));
+  // A file that stands at the tick's place is left as it was by a command of the stop and of the status.
+  writeFileSync(file, "a tick's record\n");
+  realStopDeps(home, spawnRunner(false)).sh(["true"], { cwd: home });
+  realInstallDeps(home, spawnRunner(false)).sh(["true"], { cwd: home });
+  expect(readFileSync(file, "utf8")).toBe("a tick's record\n");
+  rmSync(file);
+
+  // A real command of a tick-like process, ended through the home's file by who is not its parent.
+  const driver = join(base, "driver.ts");
+  writeFileSync(
+    driver,
+    [
+      `import { loopCommands } from ${JSON.stringify(join(import.meta.dir, "../../../scripts/improve-loop.ts"))};`,
+      `import { spawnRunner } from ${JSON.stringify(join(import.meta.dir, "../../../scripts/release.ts"))};`,
+      `const r = loopCommands(spawnRunner(false), {}, ${JSON.stringify(file)}).sh(["sleep", "30"], { cwd: ${JSON.stringify(home)} });`,
+      'console.log("status " + r.status);',
+    ].join("\n"),
+  );
+  const child = spawn("bun", [driver], { env: childEnv(), stdio: ["ignore", "pipe", "ignore"] });
+  let out = "";
+  child.stdout.on("data", (chunk) => {
+    out += String(chunk);
+  });
+  const ended = new Promise<void>((resolve) => child.on("close", () => resolve()));
+  for (let waited = 0; waited < 100 && !existsSync(file); waited++) await sleepMs(50);
+  expect(existsSync(file)).toBe(true);
+  expect(leftCommand(home, {}, 999_999, TICK_COMMAND_FILE)).toBeNull();
+  const group = leftCommand(home, {}, child.pid as number, TICK_COMMAND_FILE) as number;
+  expect(typeof group).toBe("number");
+  process.kill(-group, "SIGTERM");
+  await ended;
+  expect(out).not.toContain("status 0");
+  expect(out).toContain("status ");
+  expect(alivePid(group)).toBe(false);
+}, 30_000);
+
+test("2026-11-13-005 AC-49: stop signals the tick's own command once; the install, the uninstall and a tick over a stale lock kill what the tick they end left; a stop that lands on a tick ends it with no failure", async () => {
+  const world = loopWorld();
+  mkdirSync(world.home, { recursive: true });
+  const lock = { pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" };
+  // stop: one SIGTERM to the tick's own command over several turns, the release's killed on each.
+  writeFileSync(join(world.home, "lock.json"), JSON.stringify(lock));
+  const stopping = stopDeps(world, { tickCommand: 777, leftCommands: [888, 888], ends: false });
+  await stopLoop(stopping.deps);
+  expect(stopping.kills.filter((k) => k.pid === -777)).toEqual([{ pid: -777, signal: "SIGTERM" }]);
+  expect(stopping.kills.filter((k) => k.pid === -888)).toEqual([
+    { pid: -888, signal: "SIGKILL" },
+    { pid: -888, signal: "SIGKILL" },
+  ]);
+  expect(stopping.ownAsked()).toBe(1);
+  writeFileSync(join(world.home, "lock.json"), JSON.stringify(lock));
+  const idle = stopDeps(world, {});
+  await stopLoop(idle.deps);
+  expect(idle.kills).toEqual([{ pid: -4242, signal: "SIGTERM" }]);
+  // The uninstall and the install's bootout: the command of the tick the lock named, by the home's file.
+  writeFileSync(join(world.home, "lock.json"), JSON.stringify(lock));
+  const down = installDeps(world.home, null, { tickCommand: 901 });
+  expect(await uninstall(down.deps)).toBe(0);
+  expect(down.kills).toContain(901);
+  rmSync(join(world.home, "lock.json"), { force: true });
+  const none = installDeps(world.home, null, { tickCommand: 901 });
+  expect(await uninstall(none.deps)).toBe(0);
+  expect(none.kills).toEqual([]);
+
+  // A tick over a stale lock: the dead tick's command killed before any command of this tick.
+  const stale = loopWorld();
+  expect(await tick({}, tickDeps(stale).deps)).toBe(0);
+  const dead = { pid: 31_337, startedAt: "2026-10-25T20:10:00.000Z", boot: "boot-1" };
+  writeFileSync(join(stale.home, "lock.json"), JSON.stringify(dead));
+  const own = tickDeps(stale, { now: "2026-10-25T20:30:00.000Z", tickCommand: 555 });
+  expect(await tick({}, own.deps)).toBe(0);
+  expect(own.seen.kills).toEqual([{ group: 555, after: 0 }]);
+  expect(own.seen.log.join("\n")).toContain(
+    "the command the dead tick left running was killed (pid 555)",
+  );
+  writeFileSync(join(stale.home, "lock.json"), JSON.stringify(dead));
+  const release = tickDeps(stale, { now: "2026-10-25T20:40:00.000Z", leftCommand: 556 });
+  expect(await tick({}, release.deps)).toBe(0);
+  expect(release.seen.kills).toEqual([{ group: 556, after: 0 }]);
+
+  // A stop that lands on a due tick before the shell's install: nothing run, the marker left.
+  const stopped = loopWorld();
+  const during = tickDeps(stopped, { stopMarker: "during" });
+  expect(await tick({}, during.deps)).toBe(0);
+  expect(shellsOf(during.seen)).toBe(0);
+  expect(during.seen.improve).toEqual([]);
+  expect(during.seen.log.join("\n")).toContain("stop requested: nothing run");
+  expect(existsSync(join(stopped.home, "stop.json"))).toBe(true);
+  // A stop that lands during the shell's install: the tick ends, and it is no failed tick.
+  const landed = loopWorld();
+  const atInstall = tickDeps(landed, { stopMarker: "at the install" });
+  expect(await tick({}, atInstall.deps)).toBe(0);
+  expect(atInstall.seen.improve).toEqual([]);
+  expect(atInstall.seen.log.join("\n")).toContain("stop requested: the tick ends");
+  const state = JSON.parse(readFileSync(join(landed.home, "state.json"), "utf8"));
+  expect(state.backoffUntil ?? null).toBeNull();
+  expect(state.failures ?? 0).toBe(0);
+  expect(atInstall.seen.sh.filter((c) => c[0] === "osascript")).toEqual([]);
+  expect(existsSync(join(landed.home, "lock.json"))).toBe(false);
+});
+
+test("2026-11-13-005 AC-49: a tick that holds the lock clears what a killed git left in the clone, before its first git command there", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  const locks = [".git/index.lock", ".git/refs/heads/main.lock", ".git/packed-refs.lock"];
+  // Locks as a killed git leaves them: older than the minute the clearing leaves a living git.
+  const leftLock = (path: string) => {
+    writeFileSync(path, "");
+    const longAgo = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(path, longAgo, longAgo);
+  };
+  for (const rel of locks) leftLock(join(repo, rel));
+  const next = tickDeps(world, { now: "2026-10-25T20:30:00.000Z" });
+  expect(await tick({}, next.deps)).toBe(0);
+  for (const rel of locks) {
+    expect(existsSync(join(repo, rel))).toBe(false);
+    expect(next.seen.log.join("\n")).toContain(`a lock a killed git left was removed: ${rel}`);
+  }
+  expect(next.seen.log.join("\n")).toContain("not due:");
+  // A rebase left in progress is aborted.
+  writeFileSync(join(repo, "a.txt"), "one\n");
+  git(repo, "add", "a.txt");
+  git(repo, "commit", "-q", "-m", "one");
+  git(repo, "checkout", "-q", "-b", "side", "HEAD~1");
+  writeFileSync(join(repo, "a.txt"), "two\n");
+  git(repo, "add", "a.txt");
+  git(repo, "commit", "-q", "-m", "two");
+  spawnSync("git", ["rebase", "-q", "main"], { cwd: repo, env: childEnv() });
+  expect(
+    existsSync(join(repo, ".git/rebase-merge")) || existsSync(join(repo, ".git/rebase-apply")),
+  ).toBe(true);
+  const rebasing = tickDeps(world, { now: "2026-10-25T20:40:00.000Z" });
+  await tick({}, rebasing.deps);
+  expect(rebasing.seen.log.join("\n")).toContain("a rebase left in progress was aborted");
+  expect(
+    existsSync(join(repo, ".git/rebase-merge")) || existsSync(join(repo, ".git/rebase-apply")),
+  ).toBe(false);
+  // A dead tick that left a lock file: this tick clears it, commits the dead tick's report and releases its own lock.
+  const died = loopWorld();
+  expect(await tick({}, tickDeps(died).deps)).toBe(0);
+  // Made this instant, as by a git the kill of the dead tick took with it: the tick waits for
+  // it to be a minute old, and then takes it.
+  writeFileSync(join(died.home, "repo/.git/index.lock"), "");
+  writeFileSync(
+    join(died.home, "lock.json"),
+    JSON.stringify({ pid: 31_337, startedAt: "2026-10-25T20:10:00.000Z", boot: "boot-1" }),
+  );
+  const after = tickDeps(died, { now: "2026-10-25T20:30:00.000Z" });
+  expect(await tick({}, after.deps)).toBe(0);
+  expect(existsSync(join(died.home, "repo/.git/index.lock"))).toBe(false);
+  expect(existsSync(join(died.home, "lock.json"))).toBe(false);
+  expect(after.seen.pauses.length).toBe(1);
+  expect(readFileSync(join(died.home, "repo/docs/improve/daily/2026-10-25.md"), "utf8")).toContain(
+    "## Dead ticks",
+  );
+});
+
+const wholeProbe = {
+  loggedIn: true,
+  authMethod: "claude.ai",
+  github: "someone",
+  remote: "ok",
+  push: "ok",
+  keychain: {},
+};
+
+test("2026-11-13-005 AC-50: an install holds its lock while it works in the clone, stops beside another, ends what an interrupted one left, and never leaves a loaded agent unloaded", async () => {
+  const freshHome = () => join(tempDir("install-lock-"), "crew-improve");
+  const lockAt = (order: { cmd: string; lock: string | null }[], cmd: string) =>
+    order.find((o) => o.cmd === cmd)?.lock ?? null;
+  // The lock is there, this process's, from the first command through the bootstrap, and gone at the load.
+  const home = freshHome();
+  const ok = installDeps(home, wholeProbe);
+  expect(await install({ cloneFrom: loopSeed() }, ok.deps)).toBe(0);
+  const first = ok.order[0] as { cmd: string; lock: string | null };
+  expect(JSON.parse(first.lock as string).pid).toBe(process.pid);
+  expect(JSON.parse(first.lock as string).start).toBe(lstartOf(process.pid));
+  expect(JSON.parse(lockAt(ok.order, "bun install") as string).pid).toBe(process.pid);
+  expect(lockAt(ok.order, "launchctl bootstrap")).toBeNull();
+  expect(existsSync(join(home, INSTALL_LOCK))).toBe(false);
+  // The order: the agent booted out before the clone; the packages and the shell after it, before the load.
+  const at = (cmd: string) => ok.order.findIndex((o) => o.cmd === cmd);
+  expect(at("launchctl bootout")).toBeGreaterThanOrEqual(0);
+  expect(at("launchctl bootout")).toBeLessThan(at("git clone"));
+  expect(at("git clone")).toBeLessThan(at("bun install"));
+  expect(at("bun install")).toBeLessThan(
+    at("env PLAYWRIGHT_BROWSERS_PATH=node_modules/.cache/ms-playwright"),
+  );
+  expect(at("env PLAYWRIGHT_BROWSERS_PATH=node_modules/.cache/ms-playwright")).toBeLessThan(
+    at("launchctl bootstrap"),
+  );
+  // An install over a clone that is there bootstraps it all the same.
+  const again = installDeps(home, wholeProbe);
+  expect(await install({}, again.deps)).toBe(0);
+  expect(again.order.some((o) => o.cmd === "git clone")).toBe(false);
+  expect(again.order.filter((o) => o.cmd === "bun install").length).toBe(1);
+
+  // Another install still runs: this one stops before any command, whatever the command file says.
+  for (const installCommand of ["absent", { left: 4321 }] as const) {
+    const beside = installDeps(freshHome(), null, { installLock: { running: 77 }, installCommand });
+    expect(await install({ cloneFrom: loopSeed() }, beside.deps)).toBe(1);
+    expect(beside.log.join("\n")).toContain("another install is running (pid 77): wait for it");
+    expect(beside.order).toEqual([]);
+    expect(beside.kills).toEqual([]);
+  }
+  // A stale lock, or none, with a command file whose own starter still runs: the same stop, nothing killed.
+  for (const installLock of ["stale", "absent"] as const) {
+    const held = installDeps(freshHome(), null, { installLock, installCommand: { running: 78 } });
+    expect(await install({ cloneFrom: loopSeed() }, held.deps)).toBe(1);
+    expect(held.log.join("\n")).toContain("another install is running (pid 78): wait for it");
+    expect(held.order).toEqual([]);
+    expect(held.kills).toEqual([]);
+  }
+  // A stale lock and a command an interrupted install left: killed, said, and the install goes on.
+  const left = installDeps(freshHome(), wholeProbe, {
+    installLock: "stale",
+    installCommand: { left: 4321 },
+  });
+  expect(await install({ cloneFrom: loopSeed() }, left.deps)).toBe(0);
+  expect(left.kills).toContain(4321);
+  expect(left.log.join("\n")).toContain(
+    "the command an interrupted install left running was killed (pid 4321)",
+  );
+  const gone = installDeps(freshHome(), wholeProbe, {
+    installLock: "stale",
+    installCommand: { left: null },
+  });
+  expect(await install({ cloneFrom: loopSeed() }, gone.deps)).toBe(0);
+  expect(gone.log.join("\n")).toContain("the file an interrupted install left was removed");
+  const offShape = installDeps(freshHome(), wholeProbe, { installCommand: "off-shape" });
+  expect(await install({ cloneFrom: loopSeed() }, offShape.deps)).toBe(0);
+  expect(offShape.kills).toEqual([]);
+
+  // A living tick after the bootout: the install stops, clones nothing, and loads again the agent it booted out.
+  const busyHome = freshHome();
+  mkdirSync(busyHome, { recursive: true });
+  writeFileSync(join(busyHome, "lock.json"), JSON.stringify({ pid: 4242 }));
+  const busy = installDeps(busyHome, null, { liveTick: true, bootoutStatus: 0 });
+  const loadedPlist = (deps: InstallDeps) => {
+    const path = join(deps.userHome, "Library/LaunchAgents", `${LABEL}.plist`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "<plist/>");
+  };
+  loadedPlist(busy.deps);
+  expect(await install({ cloneFrom: loopSeed() }, busy.deps)).toBe(1);
+  expect(busy.log.join("\n")).toContain("a tick is running (pid 4242): wait for it or stop it");
+  expect(busy.order.some((o) => o.cmd === "git clone")).toBe(false);
+  expect(lockAt(busy.order, "launchctl bootstrap")).toBeNull();
+  expect(busy.order.some((o) => o.cmd === "launchctl bootstrap")).toBe(true);
+  expect(busy.log.join("\n")).toContain("the agent that was loaded is loaded again");
+  expect(existsSync(join(busyHome, INSTALL_LOCK))).toBe(false);
+  // The packages fail: a loaded agent is loaded again, with the lock gone by then; with none loaded, none is.
+  const wasLoaded = installDeps(freshHome(), null, { packagesFail: true, bootoutStatus: 0 });
+  loadedPlist(wasLoaded.deps);
+  expect(await install({ cloneFrom: loopSeed() }, wasLoaded.deps)).toBe(1);
+  expect(wasLoaded.log.join("\n")).toContain("bun install failed: the registry is away");
+  expect(wasLoaded.log.join("\n")).toContain("the agent that was loaded is loaded again");
+  expect(wasLoaded.order.some((o) => o.cmd === "launchctl bootstrap")).toBe(true);
+  expect(lockAt(wasLoaded.order, "launchctl bootstrap")).toBeNull();
+  const notLoaded = installDeps(freshHome(), null, { packagesFail: true, bootoutStatus: 3 });
+  expect(await install({ cloneFrom: loopSeed() }, notLoaded.deps)).toBe(1);
+  expect(notLoaded.order.some((o) => o.cmd === "launchctl bootstrap")).toBe(false);
+  expect(existsSync(join(notLoaded.deps.home, INSTALL_LOCK))).toBe(false);
+});
+
+test("2026-11-13-005 AC-50: the install's two doors read a lock and a command file as they are, and a tick leaves beside a running install", async () => {
+  const home = join(tempDir("install-doors-"), "home");
+  mkdirSync(home, { recursive: true });
+  const lock = join(home, INSTALL_LOCK);
+  const file = join(home, INSTALL_COMMAND_FILE);
+  expect(installLockOf(home)).toBe("absent");
+  expect(installCommandOf(home)).toBe("absent");
+  // A process that has ended, another that lives, this one, and a lock that does not parse.
+  const ended = spawnSync("true", [], { env: childEnv() }).pid as number;
+  const other = spawn("sleep", ["30"], { env: childEnv(), stdio: "ignore", detached: true });
+  const otherPid = other.pid as number;
+  try {
+    for (let waited = 0; waited < 40 && lstartOf(otherPid) === ""; waited++) await sleepMs(25);
+    writeFileSync(lock, JSON.stringify({ pid: ended, start: "Thu Jan  1 00:00:00 2026" }));
+    expect(installLockOf(home)).toBe("stale");
+    writeFileSync(lock, JSON.stringify({ pid: otherPid, start: lstartOf(otherPid) }));
+    expect(installLockOf(home)).toEqual({ running: otherPid });
+    writeFileSync(lock, JSON.stringify({ pid: otherPid, start: "Thu Jan  1 00:00:00 2026" }));
+    expect(installLockOf(home)).toBe("stale");
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, start: lstartOf(process.pid) }));
+    expect(installLockOf(home)).toBe("stale");
+    writeFileSync(lock, "not json");
+    expect(installLockOf(home)).toBe("stale");
+    // A command file: a living command whose starter has ended is left; one whose starter lives is running.
+    const four = (starter: number, start: string) =>
+      `${otherPid}\n${lstartOf(otherPid)}\n${starter}\n${start}\n`;
+    writeFileSync(file, four(ended, "Thu Jan  1 00:00:00 2026"));
+    expect(installCommandOf(home)).toEqual({ left: otherPid });
+    const starter = spawn("sleep", ["30"], { env: childEnv(), stdio: "ignore" });
+    try {
+      const starterPid = starter.pid as number;
+      for (let waited = 0; waited < 40 && lstartOf(starterPid) === ""; waited++) await sleepMs(25);
+      writeFileSync(file, four(starterPid, lstartOf(starterPid)));
+      expect(installCommandOf(home)).toEqual({ running: starterPid });
+    } finally {
+      starter.kill("SIGKILL");
+    }
+    writeFileSync(file, "one line\n");
+    expect(installCommandOf(home)).toBe("off-shape");
+  } finally {
+    try {
+      process.kill(-otherPid, "SIGKILL");
+    } catch {
+      // gone already
+    }
+  }
+
+  // A tick beside a running install: it leaves before its own lock, the clearing and any command.
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  writeFileSync(join(world.home, "repo/.git/index.lock"), "");
+  const beside = tickDeps(world, { now: "2026-10-25T20:30:00.000Z", installRunning: 4321 });
+  expect(await tick({}, beside.deps)).toBe(0);
+  expect(beside.seen.log.join("\n")).toContain("an install is running (pid 4321); leaving");
+  expect(beside.seen.sh).toEqual([]);
+  expect(beside.seen.git).toEqual([]);
+  expect(existsSync(join(world.home, "repo/.git/index.lock"))).toBe(true);
+  expect(existsSync(join(world.home, "lock.json"))).toBe(false);
+  const empty = loopWorld();
+  mkdirSync(join(empty.home, "repo.cloning"), { recursive: true });
+  const noClone = tickDeps(empty, { installRunning: 4321 });
+  expect(await tick({}, noClone.deps)).toBe(0);
+  expect(noClone.seen.git).toEqual([]);
+  expect(existsSync(join(empty.home, "repo.cloning"))).toBe(true);
+}, 30_000);
+
+test("2026-11-13-005 AC-51: a release that stops before step 1 is a line of the day's report and of the notification, by a name safe for a public file", async () => {
+  const world = loopWorld();
+  const line = [
+    `the journal cannot be written under ${join(world.home, "repo/dist/x")}`,
+    "beside /Users/someone/elsewhere/y and https://user:secret@host/z",
+    "x".repeat(300),
+  ].join(" ");
+  const stoppedTick = tickDeps(world, { kept: true, stopped: `${line}\na second line` });
+  expect(await tick({}, stoppedTick.deps)).toBe(0);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.day.failures.length).toBe(1);
+  const failure = state.day.failures[0] as { run: string; step: number; name: string };
+  expect(failure.run).toBe("2026-10-25-1");
+  expect(failure.step).toBe(0);
+  const report = readFileSync(join(world.home, "repo/docs/improve/daily/2026-10-25.md"), "utf8");
+  const body = (stoppedTick.seen.sh.filter((c) => c[0] === "osascript").at(-1) as string[]).join(
+    " ",
+  );
+  for (const text of [failure.name, report, body]) {
+    expect(text).not.toContain(world.home);
+    expect(text).not.toContain("/Users/someone");
+    expect(text).not.toContain("user:secret");
+    expect(text).not.toContain("a second line");
+  }
+  expect(failure.name).toContain("<loop home>/repo/dist/x");
+  expect(failure.name).toContain("~/elsewhere/y");
+  expect(failure.name.length).toBeLessThanOrEqual(200);
+  expect(report).toContain(
+    `- run 2026-10-25-1: the release stopped before step 1: ${failure.name}`,
+  );
+  expect(body).toContain("the release stopped before step 1: the journal cannot be written");
+  // The full line is in the log, which stays on this machine.
+  expect(stoppedTick.seen.log.join("\n")).toContain("x".repeat(300));
+  // The merge is off main, as for any failure before the push.
+  expect(git(world.origin, "log", "--format=%s", "main")).not.toContain("Adopt improvement run");
+  expect(statusText(installDeps(world.home, null).deps)).toContain("1 failed step(s)");
+  // A failed step prints as today.
+  const other = loopWorld();
+  expect(await tick({}, tickDeps(other, { kept: true, releaseCode: 1, releaseStep: 3 }).deps)).toBe(
+    0,
+  );
+  expect(readFileSync(join(other.home, "repo/docs/improve/daily/2026-10-25.md"), "utf8")).toContain(
+    "step 3 (bun run check) failed",
+  );
+  // The name, by itself: an empty home replaces nothing, and a short line is left whole.
+  expect(stopName("a /h/x b", "", "", [])).toBe("a /h/x b");
+  expect(stopName("at /h/loop/x and /h/y", "/h/loop", "/h", [])).toBe("at <loop home>/x and ~/y");
+  expect(stopName(`${"y".repeat(250)}`, "/h/loop", "/h", []).length).toBe(200);
+  expect(stopName("a token tok-1 here", "", "", ["tok-1"])).toBe("a token [redacted] here");
+  expect(
+    dailyReport(
+      "2026-10-25",
+      [],
+      [],
+      [
+        { run: "r1", step: 0, name: "origin is not reachable" },
+        { run: "r2", step: 3, name: "bun run check" },
+      ],
+    ),
+  ).toContain("- run r1: the release stopped before step 1: origin is not reachable");
+});
+
+test("2026-11-13-005 AC-51: a resume that stops keeps its release pending, and a due tick with a release pending runs no improvement and says so once a day", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const stateFile = join(world.home, "state.json");
+  const pend = () => {
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    writeFileSync(
+      stateFile,
+      JSON.stringify({ ...state, pendingRelease: { version: "9.9.9", failedStep: 9 } }),
+    );
+  };
+  const stateNow = () => JSON.parse(readFileSync(stateFile, "utf8"));
+  const report = () =>
+    readFileSync(join(world.home, "repo/docs/improve/daily/2026-10-25.md"), "utf8");
+  let edition = 1;
+  const moveText = () => {
+    edition += 1;
+    moveOrigin(world, "plugins/core/skills/crew/SKILL.md", `# Crew\n\nRule ${edition}.\n`);
+  };
+  pend();
+  moveText();
+  // A due tick whose resume stops: still pending at its step, the line in the log, no run, the skip in the report.
+  const first = tickDeps(world, {
+    now: "2026-10-25T21:00:00.000Z",
+    resumeStopped: "a release is running (pid 5): wait for it",
+  });
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(stateNow().pendingRelease).toEqual({ version: "9.9.9", failedStep: 9 });
+  expect(first.seen.log.join("\n")).toContain(
+    "the resume of 9.9.9 stopped: a release is running (pid 5): wait for it",
+  );
+  expect(first.seen.improve).toEqual([]);
+  const skipLine =
+    "- 21:00 UTC: release 9.9.9 is pending at step 9; no improvement run until it is resumed";
+  expect(report()).toContain(skipLine);
+  expect(first.seen.sh.filter((c) => c[0] === "osascript").length).toBe(1);
+  const resumedFailures = () =>
+    (stateNow().day.failures as { run: string }[]).filter((f) => f.run === "resumed");
+  expect(resumedFailures().length).toBe(1);
+  // A second such tick of the day: the same failure once, the skip logged alone.
+  const second = tickDeps(world, {
+    now: "2026-10-25T22:00:00.000Z",
+    resumeStopped: "a release is running (pid 5): wait for it",
+  });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(resumedFailures().length).toBe(1);
+  expect(second.seen.log.join("\n")).toContain("reported at 21:00 UTC");
+  expect(second.seen.sh.filter((c) => c[0] === "osascript")).toEqual([]);
+  // A resume that fails at a step holds the run back the same way.
+  const third = tickDeps(world, { now: "2026-10-25T22:30:00.000Z", resumeFails: 10 });
+  expect(await tick({}, third.deps)).toBe(0);
+  expect(third.seen.improve).toEqual([]);
+  expect(stateNow().pendingRelease).toMatchObject({ version: "9.9.9", failedStep: 10 });
+  // The release resumed: the tick runs, and the report it writes again still says the skip in its words.
+  const fourth = tickDeps(world, { now: "2026-10-25T23:00:00.000Z" });
+  expect(await tick({}, fourth.deps)).toBe(0);
+  expect(stateNow().pendingRelease ?? null).toBeNull();
+  expect(fourth.seen.improve.length).toBe(1);
+  expect(report()).toContain(skipLine);
+});
+
+test("2026-11-13-005 AC-46: a due tick reads the release's token itself and skips its run with none, said once a day; a read that hangs fails the tick; a paused loop probes only when it has no probe", async () => {
+  const world = loopWorld();
+  const probeFile = join(world.home, "probe.json");
+  const word = () => JSON.parse(readFileSync(probeFile, "utf8")).releaseToken;
+  const tokenReads = (seen: { sh: string[][] }) =>
+    seen.sh.filter((c) => c.join(" ").startsWith("gh auth token")).length;
+  const notices = (seen: { sh: string[][] }) => seen.sh.filter((c) => c[0] === "osascript");
+  let edition = 1;
+  const moveText = () => {
+    edition += 1;
+    moveOrigin(world, "plugins/core/skills/crew/SKILL.md", `# Crew\n\nRule ${edition}.\n`);
+  };
+  // A first tick with a token runs, and the probe says found.
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(first.seen.improve.length).toBe(1);
+  expect(word()).toBe("found");
+  const lastRun = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8")).lastRun;
+  // Due again, the account logged out since: the file says found, the tick's own read says none.
+  moveText();
+  const skipped = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", releaseToken: false });
+  expect(await tick({}, skipped.deps)).toBe(0);
+  expect(tokenReads(skipped.seen)).toBe(1);
+  expect(skipped.seen.improve).toEqual([]);
+  expect(word()).toBe("missing");
+  const line =
+    /skipped: the release's account \(\S+\) has no token: log in to it with gh auth login; a later tick probes again/;
+  expect(skipped.seen.log.join("\n")).toMatch(line);
+  expect(notices(skipped.seen).length).toBe(1);
+  expect((notices(skipped.seen)[0] as string[]).join(" ")).toMatch(line);
+  const repo = join(world.home, "repo");
+  const report = () => readFileSync(join(repo, "docs/improve/daily/2026-10-25.md"), "utf8");
+  expect(report()).toContain(
+    "- 21:00 UTC: the release's account has no token; a later tick probes again",
+  );
+  expect(originHead(world.origin)).toBe(
+    "Improvement tick 2026-10-25: the release's account has no token",
+  );
+  expect(
+    readdirSync(join(repo, "docs/improve")).filter((n) => n.startsWith("2026-10-25-")),
+  ).toEqual(["2026-10-25-1"]);
+  const stateAfter = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(stateAfter.lastRun).toEqual(lastRun);
+  expect(stateAfter.failures ?? 0).toBe(0);
+  // A later due tick of the day: the skip logged with when it was reported, and nothing else.
+  const later = tickDeps(world, { now: "2026-10-25T22:00:00.000Z", releaseToken: false });
+  expect(await tick({}, later.deps)).toBe(0);
+  expect(later.seen.log.join("\n")).toContain("reported at 21:00 UTC");
+  expect(notices(later.seen)).toEqual([]);
+  expect(later.seen.improve).toEqual([]);
+  // A dry run reads no token at the skip's place (the probe's own read is the one call) and says what a real tick would do.
+  const dry = tickDeps(world, { now: "2026-10-25T22:10:00.000Z", releaseToken: false });
+  expect(await tick({ dryRun: true }, dry.deps)).toBe(0);
+  expect(tokenReads(dry.seen)).toBe(1);
+  expect(dry.seen.log.join("\n")).toContain(
+    "; the release's account has no token: a real tick would skip",
+  );
+  // After a login the next due tick reads a token, writes found and runs.
+  const back = tickDeps(world, { now: "2026-10-25T23:00:00.000Z" });
+  expect(await tick({}, back.deps)).toBe(0);
+  expect(word()).toBe("found");
+  expect(back.seen.improve.length).toBe(1);
+
+  // A pending release is resumed before the skip.
+  const pending = loopWorld();
+  expect(await tick({}, tickDeps(pending).deps)).toBe(0);
+  const stateFile = join(pending.home, "state.json");
+  writeFileSync(
+    stateFile,
+    JSON.stringify({
+      ...JSON.parse(readFileSync(stateFile, "utf8")),
+      pendingRelease: { version: "9.9.9", failedStep: 9 },
+    }),
+  );
+  moveOrigin(pending, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nRule 2.\n");
+  const resumed = tickDeps(pending, { now: "2026-10-25T21:00:00.000Z", releaseToken: false });
+  expect(await tick({}, resumed.deps)).toBe(0);
+  expect(resumed.seen.fromSteps.length).toBe(1);
+  expect(JSON.parse(readFileSync(stateFile, "utf8")).pendingRelease ?? null).toBeNull();
+  expect(resumed.seen.log.join("\n")).toMatch(line);
+  expect(resumed.seen.improve).toEqual([]);
+
+  // A read killed at its bound is not a logged-out account: the tick fails, and the probe's word stays.
+  const hanging = loopWorld();
+  expect(await tick({}, tickDeps(hanging).deps)).toBe(0);
+  moveOrigin(hanging, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nRule 2.\n");
+  const hung = tickDeps(hanging, { now: "2026-10-25T21:00:00.000Z", releaseToken: "hangs" });
+  expect(await tick({}, hung.deps)).toBe(1);
+  expect(hung.seen.log.join("\n")).toContain(
+    "the release's token could not be read: gh auth token timed out after 120 s",
+  );
+  expect(hung.seen.improve).toEqual([]);
+  expect(JSON.parse(readFileSync(join(hanging.home, "probe.json"), "utf8")).releaseToken).toBe(
+    "found",
+  );
+  expect(
+    typeof JSON.parse(readFileSync(join(hanging.home, "state.json"), "utf8")).backoffUntil,
+  ).toBe("string");
+
+  // A paused loop: a probe that says missing is not taken again; with no probe, one is written.
+  const paused = loopWorld();
+  mkdirSync(paused.home, { recursive: true });
+  writeFileSync(join(paused.home, "config.json"), JSON.stringify({ paused: true }));
+  const firstPaused = tickDeps(paused, { releaseToken: false });
+  expect(await tick({}, firstPaused.deps)).toBe(0);
+  expect(JSON.parse(readFileSync(join(paused.home, "probe.json"), "utf8")).releaseToken).toBe(
+    "missing",
+  );
+  const secondPaused = tickDeps(paused, { now: "2026-10-25T21:00:00.000Z", releaseToken: false });
+  expect(await tick({}, secondPaused.deps)).toBe(0);
+  expect(secondPaused.seen.sh.filter((c) => c[0] === "gh")).toEqual([]);
+  expect(secondPaused.seen.log.join("\n")).toContain("paused by config.json; nothing run");
+});
+
+test("2026-11-13-005 AC-50: the real deps carry the guards a tick and an install read: a running install, the user's home, a living tick", async () => {
+  const home = join(tempDir("real-guards-"), "home");
+  mkdirSync(home, { recursive: true });
+  const real = realTickDeps(home, readConfig(home));
+  expect(real.userHome).toBe(homedir());
+  expect(real.installRunning?.()).toBeNull();
+  const other = spawn("sleep", ["30"], { env: childEnv(), stdio: "ignore" });
+  try {
+    const pid = other.pid as number;
+    for (let waited = 0; waited < 40 && lstartOf(pid) === ""; waited++) await sleepMs(25);
+    writeFileSync(join(home, INSTALL_LOCK), JSON.stringify({ pid, start: lstartOf(pid) }));
+    expect(real.installRunning?.()).toBe(pid);
+    const installing = realInstallDeps(home);
+    expect(installing.alive?.(pid)).toBe(true);
+  } finally {
+    other.kill("SIGKILL");
+  }
+  const ended = spawnSync("true", [], { env: childEnv() }).pid as number;
+  expect(realInstallDeps(home).alive?.(ended)).toBe(false);
+});
+
+test("2026-11-13-005 AC-37: no shell's install before a pending release's resume nor on a tick in back-off", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const stateFile = join(world.home, "state.json");
+  const state = JSON.parse(readFileSync(stateFile, "utf8"));
+  // A due tick with a pending release whose resume fails: the resume is tried, and no shell is installed.
+  writeFileSync(
+    stateFile,
+    JSON.stringify({ ...state, pendingRelease: { version: "9.9.9", failedStep: 9 } }),
+  );
+  moveOrigin(world, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nRule 2.\n");
+  const resumed = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", resumeFails: 9 });
+  expect(await tick({}, resumed.deps)).toBe(0);
+  expect(resumed.seen.fromSteps.length).toBe(1);
+  expect(shellsOf(resumed.seen)).toBe(0);
+  // A tick in back-off: the packages, and no shell.
+  writeFileSync(
+    stateFile,
+    JSON.stringify({ ...state, failures: 1, backoffUntil: "2026-10-26T05:00:00.000Z" }),
+  );
+  const held = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({}, held.deps)).toBe(0);
+  expect(held.seen.log.join("\n")).toContain("backing off until");
+  expect(packagesOf(held.seen)).toBe(1);
+  expect(shellsOf(held.seen)).toBe(0);
+});
+
+test("2026-11-13-005 AC-49: the clearing waits for a lock made in the last minute before it takes it, leaves one a living git released meanwhile, and goes on when a removal fails", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  const fresh = join(repo, ".git/index.lock");
+  const old = join(repo, ".git/packed-refs.lock");
+  const aged = (path: string) => {
+    writeFileSync(path, "");
+    const longAgo = new Date(Date.now() - 10 * 60 * 1000);
+    utimesSync(path, longAgo, longAgo);
+  };
+  const noGit = () => ({ status: 0, stdout: "", stderr: "" });
+  // An old lock goes at once; a fresh one is waited for until it is a minute old, then taken.
+  writeFileSync(fresh, "");
+  aged(old);
+  const logged: string[] = [];
+  const waits: number[] = [];
+  clearClone(
+    repo,
+    noGit,
+    (l) => logged.push(l),
+    (ms) => waits.push(ms),
+  );
+  expect(existsSync(old)).toBe(false);
+  expect(existsSync(fresh)).toBe(false);
+  expect(waits.length).toBe(1);
+  expect(waits[0]).toBeGreaterThan(50_000);
+  expect(waits[0]).toBeLessThanOrEqual(60_000);
+  expect(logged.join("\n")).toContain(
+    "a lock a killed git left was removed: .git/packed-refs.lock",
+  );
+  expect(logged.join("\n")).toContain(
+    "a lock made in the last minute was waited for and removed: .git/index.lock",
+  );
+  // The wait is said before it starts, so a person at the terminal knows why nothing moves.
+  const before = logged.findIndex((l) => l.includes("waiting") && l.includes(".git/index.lock"));
+  expect(before).toBeGreaterThanOrEqual(0);
+  expect(logged[before]).toMatch(
+    /^a git lock made in the last minute: waiting \d+ s before it is taken: \.git\/index\.lock$/,
+  );
+  // A lock a living git releases during the wait is not this tick's to remove, and nothing is said of a removal.
+  writeFileSync(fresh, "");
+  const quiet: string[] = [];
+  clearClone(
+    repo,
+    noGit,
+    (l) => quiet.push(l),
+    () => rmSync(fresh),
+  );
+  expect(quiet.join("\n")).not.toContain("removed");
+  // A lock a living git took again during the wait (a new file, a new time) is left.
+  writeFileSync(fresh, "");
+  const retaken: string[] = [];
+  clearClone(
+    repo,
+    noGit,
+    (l) => retaken.push(l),
+    () => {
+      rmSync(fresh);
+      writeFileSync(fresh, "again");
+      const later = new Date(Date.now() + 5_000);
+      utimesSync(fresh, later, later);
+    },
+  );
+  expect(existsSync(fresh)).toBe(true);
+  expect(retaken.join("\n")).toContain("a lock a git still holds is left: .git/index.lock");
+  rmSync(fresh);
+  // A removal that fails does not stop the clearing: the lock that can be removed still goes.
+  if (process.getuid?.() !== 0) {
+    const heads = join(repo, ".git/refs/heads");
+    aged(join(heads, "main.lock"));
+    aged(old);
+    chmodSync(heads, 0o555);
+    try {
+      const said: string[] = [];
+      expect(() =>
+        clearClone(
+          repo,
+          noGit,
+          (l) => said.push(l),
+          () => {},
+        ),
+      ).not.toThrow();
+      expect(existsSync(join(heads, "main.lock"))).toBe(true);
+      expect(existsSync(old)).toBe(false);
+    } finally {
+      chmodSync(heads, 0o755);
+      rmSync(join(heads, "main.lock"), { force: true });
+    }
+  }
+});
+
+test("2026-11-13-005 AC-41: an ssh command that could not be read for a folder is read again, and one that is not set is read once", () => {
+  let reads = 0;
+  const failing = recordingRunner((cmd) => {
+    if (cmd[1] !== "config") return {};
+    reads += 1;
+    return reads === 1
+      ? { status: 1, exit: null, error: "spawn git ENOENT" }
+      : { stdout: "ssh -i later\n" };
+  });
+  const git = loopCommands(failing.run, {}).git;
+  git(["fetch"], "/later");
+  git(["fetch"], "/later");
+  git(["fetch"], "/later");
+  expect(
+    failing.calls.filter((c) => c.cmd[1] === "fetch").map((c) => c.env?.GIT_SSH_COMMAND),
+  ).toEqual([
+    "ssh -o BatchMode=yes",
+    "ssh -i later -o BatchMode=yes",
+    "ssh -i later -o BatchMode=yes",
+  ]);
+  expect(reads).toBe(2);
+});
+
+test("2026-11-13-005 AC-50: an install that throws after the bootout, or whose load fails, loads again the agent it booted out and says nothing is loaded when it could not; its lock goes only while it is its own", async () => {
+  const freshHome = () => join(tempDir("install-throw-"), "crew-improve");
+  const loaded = (deps: InstallDeps) => {
+    const path = join(deps.userHome, "Library/LaunchAgents", `${LABEL}.plist`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "<plist/>");
+  };
+  const loads = (seen: string[][]) =>
+    seen.filter((c) => c[0] === "launchctl" && c[1] === "bootstrap").length;
+  // A step throws after the bootout: the agent that was loaded is loaded again, and the install fails.
+  const thrown = installDeps(freshHome(), null, { packagesThrow: true, bootoutStatus: 0 });
+  loaded(thrown.deps);
+  expect(await install({ cloneFrom: loopSeed() }, thrown.deps)).toBe(1);
+  expect(thrown.log.join("\n")).toContain("spawn bun ENOENT");
+  expect(thrown.log.join("\n")).toContain("the agent that was loaded is loaded again");
+  expect(loads(thrown.seen)).toBe(1);
+  expect(existsSync(join(thrown.deps.home, INSTALL_LOCK))).toBe(false);
+  // The load itself fails: the install says no agent is loaded.
+  const unloaded = installDeps(freshHome(), null, { loadFails: true, bootoutStatus: 0 });
+  expect(await install({ cloneFrom: loopSeed() }, unloaded.deps)).toBe(1);
+  expect(unloaded.log.join("\n")).toContain(
+    "launchctl bootstrap failed: Bootstrap failed: 5: Input/output error; no agent is loaded: run the install again",
+  );
+  // The reload itself fails: the install does not say an agent is loaded.
+  const lost = installDeps(freshHome(), null, {
+    packagesFail: true,
+    loadFails: true,
+    bootoutStatus: 0,
+  });
+  loaded(lost.deps);
+  expect(await install({ cloneFrom: loopSeed() }, lost.deps)).toBe(1);
+  expect(lost.log.join("\n")).not.toContain("is loaded again");
+  expect(lost.log.join("\n")).toContain(
+    "the agent that was loaded could not be loaded again (Bootstrap failed: 5: Input/output error): no agent is loaded: run the install again",
+  );
+  // The lock of another install, taken after this one freed its own, is left when this one ends.
+  const home = freshHome();
+  const racing = installDeps(home, wholeProbe);
+  const sh = racing.deps.sh;
+  racing.deps.sh = (cmd, opts) => {
+    if (cmd[0] === "launchctl" && cmd[1] === "kickstart")
+      writeFileSync(join(home, INSTALL_LOCK), JSON.stringify({ pid: 999_999, start: "another" }));
+    return sh(cmd, opts);
+  };
+  expect(await install({ cloneFrom: loopSeed() }, racing.deps)).toBe(0);
+  expect(JSON.parse(readFileSync(join(home, INSTALL_LOCK), "utf8")).pid).toBe(999_999);
+});
+
+test("2026-11-13-005 AC-50: the install's wait for the first tick's probe covers the minute that tick may wait for a young git lock", async () => {
+  const freshHome = () => join(tempDir("install-wait-"), "crew-improve");
+  // A probe that comes after 100 s, as from a tick that waited out a lock and then probed: the install passes.
+  const slow = installDeps(freshHome(), wholeProbe, { probeAfterSeconds: 100 });
+  expect(await install({ cloneFrom: loopSeed() }, slow.deps)).toBe(0);
+  expect(slow.log.join("\n")).toContain("login: claude.ai (logged in)");
+  // No probe at all: the install says how long it waited.
+  const never = installDeps(freshHome(), null);
+  expect(await install({ cloneFrom: loopSeed() }, never.deps)).toBe(1);
+  expect(never.log.join("\n")).toContain("the agent wrote no probe in 150 s");
 });

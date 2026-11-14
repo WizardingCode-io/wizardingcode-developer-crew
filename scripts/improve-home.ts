@@ -31,6 +31,10 @@ export interface DayState {
   budgetSkip?: { at: string; costUsd: number; reason: string };
   /** The first tick of the day whose run found no judge answering (2026-11-09-004): nothing ran and no record was written, so the report says when. */
   judgeSkip?: { at: string };
+  /** The first tick of the day that ran nothing because the release's account had no token (2026-11-13-005, the user's decision of 2026-11-13). */
+  tokenSkip?: { at: string };
+  /** The first tick of the day that ran nothing because a release was still pending after its resume (2026-11-13-005): when, and the reason as it was written, so a report written again after the release was resumed says the same words. */
+  pendingSkip?: { at: string; reason: string };
 }
 
 /** A tick that died: what its lock said, once checked (an integer pid above 1, an ISO start; null otherwise), and the run folder it left without a record (2026-10-28-001 AC-9). */

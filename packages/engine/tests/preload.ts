@@ -16,10 +16,13 @@ const home = runsHome(realpathSync(tmpdir()));
 sweepDeadRuns(home);
 const run = enterRun(home);
 
+// The removal has a budget of its own: a run started without the root script's --timeout gets bun's
+// 5 seconds for a hook, which the fixtures of three of the larger files together pass (5.2 s
+// measured on 2026-11-13, item 2026-11-13-005), and a slow removal is no failed test.
 afterAll(() => {
   removeTempDirs();
   run.leave();
-});
+}, 120_000);
 
 // A process waits for a lock on a read at most once (finding 239, `readUnderLock`), and the files
 // of a run share this process: a row that makes a read fail to take a lock here would leave every

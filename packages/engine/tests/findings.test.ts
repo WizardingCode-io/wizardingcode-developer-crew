@@ -105,7 +105,55 @@ function openFindings(text: string): number[] {
 // a role the session launched is out, and crew await <id> role --here waits inside the turn.
 // 212 (the token read after the push, the probe silent on it, a command that never returns) and 221 (the release
 // records item's advisories, a release killed mid-step, steps with no bound) closed by 2026-11-13-004.
-const OPEN = [77, 114, 206, 210, 213, 214, 215, 222, 224, 244];
+// 206 (the loop's shell at the sync, its any-build check, its commands with no bound, an errored baseline measured)
+// closed by 2026-11-13-005, with what 2026-11-13-004 left to the loop; the limit that stays is in its record.
+const OPEN = [77, 114, 210, 213, 214, 215, 222, 224, 244];
+
+test("2026-11-13-005 AC-52: finding 206 reads closed with its four points, its limit and what keeps no bound; the ADR's note and the loop's README say what changed", () => {
+  const text = readFileSync(FINDINGS, "utf8");
+  const section = text.split(/\n(?=### \d+\. )/).find((s) => s.startsWith("### 206. ")) ?? "";
+  const outcome = /\n- Outcome:(.*)/.exec(section)?.[1]?.trim() ?? "";
+  expect(openFindings(text)).not.toContain(206);
+  expect(outcome).toStartWith("closed by `2026-11-13-005`");
+  for (const point of [
+    "installs the packages at every tick",
+    "Playwright's own install before every run",
+    "has a bound",
+    "the home's command file",
+    "not measured the first time",
+    "runs nothing",
+    "the improvement run",
+    "`secret set`",
+    "stopped before step 1",
+    "stays pending",
+    "no token",
+  ])
+    expect(outcome, point).toContain(point);
+  const at = (rel: string) => fileURLToPath(new URL(`../../../${rel}`, import.meta.url));
+  const adr = readFileSync(
+    at("docs/adr/0015-the-loop-runs-always-and-releases-what-it-proves.md"),
+    "utf8",
+  );
+  const note =
+    adr
+      .split(/\n(?=## )/)
+      .find((s) => s.startsWith("## Note of 2026-11-13 (item 2026-11-13-005)")) ?? "";
+  for (const phrase of [
+    "at every tick",
+    "before every run",
+    "2026-10-30",
+    "has a bound",
+    "command file",
+    "clears git locks",
+    "no token",
+    "pending",
+    "stopped before step 1",
+  ])
+    expect(note, phrase).toContain(phrase);
+  const readme = readFileSync(at("docs/improve/README.md"), "utf8");
+  expect(readme).toContain("the release's account has no token");
+  expect(readme).toContain("the loop's own");
+});
 
 test("2026-11-13-004 AC-54: findings 212 and 221 read closed, each point with what was done", () => {
   const text = readFileSync(FINDINGS, "utf8");

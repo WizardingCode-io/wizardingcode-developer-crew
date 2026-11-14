@@ -22,10 +22,12 @@ import {
   gitEnv,
   journalPaths,
   leftCommand,
+  leftCommandOf,
   nextVersion,
   notificationCommand,
   plannedBump,
   type ReleaseRecord,
+  recordedProcess,
   release,
   releaseFiles,
   spawnRunner,
@@ -1817,7 +1819,10 @@ test("2026-11-13-004 AC-56: a new release whose account gives no token stops bef
   expect(sh(root, "tag", "--list").trim()).toBe("");
   expect(sh(origin, "tag", "--list").trim()).toBe("");
   expect(existsSync(join(root, JOURNAL_FILE))).toBe(false);
-  expect(reports).toEqual([{ version: NEW, code: 1, failedStep: null, pending: false }]);
+  // The stop's line is reported with it since 2026-11-13-005.
+  expect(reports).toEqual([
+    { version: NEW, code: 1, failedStep: null, pending: false, stopped: NO_TOKEN("personal") },
+  ]);
   // The one command after the token's read is the notification, with the same line.
   expect(at.seen.at(-2)).toEqual(["gh", "auth", "token", "-u", "personal"]);
   expect(notified(at.seen)).toEqual([notice(NO_TOKEN("personal"))]);
@@ -2022,7 +2027,16 @@ test("2026-11-13-004 AC-44: a failed or timed-out step before the push leaves no
     expect(code).toBe(1);
     expect(log.length).toBe(1);
     expect(log[0]).toMatch(/^the release's journal could not be written \(.+\): nothing written$/);
-    expect(reports).toEqual([{ version: NEW, code: 1, failedStep: null, pending: false }]);
+    // The stop's line is reported with it since 2026-11-13-005.
+    expect(reports).toEqual([
+      {
+        version: NEW,
+        code: 1,
+        failedStep: null,
+        pending: false,
+        stopped: expect.stringMatching(/^the release's journal could not be written/),
+      },
+    ]);
     expect(sh(root, "status", "--porcelain")).toBe("");
     expect(sh(root, "tag", "--list").trim()).toBe("");
   } finally {
@@ -2606,7 +2620,10 @@ test("2026-11-13-004 AC-53: the recovery stops with nothing changed while the jo
       `release ${NEW} is running (pid ${journal.pid}, written ${journal.writtenAt}): wait for it; if no release is running, delete ${JOURNAL_FILE}`,
     ]);
     expect(r.unchanged).toBe(true);
-    expect(r.reports).toEqual([]);
+    // A recovery's stop reports its line since 2026-11-13-005, where it reported nothing.
+    expect(r.reports).toEqual([
+      { version: "", code: 1, failedStep: null, pending: false, stopped: r.log[0] },
+    ]);
   }
   // A living process with another start time, and one that is gone, are a dead release's: the recovery runs.
   for (const deps of [
@@ -2636,7 +2653,10 @@ test("2026-11-13-004 AC-53: the recovery stops with nothing changed while the jo
     `origin could not be asked whether release ${NEW} was pushed: nothing put back`,
   ]);
   expect(r3.unchanged).toBe(true);
-  expect(r3.reports).toEqual([]);
+  // A recovery's stop reports its line since 2026-11-13-005, where it reported nothing.
+  expect(r3.reports).toEqual([
+    { version: "", code: 1, failedStep: null, pending: false, stopped: r3.log.at(-1) },
+  ]);
   // Rule 3: the release's own tag is on origin: the journal's version is reported pending at step 7, not confirmed.
   const out = bundled();
   killedRelease(out, "push");
@@ -3438,7 +3458,10 @@ test("2026-11-13-004 AC-57: the recovery stops over a tag on origin that is anot
     `the tag v${NEW} on origin is not the killed release's commit: nothing put back; delete ${JOURNAL_FILE} if that release is another's`,
   ]);
   expect(r1.unchanged).toBe(true);
-  expect(r1.reports).toEqual([]);
+  // A recovery's stop reports its line since 2026-11-13-005, where it reported nothing.
+  expect(r1.reports).toEqual([
+    { version: "", code: 1, failedStep: null, pending: false, stopped: r1.log.at(-1) },
+  ]);
   // A release that went out whole, its tag since removed from origin, and a journal that names its commit's parent.
   const done = bundled();
   const start = sh(done.root, "rev-parse", "HEAD").trim();
@@ -3646,3 +3669,222 @@ test.skipIf(process.getuid?.() === 0)(
     expect(inProgress(root)).toEqual([]);
   },
 );
+
+test("2026-11-13-005 AC-51: a new release that stops before step 1, after its arguments' check, reports the stop's line once; an argument's stop, a resume with nothing to resume and a dry run report nothing", async () => {
+  const stopOf = async (
+    prepare: (at: ReturnType<typeof fixture>) => void,
+    options: Partial<Parameters<typeof release>[0]> = {},
+    answer?: Parameters<typeof runner>[1],
+  ) => {
+    const at = fixture();
+    prepare(at);
+    const reports: Outcome[] = [];
+    const log: string[] = [];
+    const code = await release(
+      { root: at.root, bump: "patch", reason: "x", home: at.home, ...options },
+      { run: runner(at.root, answer).run, log: (l) => log.push(l), report: (o) => reports.push(o) },
+    );
+    return { code, reports, log };
+  };
+  const stoppedWith = (line: string | RegExp) => [
+    {
+      version: "",
+      code: 1,
+      failedStep: null,
+      pending: false,
+      stopped: typeof line === "string" ? line : expect.stringMatching(line),
+    },
+  ];
+  // A release pending, to be resumed first.
+  const pending = await stopOf(() => {}, { pending: { version: NEW, failedStep: 9 } });
+  expect(pending.code).toBe(1);
+  expect(pending.reports).toEqual(stoppedWith(/^release .* is pending at step 9: resume it first/));
+  // Not on main, and an unclean tree.
+  const branch = await stopOf((at) => sh(at.root, "checkout", "-q", "-b", "topic"));
+  expect(branch.reports).toEqual(stoppedWith("the release runs on main, not topic"));
+  const dirty = await stopOf((at) => writeFileSync(join(at.root, "stray.md"), "x"));
+  expect(dirty.reports).toEqual(stoppedWith(/^the tree has uncommitted changes \(stray\.md\)/));
+  // Origin not reachable, and origin ahead.
+  const away = await stopOf(
+    () => {},
+    {},
+    (cmd) =>
+      cmd[0] === "git" && cmd[1] === "fetch"
+        ? { status: 1, exit: null, stdout: "", stderr: "", signal: "SIGTERM", timedOut: true }
+        : false,
+  );
+  expect(away.reports).toEqual(stoppedWith("origin is not reachable: timed out after 300 s"));
+  const ahead = await stopOf((at) => {
+    const other = mkdtempSync(join(tmpdir(), "crew-ahead-"));
+    sh(other, "clone", "-q", at.origin, "c");
+    writeFileSync(join(other, "c", "more.md"), "x");
+    sh(join(other, "c"), "add", "-A");
+    sh(join(other, "c"), "commit", "-q", "-m", "more");
+    sh(join(other, "c"), "push", "-q", "origin", "main");
+  });
+  expect(ahead.reports).toEqual(stoppedWith(/^origin\/main is ahead by 1 commit\(s\): pull first/));
+  // A version that cannot be bumped.
+  const low = await stopOf(() => {}, { bump: { version: "0.0.1" } });
+  expect(low.reports).toEqual(stoppedWith(/^0\.0\.1 is not above /));
+  // An argument's stop, a resume with nothing to resume, and a dry run of a stop: no report.
+  const noBump = await stopOf(() => {}, { bump: undefined });
+  expect(noBump.code).toBe(1);
+  expect(noBump.reports).toEqual([]);
+  const nothing = await stopOf(() => {}, { bump: undefined, resume: "0.15.2", fromStep: 7 });
+  expect(nothing.log.join("\n")).toContain("is not on origin; nothing to resume");
+  expect(nothing.reports).toEqual([]);
+  const dry = await stopOf((at) => sh(at.root, "checkout", "-q", "-b", "topic"), {
+    dryRun: true,
+  });
+  expect(dry.reports).toEqual([]);
+});
+
+test("2026-11-13-005 AC-50: a recorded process is gone, the same or another, and a command file its caller read is judged by the check a kill needs", () => {
+  const at = (gone: boolean, start: string) => ({
+    processGone: () => gone,
+    processStart: () => start,
+    groupLeader: () => true,
+  });
+  expect(recordedProcess(4000, "Fri Nov 13 10:00:00 2026", at(true, ""))).toBe("gone");
+  expect(
+    recordedProcess(4000, "Fri Nov 13 10:00:00 2026", at(false, "Fri Nov 13 10:00:00 2026")),
+  ).toBe("same");
+  expect(recordedProcess(4000, "Fri Nov 13 10:00:00 2026", at(false, ""))).toBe("same");
+  expect(
+    recordedProcess(4000, "Fri Nov 13 10:00:00 2026", at(false, "Fri Nov 13 11:00:00 2026")),
+  ).toBe("another");
+  const file = { pid: 4001, start: "s", releasePid: 4000, releaseStart: "r" };
+  expect(leftCommandOf(file, at(false, "s"))).toBe(4001);
+  expect(leftCommandOf(file, at(false, "s"), 4000)).toBe(4001);
+  expect(leftCommandOf(file, at(false, "s"), 4999)).toBeNull();
+  expect(leftCommandOf(file, at(false, "another start"))).toBeNull();
+  expect(leftCommandOf(file, at(true, "s"))).toBeNull();
+  expect(leftCommandOf({ ...file, pid: process.pid }, at(false, "s"))).toBeNull();
+  expect(leftCommandOf(file, { ...at(false, "s"), groupLeader: () => false })).toBeNull();
+});
+
+test("2026-11-13-005 AC-51: the command file's two stops report their line once, on a new release and on a resume; a resume that could not ask origin for its tag reports a stop, and one whose tag is not there reports nothing", async () => {
+  const go = async (
+    fix: { root: string; home: string },
+    deps: Partial<Parameters<typeof release>[1]>,
+    answer: Parameters<typeof runner>[1],
+    options: Partial<Parameters<typeof release>[0]>,
+  ) => {
+    const log: string[] = [];
+    const reports: Outcome[] = [];
+    const code = await release(
+      { root: fix.root, bump: "patch", reason: "x", home: fix.home, ...options },
+      {
+        run: runner(fix.root, answer).run,
+        log: (l) => log.push(l),
+        report: (o) => reports.push(o),
+        ...deps,
+      },
+    );
+    return { code, log, reports };
+  };
+  const command = sleeper();
+  const starter = sleeper();
+  const pid = command.pid as number;
+  const starterPid = starter.pid as number;
+  const ended = spawnSync("true", [], { env: childEnv() }).pid as number;
+  const resume = { bump: undefined, resume: "0.15.2", fromStep: 9 };
+  const one = (version: string, line: string | RegExp) => [
+    {
+      version,
+      code: 1,
+      failedStep: null,
+      pending: false,
+      stopped: typeof line === "string" ? line : expect.stringMatching(line),
+    },
+  ];
+  try {
+    // A release that still runs: a new release and a resume each stop with one report.
+    for (const [options, version] of [
+      [{}, ""],
+      [resume, "0.15.2"],
+    ] as const) {
+      const fix = bundled();
+      commandFileOf(fix.root, [pid, processStart(pid), starterPid, processStart(starterPid)]);
+      const r = await go(fix, {}, noToken, options);
+      expect(r.code).toBe(1);
+      expect(r.reports).toEqual(one(version, RUNNING(starterPid)));
+    }
+    // A command a killed release left that does not end: the same, for each.
+    for (const [options, version] of [
+      [{}, ""],
+      [resume, "0.15.2"],
+    ] as const) {
+      const fix = bundled();
+      commandFileOf(fix.root, [pid, processStart(pid), ended, "Thu Jan  1 00:00:00 2026"]);
+      const r = await go(
+        fix,
+        { killGroup: () => {}, groupLeader: () => true, leftRunningWaitMs: 0 },
+        noToken,
+        options,
+      );
+      expect(r.code).toBe(1);
+      expect(r.reports).toEqual(one(version, /did not end/));
+    }
+  } finally {
+    for (const p of [command, starter]) p.kill("SIGKILL");
+  }
+  // A resume that could not ask origin: a stop, so the caller keeps the release to resume.
+  const away = bundled();
+  const unasked = await go(
+    away,
+    {},
+    (cmd) =>
+      cmd[0] === "git" && cmd[1] === "ls-remote"
+        ? { status: 128, exit: 128, stdout: "", stderr: "fatal: unable to access origin\nmore" }
+        : false,
+    resume,
+  );
+  expect(unasked.code).toBe(1);
+  expect(unasked.reports).toEqual(
+    one("0.15.2", "origin could not be asked for v0.15.2: fatal: unable to access origin"),
+  );
+  // Origin answered, and the tag is not there: nothing to resume, and no report.
+  const absent = await go(bundled(), {}, () => false, resume);
+  expect(absent.log.join("\n")).toContain("v0.15.2 is not on origin; nothing to resume");
+  expect(absent.reports).toEqual([]);
+});
+
+test("2026-11-13-005 AC-51: the refusal for a release pending comes after a left command is ended", async () => {
+  const command = sleeper();
+  const pid = command.pid as number;
+  const ended = spawnSync("true", [], { env: childEnv() }).pid as number;
+  try {
+    const fix = bundled();
+    commandFileOf(fix.root, [pid, processStart(pid), ended, "Thu Jan  1 00:00:00 2026"]);
+    const order: string[] = [];
+    const reports: Outcome[] = [];
+    const code = await release(
+      {
+        root: fix.root,
+        bump: "patch",
+        reason: "x",
+        home: fix.home,
+        pending: { version: NEW, failedStep: 9 },
+      },
+      {
+        run: runner(fix.root).run,
+        log: (l) => order.push(l.includes("is pending at step 9") ? "refused" : `log: ${l}`),
+        report: (o) => reports.push(o),
+        killGroup: (p) => {
+          order.push(`killed ${p}`);
+          process.kill(p, "SIGKILL");
+        },
+        groupLeader: () => true,
+      },
+    );
+    expect(code).toBe(1);
+    expect(order.indexOf(`killed ${pid}`)).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf(`killed ${pid}`)).toBeLessThan(order.indexOf("refused"));
+    expect(existsSync(join(fix.root, COMMAND))).toBe(false);
+    expect(reports.length).toBe(1);
+    expect(reports[0]?.stopped).toContain("is pending at step 9: resume it first");
+  } finally {
+    command.kill("SIGKILL");
+  }
+});

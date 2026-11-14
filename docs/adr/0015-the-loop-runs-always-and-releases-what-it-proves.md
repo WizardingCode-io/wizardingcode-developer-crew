@@ -62,3 +62,16 @@ The hardening the security reviewer named on item `2026-11-01-003` (one process 
 
 The two files are not signed, and `dist/` is trusted as the checkout is: whoever can write it can already change the scripts a release runs. The checks bound what a stale or mistaken file can do. A command file never has this process's own group ended; a tag on origin counts as a release's only by its commit; a commit that `origin/main` holds is never taken off `main`. The loop's install and uninstall, which end a tick through launchd, kill that tick's command afterwards, as `stop` does. A resume's step 8 counts the GitHub release as done only when it is published with its archive, since a create killed at its bound can leave less, and makes it again otherwise.
 
+## Note of 2026-11-13 (item 2026-11-13-005)
+
+This item closes finding 206 and what item `2026-11-13-004` left to the loop.
+
+The bootstrap is split. The sync installs the packages at every tick, a no-op when they are there, and never the shell; the shell's install runs before every run, with no check of the loop's own, so Playwright downloads the build the clone's version names and does nothing when it is there. This replaces two sentences of the note of 2026-10-30: a tick about to run no longer "bootstraps a clone with no finished shell", and the tick "whose sync brings a new lockfile" no longer installs the shell.
+
+Every command the loop runs through its `sh` and its `git` has a bound, and its git asks no terminal. What keeps none is named in finding 206's record: the improvement run, the judge's calls, the tick's relaunch and `secret set`.
+
+A bounded command leads a process group of its own, so a tick names its running command in a command file in the loop's home. `stop` signals that command once, and the install, the uninstall and a tick that takes over a dead tick's lock kill it, which keeps the note of 2026-10-28 true. An install holds a lock of its own while it writes in the clone, and a tick leaves while that install runs.
+
+The clone is the loop's own: a tick that holds the lock clears git locks and a rebase a killed git left there, so it is no place to work by hand.
+
+A due tick runs no improvement while the release's account has no token (the user's decision of 2026-11-13) and none while a release is pending after its resume; each is said once a day in the report and by a notification. A release that stopped before step 1 is a line of the day's report, by a name made safe for a public file.

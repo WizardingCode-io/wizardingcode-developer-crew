@@ -190,7 +190,7 @@ export function boundOf(cmd: readonly string[]): number {
   if (program === "bun")
     return first === "run" && second === "check" ? CHECK_MS : REMOTE_OR_BUILD_MS;
   if (program === "git")
-    return first === "fetch" || first === "ls-remote" || first === "push"
+    return first === "clone" || first === "fetch" || first === "ls-remote" || first === "push"
       ? REMOTE_OR_BUILD_MS
       : LOCAL_MS;
   if (program === "gh") return first === "auth" ? LOCAL_MS : REMOTE_OR_BUILD_MS;
@@ -308,8 +308,11 @@ export interface CommandFile {
  * lines, each id decimal digits alone and above 1 (0, 1 and a negative number never pass), each
  * start time not empty.
  */
-export function readCommandFile(root: string): "absent" | "off-shape" | CommandFile {
-  const path = join(root, COMMAND_FILE);
+export function readCommandFile(
+  root: string,
+  file: string = COMMAND_FILE,
+): "absent" | "off-shape" | CommandFile {
+  const path = join(root, file);
   if (!existsSync(path)) return "absent";
   let lines: string[];
   try {
@@ -338,9 +341,18 @@ export function leftCommand(
   root: string,
   deps: ProcessDeps = {},
   startedBy?: number,
+  file: string = COMMAND_FILE,
 ): number | null {
-  const file = readCommandFile(root);
-  if (typeof file === "string") return null;
+  const read = readCommandFile(root, file);
+  return typeof read === "string" ? null : leftCommandOf(read, deps, startedBy);
+}
+
+/** The same check on a command file its caller has read (2026-11-13-005), so one reading is judged and acted on. */
+export function leftCommandOf(
+  file: CommandFile,
+  deps: ProcessDeps = {},
+  startedBy?: number,
+): number | null {
   if (startedBy !== undefined && file.releasePid !== startedBy) return null;
   // Never this process, nor the group it is in: a file that names it is no command a release left.
   if (file.pid === process.pid || String(file.pid) === groupOf(process.pid)) return null;
@@ -348,6 +360,21 @@ export function leftCommand(
   const now = (deps.processStart ?? processStart)(file.pid);
   if (!now || now !== file.start) return null;
   return (deps.groupLeader ?? leadsItsGroup)(file.pid) ? file.pid : null;
+}
+
+/**
+ * Whether a recorded process is still that process, by the rule a stop needs (the engine's for a
+ * session's pid): gone; the same when its start time is the recorded one or either cannot be
+ * read; another process otherwise.
+ */
+export function recordedProcess(
+  pid: number,
+  start: string,
+  deps: ProcessDeps = {},
+): "gone" | "same" | "another" {
+  if ((deps.processGone ?? processGone)(pid)) return "gone";
+  const now = (deps.processStart ?? processStart)(pid);
+  return !now || !start || now === start ? "same" : "another";
 }
 
 /** What GitHub holds of a version's release: nothing, one published with its archive, one left unfinished (a draft, no archive, an archive still uploading), or no answer that can be read. */
@@ -511,6 +538,13 @@ export interface ReleaseOutcome {
   failedStep: number | null;
   /** True when the failure came after the push: the release is resumed, never redone. */
   pending: boolean;
+  /**
+   * The line of a stop before step 1 that names no failed step (2026-11-13-005): another release
+   * running, a recovery's stop, a precondition, no token, a journal that cannot be written. A
+   * caller with nobody watching says it where a person reads; it is free text of this machine
+   * (paths, git's words), so a caller that publishes it makes it safe first.
+   */
+  stopped?: string;
   /**
    * With `pending`: the commits the caller made for this run are not confirmed to be on origin
    * (2026-11-13-004). The push's outcome is unknown, or the pending version is an earlier run's;
@@ -913,26 +947,14 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
 
   if (!options.resume && !options.bump)
     return fail("a release names --patch, --minor, --major, --version <v> or --resume <v>");
-  if (!options.resume && options.pending)
-    return fail(
-      `release ${options.pending.version} is pending at step ${options.pending.failedStep}: resume it first (bun scripts/release.ts --resume v${options.pending.version} --from-step ${options.pending.failedStep})`,
-    );
   const goneNow = deps.processGone ?? processGone;
   /** Tells the caller what the release did, and answers its exit code. */
   const report = (o: ReleaseOutcome): number => {
     deps.report?.(o);
     return o.code;
   };
-  /**
-   * Whether a recorded process is still that process, by the rule a stop needs (the engine's for a
-   * session's pid): gone; the same when its start time is the recorded one or either cannot be
-   * read; another process otherwise.
-   */
-  const sameProcess = (pid: number, start: string): "gone" | "same" | "another" => {
-    if (goneNow(pid)) return "gone";
-    const now = startOf(pid);
-    return !now || !start || now === start ? "same" : "another";
-  };
+  const sameProcess = (pid: number, start: string): "gone" | "same" | "another" =>
+    recordedProcess(pid, start, { processGone: goneNow, processStart: startOf });
   const mode = options.dryRun ? "report" : "apply";
   /**
    * A notification under a title: `crew release` for a stop before the version is known, the
@@ -949,14 +971,33 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
    * A stop before step 1: said and notified, since under launchd the log is otherwise the only
    * place it is said; in a dry run said as what the next new release would do, and not a stop.
    */
+  let said: string | null = null;
   const stopLine = (line: string): boolean => {
     if (mode === "report") {
       log(`the next new release would stop: ${line}`);
       return false;
     }
     log(line);
+    said = line;
     notifyAs("crew release", line);
     return true;
+  };
+  /** What a stop before step 1 reports (2026-11-13-005): the line, and no failed step. */
+  const stoppedOutcome = (line: string): ReleaseOutcome => ({
+    version: options.resume ?? "",
+    code: 1,
+    failedStep: null,
+    pending: false,
+    stopped: line,
+  });
+  /**
+   * A precondition's stop of a new release: said, and reported to the caller once, in a real
+   * release alone; nothing is notified, as before.
+   */
+  const stop = (line: string): number => {
+    log(line);
+    if (mode === "apply") deps.report?.(stoppedOutcome(line));
+    return 1;
   };
   // A resume starts at a step after the push: anything else would run the steps before it again.
   if (
@@ -989,15 +1030,23 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       waitMs: deps.leftRunningWaitMs ?? LEFT_RUNNING_WAIT_MS,
       resumed: options.resume,
     })
-  )
+  ) {
+    if (said !== null) deps.report?.(stoppedOutcome(said));
     return 1;
+  }
+  if (!options.resume && options.pending)
+    return stop(
+      `release ${options.pending.version} is pending at step ${options.pending.failedStep}: resume it first (bun scripts/release.ts --resume v${options.pending.version} --from-step ${options.pending.failedStep})`,
+    );
 
   // The recovery of a release killed before its push (2026-11-13-004, D-1): by a new release
   // alone, from the journal, taking from it only what git confirms.
   if (!options.resume) {
     const recovered = recoverKilled({ root, git, log, mode, sameProcess, stopLine });
     if (recovered) {
+      // One report per stop: the recovery's own (a release pending after its push), or the stop's line.
       if (recovered.report) deps.report?.(recovered.report);
+      else if (said !== null) deps.report?.(stoppedOutcome(said));
       return 1;
     }
   }
@@ -1009,7 +1058,13 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   if (options.resume) {
     version = options.resume;
     const tags = git("ls-remote", "--tags", "origin", `v${version}`);
-    if (tags.status !== 0 || !tags.stdout.includes(`refs/tags/v${version}`))
+    // Origin could not be asked (2026-11-13-005): that is no answer about the tag, so the caller
+    // is told a stop and keeps the release to resume, where "nothing to resume" would forget it.
+    if (tags.status !== 0)
+      return stop(
+        `origin could not be asked for v${version}: ${tags.timedOut ? `timed out after ${seconds(REMOTE_OR_BUILD_MS)} s` : firstLine(tags.stderr)}`,
+      );
+    if (!tags.stdout.includes(`refs/tags/v${version}`))
       return fail(`v${version} is not on origin; nothing to resume`);
     // Origin has the tag, so a journal of this version has nothing left to put back; one of
     // another version is another release's, and is left.
@@ -1023,26 +1078,26 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       removeLeft(journalFile);
   } else {
     const branch = git("rev-parse", "--abbrev-ref", "HEAD").stdout.trim();
-    if (branch !== "main") return fail(`the release runs on main, not ${branch}`);
+    if (branch !== "main") return stop(`the release runs on main, not ${branch}`);
     const status = git("status", "--porcelain").stdout;
     if (status.trim() !== "")
-      return fail(
+      return stop(
         // A porcelain line is two status columns, a space and the path: read from the line as git printed it.
         `the tree has uncommitted changes (${(status.split("\n")[0] ?? "").slice(3).trim()}): commit or stash them first`,
       );
     const fetched = git("fetch", "-q", "origin", "main");
     if (fetched.status !== 0)
-      return fail(
+      return stop(
         `origin is not reachable: ${fetched.timedOut ? `timed out after ${seconds(REMOTE_OR_BUILD_MS)} s` : firstLine(fetched.stderr)}`,
       );
     const behind = git("rev-list", "--count", "HEAD..origin/main").stdout.trim();
-    if (behind !== "0") return fail(`origin/main is ahead by ${behind} commit(s): pull first`);
+    if (behind !== "0") return stop(`origin/main is ahead by ${behind} commit(s): pull first`);
     current = (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string })
       .version;
     try {
       version = nextVersion(current, options.bump as Bump);
     } catch (error) {
-      return fail((error as Error).message);
+      return stop((error as Error).message);
     }
     startHead = git("rev-parse", "HEAD").stdout.trim();
   }
@@ -1133,8 +1188,14 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   const ours = (data: Marketplace) =>
     data.plugins.filter((p) => p.name === PLUGIN_NAME || p.name.startsWith("wizardingcode-pack-"));
   let marketplace: { sha: string; data: Marketplace } | null = null;
-  const outcome = (code: number, failedStep: number | null): number =>
-    report({ version, code, failedStep, pending: failedStep !== null && failedStep > PUSH_STEP });
+  const outcome = (code: number, failedStep: number | null, stopped?: string): number =>
+    report({
+      version,
+      code,
+      failedStep,
+      pending: failedStep !== null && failedStep > PUSH_STEP,
+      ...(stopped === undefined ? {} : { stopped }),
+    });
   /** The step's output file, relative to the root, named by the version and the step (AC-40). */
   const stepOutputPath = (step: number) => join("dist", `release-${version}-step-${step}.log`);
   /** Null when the command succeeded; otherwise the failed step's message, its output kept (AC-40). */
@@ -1534,7 +1595,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       const line = `gh auth token -u ${account} ${cause}: ${options.resume ? "nothing resumed" : "nothing written, nothing pushed by this release"}; log in to that account with gh auth login`;
       log(line);
       notify(line);
-      return outcome(1, options.resume ? from : null);
+      return options.resume ? outcome(1, from) : outcome(1, null, line);
     }
   }
   // The journal before step 1 writes anything (2026-11-13-004, D-1): the whole of it or none.
@@ -1556,7 +1617,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       const line = `the release's journal could not be written (${(error as Error).message}): nothing written`;
       log(line);
       notify(line);
-      return outcome(1, null);
+      return outcome(1, null, line);
     }
   }
   log(options.resume ? `resuming release ${version} from step ${from}` : title);
