@@ -112,21 +112,37 @@ const SERVERS: [string, string][] = [
 
 /** How reading alone is obtained on a server's row: the row's words and what its second cell holds. */
 const READING_ALONE: [string, string][] = [
-  ["Cypress's Cloud MCP server", "It reads alone, by design"],
+  ["Cypress's Cloud MCP server", "It reads alone"],
   ["SonarSource's server", "SONARQUBE_READ_ONLY=true"],
   ["Sentry's server", "--skills=inspect"],
   ["Datadog's server", "mcp_read"],
   ["Chromatic's server", '`chromatic_mutate` to "Blocked"'],
   ["Checkly's server", "session permissions"],
   ["Trunk's server", "No write to the Trunk account was found"],
-  ["LocalStack's server", "no read-only mode"],
+  ["LocalStack's server", "No read-only mode was found"],
   ["GitHub's server", "--read-only"],
   ["Buildkite's server", "https://mcp.buildkite.com/mcp/readonly"],
 ];
 
-/** What Sentry's row says of `--skills=inspect`: that it reads alone was not read. */
-const SENTRY = "Sentry's server";
-const NOT_CONFIRMED = "is not confirmed";
+/** What a server's row says the research did not read: the row's words and the caveat it holds. */
+const CAVEATS: [string, string][] = [
+  ["Sentry's server", "is not confirmed"],
+  ["Checkly's server", "the security page, which was not opened"],
+  ["Trunk's server", "whether it changes anything is not on the page"],
+];
+
+/** The outside sets rule 6 holds to a project that uses their tool: the row's words and what it holds. */
+const WHERE_USED: [string, string][] = [
+  ["promptfoo's four skills", "Installed only where the project uses promptfoo"],
+  ["Meridian Labs' inspect-skills", "Installed only where the project uses Inspect"],
+];
+/** Section 6 says the means of keeping Zephyr's tools off is not known. */
+const ZEPHYR_HOW = "did not read a switch";
+/** The user's two decisions of the consolidation, each on its numbered rule of section 5. */
+const RULES: [string, string, string[]][] = [
+  ["zephyr off", "3. ", ["Zephyr's tools stay off"]],
+  ["rule 6", "6. ", ["promptfoo's and inspect-skills"]],
+];
 
 /**
  * Every clause of the QA team's definition the text fails, by name; empty when it holds all. It
@@ -162,7 +178,16 @@ function definitionGaps(document: string): string[] {
   }
   for (const [words, holds] of READING_ALONE)
     if (!rowsOf(words)[0]?.[1]?.includes(holds)) gaps.push(`reading alone: ${words}`);
-  if (!rowsOf(SENTRY)[0]?.[1]?.includes(NOT_CONFIRMED)) gaps.push("not confirmed");
+  for (const [words, caveat] of CAVEATS)
+    if (!rowsOf(words)[0]?.[1]?.includes(caveat)) gaps.push(`caveat: ${words}`);
+  for (const [words, holds] of WHERE_USED)
+    if (!rowsOf(words)[0]?.[1]?.includes(holds)) gaps.push(`where used: ${words}`);
+  const rules = section(document, 5).split("\n");
+  for (const [clause, opens, holds] of RULES) {
+    const rule = rules.find((line) => line.startsWith(opens)) ?? "";
+    if (!holds.every((words) => rule.includes(words))) gaps.push(clause);
+  }
+  if (!section(document, 6).includes(ZEPHYR_HOW)) gaps.push("zephyr how");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -316,9 +341,42 @@ test("2026-11-15-006 AC-1: a server's row that loses how reading alone is obtain
   }
 });
 
-test("2026-11-15-006 AC-1: Sentry's row that no longer says reading alone is not confirmed is named", () => {
-  const changed = withServer(SENTRY, (line) => line.replace(NOT_CONFIRMED, "is confirmed"));
-  expect(definitionGaps(changed)).toEqual(["not confirmed"]);
+/** The second cell of the four-cell row of section 5 that `words` pick; empty when none does. */
+const secondCellOf = (words: string) =>
+  rows(section(text, 5)).find((row) => row.length === 4 && row[1]?.includes(words))?.[1] ?? "";
+
+test("2026-11-15-007 AC-1: a server's row that loses what the research did not read is named", () => {
+  for (const [words, caveat] of CAVEATS) {
+    expect(secondCellOf(words), words).toContain(caveat);
+    const changed = withServer(words, (line) => line.replaceAll(caveat, "is settled"));
+    expect(definitionGaps(changed), words).toEqual([`caveat: ${words}`]);
+  }
+});
+
+test("2026-11-15-007 AC-1: a set of a tool whose row no longer holds it to a project that uses the tool is named", () => {
+  for (const [words, holds] of WHERE_USED) {
+    expect(secondCellOf(words), words).toContain(holds);
+    const changed = withServer(words, (line) => line.replaceAll(holds, "Installed always"));
+    expect(definitionGaps(changed), words).toEqual([`where used: ${words}`]);
+  }
+});
+
+test("2026-11-15-007 AC-1: a rule of section 5 that loses the user's decision of the consolidation is named", () => {
+  for (const [clause, opens, holds] of RULES)
+    for (const words of holds) {
+      const rule = section(text, 5)
+        .split("\n")
+        .find((line) => line.startsWith(opens));
+      expect(rule, clause).toContain(words);
+      const changed = text.replace(rule ?? "", () => (rule ?? "").replaceAll(words, "other words"));
+      expect(definitionGaps(changed), clause).toEqual([clause]);
+    }
+});
+
+test("2026-11-15-007 AC-1: section 6 that no longer says how Zephyr's tools are kept off was not read is named", () => {
+  expect(section(text, 6)).toContain(ZEPHYR_HOW);
+  const changed = text.replaceAll(ZEPHYR_HOW, "read a switch");
+  expect(definitionGaps(changed)).toEqual(["zephyr how"]);
 });
 
 test("2026-11-15-006 AC-1: a section after the one on what the code needs is named", () => {

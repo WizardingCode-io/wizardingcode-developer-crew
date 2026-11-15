@@ -96,9 +96,16 @@ const LAST_HEADING = "## 6. What the code needs, not decided here";
 const RULE_FIVE = "5. ";
 const WHERE_USED = "only where the project already uses it";
 /** The four sets rule 5 names as held to a project that uses them. */
-const WHERE_USED_SETS = ["Agent Toolkit for AWS", "azure-skills", "PactFlow", "Nx"];
-/** The words of the point section 6 left open until the user's decision of 2026-11-15. */
+const WHERE_USED_SETS = [
+  "The Agent Toolkit for AWS",
+  "Microsoft's azure-skills",
+  "PactFlow's skills and plugin",
+  "Nx's skills",
+];
+/** The old words of the point the user closed on 2026-11-15; they stand nowhere in the document. */
 const OPEN_POINT = "which rule wins";
+/** Rule 5 named in section 6, in either case, reopens the point too. */
+const RULE_FIVE_NAMED = /rule 5/i;
 
 /** A row of section 5: words of its second cell and the whole text of its "Read at" cell. */
 const SERVERS: [string, string][] = [
@@ -182,6 +189,12 @@ const ruleFiveOf = (document: string) =>
     .split("\n")
     .find((line) => line.startsWith(RULE_FIVE)) ?? "";
 
+/** The one sentence of rule 5 that says where a set is installed; empty when the rule has none. */
+const whereUsedOf = (document: string) =>
+  ruleFiveOf(document)
+    .split(". ")
+    .find((sentence) => sentence.includes(WHERE_USED)) ?? "";
+
 /**
  * Every clause of the architects team's definition the text fails, by name; empty when it holds
  * all. It reads the document by section and by table row, so a name inside a longer cell, a URL
@@ -220,9 +233,10 @@ function definitionGaps(document: string): string[] {
     if (!rowsOf(words)[0]?.[1]?.includes(flag)) gaps.push(`read-only switch: ${words}`);
   for (const words of LINKS)
     if (!rowsOf(words)[0]?.[3]?.startsWith(NOT_INSTALLED)) gaps.push(`link: ${words}`);
-  const ruleFive = ruleFiveOf(document);
-  const held = [WHERE_USED, ...WHERE_USED_SETS].every((words) => ruleFive.includes(words));
-  if (!held || document.includes(OPEN_POINT)) gaps.push("where used");
+  const sentence = whereUsedOf(document);
+  const held = WHERE_USED_SETS.every((words) => sentence.includes(words));
+  const reopened = document.includes(OPEN_POINT) || RULE_FIVE_NAMED.test(section(document, 6));
+  if (!held || reopened) gaps.push("where used");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -408,8 +422,25 @@ test("2026-11-15-006 AC-2: rule 5 that loses where a set is installed, or one of
   }
 });
 
-test("2026-11-15-006 AC-2: the point on which rule wins, put back as open, is named", () => {
+test("2026-11-15-007 AC-2: a set moved out of the sentence that holds it to a project that uses it is named", () => {
+  const rule = ruleFiveOf(text);
+  for (const name of WHERE_USED_SETS) {
+    expect(whereUsedOf(text), name).toContain(name);
+    const moved = rule.replace(name, "One set").replace(/$/, ` ${name} is installed always.`);
+    expect(definitionGaps(text.replace(rule, () => moved)), name).toEqual(["where used"]);
+  }
+});
+
+test("2026-11-15-007 AC-2: the point put back as open in section 6, in its old words or by naming rule 5, is named", () => {
   expect(text).not.toContain(OPEN_POINT);
-  const reopened = text.replace(LAST_HEADING, `${LAST_HEADING}\n\n- It is open ${OPEN_POINT}.`);
-  expect(definitionGaps(reopened)).toEqual(["where used"]);
+  expect(section(text, 6)).not.toMatch(RULE_FIVE_NAMED);
+  const bullets = [
+    `It is open ${OPEN_POINT}`,
+    "It is open what rule 5 holds",
+    "Rule 5 and its sets",
+  ];
+  for (const bullet of bullets) {
+    const reopened = text.replace(LAST_HEADING, `${LAST_HEADING}\n\n- ${bullet}.`);
+    expect(definitionGaps(reopened), bullet).toEqual(["where used"]);
+  }
 });
