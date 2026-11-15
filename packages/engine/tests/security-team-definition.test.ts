@@ -1,5 +1,17 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
+import {
+  LISTED_HEADER as HEADER,
+  hasText,
+  hasUrl,
+  listedGaps,
+  NOT_OPENED_MARK as MARK,
+  markGaps,
+  namedRowGaps,
+  rows,
+  section,
+  withChangedLine,
+} from "./definition-document.ts";
 
 const DEFINITION = new URL(
   "../../../docs/specs/2026-11-15-security-team-design.md",
@@ -32,7 +44,7 @@ const NOT_OPENED = [
   "https://eur-lex.europa.eu/eli/reg/2024/1689/oj",
   "https://atlas.mitre.org/",
 ];
-const MARK = " (not opened)";
+const NOT_OPENED_SENTENCE = "Six pages were not read on 2026-11-15";
 
 const ENVIRONMENT = "the project's own local or test environment";
 const AUDIT = "The `security-audit` skill";
@@ -98,50 +110,30 @@ const SERVERS: [string, string][] = [
   ['PortSwigger\'s "MCP Server" extension', "https://github.com/PortSwigger/mcp-server"],
 ];
 
-/** The text of one `## ` section, from its heading to the next; empty when the heading is absent. */
-function section(text: string, number: number): string {
-  const parts = text.split(/\n(?=## )/);
-  return parts.find((part) => part.startsWith(`## ${number}. `)) ?? "";
-}
-
-/** The rows of a section's tables, each as its cells, the rule under a header left out. */
-function rows(part: string): string[][] {
-  return part
-    .split("\n")
-    .filter((line) => line.startsWith("| ") && !line.startsWith("| :-"))
-    .map((line) =>
-      line
-        .slice(1, line.endsWith("|") ? -1 : undefined)
-        .split("|")
-        .map((cell) => cell.trim()),
-    );
-}
-
 /**
  * Every clause of the security team's definition the text fails, by name; empty when it holds all.
  * It reads the document by section and by table row, so a name inside a longer cell, a URL on
- * another row or a row written twice does not pass.
+ * another row or a row written twice does not pass. A row of sources with no URL, a row of tools
+ * with nothing in it, a four-cell row the list does not name and a marked page the list does not
+ * hold are each named too.
  */
 function definitionGaps(document: string): string[] {
   const gaps: string[] = [];
   const sources = rows(section(document, 3));
   const tools = rows(section(document, 4));
   const five = rows(section(document, 5));
-  for (const subject of SUBJECTS)
-    if (sources.filter((row) => row[0] === subject).length !== 1)
-      gaps.push(`subject row: ${subject}`);
-  for (const kind of KINDS)
-    if (tools.filter((row) => row[0] === kind).length !== 1) gaps.push(`kind row: ${kind}`);
+  gaps.push(...namedRowGaps(sources, SUBJECTS, "subject row", "no source", hasUrl));
+  gaps.push(...namedRowGaps(tools, KINDS, "kind row", "empty row", hasText));
   const rowsOf = (words: string) => five.filter((row) => row[1]?.includes(words));
   for (const [words, url] of SERVERS) {
     const found = rowsOf(words);
     if (found.length !== 1 || found[0]?.[2] !== url) gaps.push(`server url: ${words}`);
   }
-  for (const url of NOT_OPENED) {
-    const after = document.split(url).slice(1);
-    if (after.length === 0 || after.some((rest) => !rest.startsWith(MARK)))
-      gaps.push(`not opened: ${url}`);
-  }
+  if (sources.length !== SUBJECTS.length + 1) gaps.push("row count: section 3");
+  if (tools.length !== KINDS.length + 1) gaps.push("row count: section 4");
+  gaps.push(...listedGaps(five, HEADER, SERVERS.length));
+  gaps.push(...markGaps(document, NOT_OPENED, MARK, "not opened"));
+  if (!document.includes(NOT_OPENED_SENTENCE)) gaps.push("not opened sentence");
   const running = tools.find((row) => row[0] === RUNNING)?.[1] ?? "";
   if (!running.includes(ENVIRONMENT)) gaps.push("own environment: section 4");
   const library = rowsOf(LIBRARY)[0]?.[1] ?? "";
@@ -159,13 +151,14 @@ function definitionGaps(document: string): string[] {
 const text = existsSync(DEFINITION) ? readFileSync(DEFINITION, "utf8") : "";
 
 /** The text with the table row of section `number` that holds `words` changed by `change`. */
-function withRow(number: number, words: string, change: (line: string) => string): string {
-  const part = section(text, number);
-  const line = part.split("\n").find((l) => l.startsWith("| ") && l.includes(words));
-  if (line === undefined) throw new Error(`no row holds ${words} in section ${number}`);
-  const changed = part.replace(line, () => change(line));
-  return text.replace(part, () => changed);
-}
+const withRow = (number: number, words: string, change: (line: string) => string) =>
+  withChangedLine(
+    text,
+    number,
+    words,
+    (line) => line.startsWith("| ") && line.includes(words),
+    change,
+  );
 
 const twice = (line: string) => `${line}\n${line}`;
 
@@ -269,4 +262,42 @@ test("2026-11-15-001 AC-1: the audit's row without the words on when the whole a
 test("2026-11-15-001 AC-1: a section after the one on what the code needs is named", () => {
   expect(text).not.toBe("");
   expect(definitionGaps(`${text}\n## 7. More\n\nMore.\n`)).toContain("last section");
+});
+
+test("2026-11-15-004 AC-2: a subject's row with no URL, or a kind's row with nothing in it, is named", () => {
+  const emptied = (line: string) => `${line.split(" | ")[0]} | |`;
+  for (const subject of SUBJECTS)
+    expect(definitionGaps(withRow(3, `| ${subject} |`, emptied)), subject).toContain(
+      `no source: ${subject}`,
+    );
+  for (const kind of KINDS)
+    expect(definitionGaps(withRow(4, `| ${kind} |`, emptied)), kind).toContain(
+      `empty row: ${kind}`,
+    );
+});
+
+test("2026-11-15-004 AC-2: a four-cell row the list does not name, with a URL or with none, is named", () => {
+  const [first] = SERVERS[0] ?? [""];
+  const after = (row: string) => withRow(5, first, (line) => `${line}\n${row}`);
+  const named = "| Another | Another server | https://example.com/ | `install` |";
+  expect(definitionGaps(after(named))).toEqual(["server count"]);
+  expect(definitionGaps(after("| Another | Another server | | `install` |"))).toEqual([
+    "server count",
+  ]);
+  expect(definitionGaps(withRow(5, first, () => ""))).toContain("server count");
+});
+
+test("2026-11-15-004 AC-2: a seventh page marked as not read, or the sentence that counts them gone, is named", () => {
+  expect(text).not.toBe("");
+  const seventh = `${text}\nAlso https://example.com/seventh${MARK}.\n`;
+  expect(definitionGaps(seventh)).toEqual(["not opened count"]);
+  const recounted = text.replace(NOT_OPENED_SENTENCE, "Some pages were not read");
+  expect(definitionGaps(recounted)).toEqual(["not opened sentence"]);
+});
+
+test("2026-11-15-004 AC-2: a row more in a table read by its first cell is named", () => {
+  const more = (number: number, name: string) =>
+    withRow(number, name, (line) => `${line}\n| One more | https://example.com/ |`);
+  expect(definitionGaps(more(3, `| ${SUBJECTS[0]} |`))).toEqual(["row count: section 3"]);
+  expect(definitionGaps(more(4, `| ${KINDS[0]} |`))).toEqual(["row count: section 4"]);
 });

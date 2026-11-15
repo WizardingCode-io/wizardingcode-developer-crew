@@ -38,6 +38,8 @@ Eight kinds. The user was offered seven and took them with the academic one. For
 
 ### Pages not opened or read in part
 
+Sixteen pages were not opened on 2026-11-15 and twenty-two were read in part, in this section and in section 7. Each carries its mark at every place it is cited.
+
 - https://www.cve.org/ (read in part): the address returns a JavaScript shell, and the text was read from the script it loads.
 - https://nvd.nist.gov/ (read in part): the address returns a JavaScript shell, and the text was read from the script it loads.
 - https://hn.algolia.com/api (read in part): the address returns a JavaScript shell, and the text was read from the script it loads.

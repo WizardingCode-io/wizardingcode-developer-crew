@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { rows, section } from "./definition-document.ts";
 
 const DEFINITION = new URL(
   "../../../docs/specs/2026-11-14-backend-team-stacks-design.md",
@@ -56,25 +57,6 @@ const ASTRAL = "Astral's plugin";
 /** The name a server's or a skill's pair fails under: Astral's is the clause this item corrected. */
 function gapOf(words: string): string {
   return words === ASTRAL ? "astral" : `server url: ${words}`;
-}
-
-/** The text of one `## ` section, from its heading to the next; empty when the heading is absent. */
-function section(text: string, number: number): string {
-  const parts = text.split(/\n(?=## )/);
-  return parts.find((part) => part.startsWith(`## ${number}. `)) ?? "";
-}
-
-/** The rows of a section's tables, each as its cells, the header and the rule left out. */
-function rows(part: string): string[][] {
-  return part
-    .split("\n")
-    .filter((line) => line.startsWith("| ") && !line.startsWith("| :-"))
-    .map((line) =>
-      line
-        .slice(1, line.endsWith("|") ? -1 : undefined)
-        .split("|")
-        .map((cell) => cell.trim()),
-    );
 }
 
 /**
