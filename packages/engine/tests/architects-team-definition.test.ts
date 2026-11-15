@@ -92,6 +92,13 @@ const LINKS = [
   "By the GitHub user `dandgabr`",
 ];
 const LAST_HEADING = "## 6. What the code needs, not decided here";
+/** Rule 5 of section 5: a set that serves a service, a cloud or a tool enters only where it is used. */
+const RULE_FIVE = "5. ";
+const WHERE_USED = "only where the project already uses it";
+/** The four sets rule 5 names as held to a project that uses them. */
+const WHERE_USED_SETS = ["Agent Toolkit for AWS", "azure-skills", "PactFlow", "Nx"];
+/** The words of the point section 6 left open until the user's decision of 2026-11-15. */
+const OPEN_POINT = "which rule wins";
 
 /** A row of section 5: words of its second cell and the whole text of its "Read at" cell. */
 const SERVERS: [string, string][] = [
@@ -169,6 +176,12 @@ const SERVERS: [string, string][] = [
   ],
 ];
 
+/** The numbered line of section 5 that states rule 5; empty when the section has none. */
+const ruleFiveOf = (document: string) =>
+  section(document, 5)
+    .split("\n")
+    .find((line) => line.startsWith(RULE_FIVE)) ?? "";
+
 /**
  * Every clause of the architects team's definition the text fails, by name; empty when it holds
  * all. It reads the document by section and by table row, so a name inside a longer cell, a URL
@@ -207,6 +220,9 @@ function definitionGaps(document: string): string[] {
     if (!rowsOf(words)[0]?.[1]?.includes(flag)) gaps.push(`read-only switch: ${words}`);
   for (const words of LINKS)
     if (!rowsOf(words)[0]?.[3]?.startsWith(NOT_INSTALLED)) gaps.push(`link: ${words}`);
+  const ruleFive = ruleFiveOf(document);
+  const held = [WHERE_USED, ...WHERE_USED_SETS].every((words) => ruleFive.includes(words));
+  if (!held || document.includes(OPEN_POINT)) gaps.push("where used");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -381,4 +397,19 @@ test("2026-11-15-005 AC-2: a link's row whose last cell no longer opens with not
 test("2026-11-15-005 AC-2: a section after the one on what the code needs is named", () => {
   expect(text).not.toBe("");
   expect(definitionGaps(`${text}\n## 7. More\n\nMore.\n`)).toContain("last section");
+});
+
+test("2026-11-15-006 AC-2: rule 5 that loses where a set is installed, or one of the four sets, is named", () => {
+  const rule = ruleFiveOf(text);
+  for (const words of [WHERE_USED, ...WHERE_USED_SETS]) {
+    expect(rule, words).toContain(words);
+    const changed = text.replace(rule, () => rule.replaceAll(words, "other words"));
+    expect(definitionGaps(changed), words).toEqual(["where used"]);
+  }
+});
+
+test("2026-11-15-006 AC-2: the point on which rule wins, put back as open, is named", () => {
+  expect(text).not.toContain(OPEN_POINT);
+  const reopened = text.replace(LAST_HEADING, `${LAST_HEADING}\n\n- It is open ${OPEN_POINT}.`);
+  expect(definitionGaps(reopened)).toEqual(["where used"]);
 });
