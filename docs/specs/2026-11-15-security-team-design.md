@@ -109,7 +109,7 @@ Claude Code's own `/security-review` command, a single pass over the branch's ch
 | Stripe | Stripe's skills | https://docs.stripe.com/skills.md | `stripe agent setup`, or `npx skills add https://docs.stripe.com` |
 | Burp Suite | PortSwigger's "MCP Server" extension for Burp, on the machine at `http://127.0.0.1:9876/mcp`. It acts (it sends HTTP requests, each approved by default) | https://github.com/PortSwigger/mcp-server | the page read gave no Claude Code command; the extension is built with `./gradlew embedProxyJar` |
 
-Three rows of these tables stand beyond the names the user was asked about, each made by the tool's own team and so under rule 1: promptfoo's Claude Code plugin, Stripe's skills, and Semgrep's hosted MCP server, which belongs to Semgrep's paid platform and is therefore placed under rule 3 and not rule 2. The user confirms them when reading this document.
+Three rows of these tables stand beyond the names the user was asked about, each made by the tool's own team and so under rule 1: promptfoo's Claude Code plugin, Stripe's skills, and Semgrep's hosted MCP server, which belongs to Semgrep's paid platform and is therefore placed under rule 3 and not rule 2. The user read this document and confirmed the three on 2026-11-15.
 
 ### Nothing of their own
 
