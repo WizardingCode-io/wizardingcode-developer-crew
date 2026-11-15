@@ -70,6 +70,20 @@ const DOMAINS = [
   "Network Security",
 ];
 const LAST_HEADING = "## 6. What the code needs, not decided here";
+/** The two rows the user's decision of 2026-11-15 changed: the row's words and what its cell holds. */
+const CLOUDFLARE = "Cloudflare's Claude Code plugin";
+const SKILLS_ALONE = "Installed as the skills alone";
+const VAULT = "HashiCorp's Vault MCP server";
+const NOT_INSTALLED = "Not installed";
+/** Rule 3 says a server that acts on an account or can show a secret does not enter by it. */
+const RULE_THREE = "3. ";
+const LEFT_OUT = ["HashiCorp Vault's server is left out", "the skills alone are installed"];
+
+/** The numbered line of section 5 that states rule 3; empty when the section has none. */
+const ruleThreeOf = (document: string) =>
+  section(document, 5)
+    .split("\n")
+    .find((line) => line.startsWith(RULE_THREE)) ?? "";
 
 /** A row of section 5: words of its second cell and the URL of its "Read at" cell. */
 const SERVERS: [string, string][] = [
@@ -142,6 +156,10 @@ function definitionGaps(document: string): string[] {
   for (const domain of DOMAINS)
     if (!library.includes(domain)) gaps.push(`community exception: ${domain}`);
   if (!(rowsOf(AUDIT)[0]?.[1] ?? "").includes(AUDIT_WHEN)) gaps.push("audit when");
+  if (!rowsOf(CLOUDFLARE)[0]?.[1]?.includes(SKILLS_ALONE)) gaps.push("skills alone: Cloudflare");
+  if (!rowsOf(VAULT)[0]?.[3]?.startsWith(NOT_INSTALLED)) gaps.push("not installed: Vault");
+  const ruleThree = ruleThreeOf(document);
+  for (const words of LEFT_OUT) if (!ruleThree.includes(words)) gaps.push(`rule 3: ${words}`);
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -300,4 +318,20 @@ test("2026-11-15-004 AC-2: a row more in a table read by its first cell is named
     withRow(number, name, (line) => `${line}\n| One more | https://example.com/ |`);
   expect(definitionGaps(more(3, `| ${SUBJECTS[0]} |`))).toEqual(["row count: section 3"]);
   expect(definitionGaps(more(4, `| ${KINDS[0]} |`))).toEqual(["row count: section 4"]);
+});
+
+test("2026-11-15-008 AC-3: Cloudflare's row without the skills alone, Vault's row no longer not installed, or rule 3 without either, is named", () => {
+  const five = rows(section(text, 5));
+  expect(five.find((row) => row[1]?.includes(CLOUDFLARE))?.[1]).toContain(SKILLS_ALONE);
+  const plugin = withRow(5, CLOUDFLARE, (line) => line.replaceAll(SKILLS_ALONE, "Installed whole"));
+  expect(definitionGaps(plugin)).toEqual(["skills alone: Cloudflare"]);
+  expect(five.find((row) => row[1]?.includes(VAULT))?.[3]).toStartWith(NOT_INSTALLED);
+  const vault = withRow(5, VAULT, (line) => line.replace(`| ${NOT_INSTALLED}`, "| Installed"));
+  expect(definitionGaps(vault)).toEqual(["not installed: Vault"]);
+  const rule = ruleThreeOf(text);
+  for (const words of LEFT_OUT) {
+    expect(rule, words).toContain(words);
+    const changed = text.replace(rule, () => rule.replaceAll(words, "other words"));
+    expect(definitionGaps(changed), words).toEqual([`rule 3: ${words}`]);
+  }
 });

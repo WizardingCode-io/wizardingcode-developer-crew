@@ -92,6 +92,10 @@ const LINKS = [
   "By the GitHub user `dandgabr`",
 ];
 const LAST_HEADING = "## 6. What the code needs, not decided here";
+/** The clouds' sets that are installed without the server they bring: the row's words. */
+const SKILLS_ALONE = "Installed as the skills alone";
+const SKILLS_ALONE_RULE = "the skills alone are installed";
+const WITHOUT_SERVER = ["The Agent Toolkit for AWS", "Microsoft's azure-skills"];
 /** Rule 5 of section 5: a set that serves a service, a cloud or a tool enters only where it is used. */
 const RULE_FIVE = "5. ";
 const WHERE_USED = "only where the project already uses it";
@@ -237,6 +241,9 @@ function definitionGaps(document: string): string[] {
   const held = WHERE_USED_SETS.every((words) => sentence.includes(words));
   const reopened = document.includes(OPEN_POINT) || RULE_FIVE_NAMED.test(section(document, 6));
   if (!held || reopened) gaps.push("where used");
+  for (const words of WITHOUT_SERVER)
+    if (!rowsOf(words)[0]?.[1]?.includes(SKILLS_ALONE)) gaps.push(`skills alone: ${words}`);
+  if (!ruleFiveOf(document).includes(SKILLS_ALONE_RULE)) gaps.push("skills alone: rule 5");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -443,4 +450,20 @@ test("2026-11-15-007 AC-2: the point put back as open in section 6, in its old w
     const reopened = text.replace(LAST_HEADING, `${LAST_HEADING}\n\n- ${bullet}.`);
     expect(definitionGaps(reopened), bullet).toEqual(["where used"]);
   }
+});
+
+test("2026-11-15-008 AC-2: a cloud's set whose row, or rule 5, no longer says the skills alone are installed is named", () => {
+  for (const words of WITHOUT_SERVER) {
+    const second = rows(section(text, 5)).find((row) => row[1]?.includes(words))?.[1];
+    expect(second, words).toContain(SKILLS_ALONE);
+    const changed = withServer(words, (line) => {
+      const [first, cell, ...rest] = line.split(" | ");
+      return [first, (cell ?? "").replaceAll(SKILLS_ALONE, "Installed whole"), ...rest].join(" | ");
+    });
+    expect(definitionGaps(changed), words).toEqual([`skills alone: ${words}`]);
+  }
+  const rule = ruleFiveOf(text);
+  expect(rule).toContain(SKILLS_ALONE_RULE);
+  const loosened = text.replace(rule, () => rule.replaceAll(SKILLS_ALONE_RULE, "the plugin is"));
+  expect(definitionGaps(loosened)).toEqual(["skills alone: rule 5"]);
 });
