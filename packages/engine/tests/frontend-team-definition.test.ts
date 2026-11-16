@@ -747,6 +747,8 @@ const STATED: [number, string][] = [
   [5, 'in rule 5 the first sentence is the user\'s choice, "Destiladas, e impeccable instalado"'],
   [6, "The QA team's definition carries the same order"],
   [6, "How a session tells a test or development environment from production"],
+  [6, "what is done where a development database was restored from production data"],
+  [6, "The architects team's definition carries it too"],
 ];
 
 /** The numbered rules of section 5, each whole line, which the request holds whole too. */

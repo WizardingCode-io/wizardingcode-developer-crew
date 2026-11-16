@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import {
+  bullets,
   cells,
   hasText,
   hasUrl,
@@ -18,6 +19,10 @@ import {
 
 const DEFINITION = new URL(
   "../../../docs/specs/2026-11-15-architects-team-design.md",
+  import.meta.url,
+);
+const REQUEST = new URL(
+  "../../../docs/requests/2026-11-15-architects-team-definition.md",
   import.meta.url,
 );
 
@@ -134,6 +139,7 @@ const SERVERS: [string, string][] = [
   ],
   ["promptfoo's MCP server", "https://www.promptfoo.dev/docs/integrations/mcp-server/"],
   ["Laravel's own server", "https://github.com/laravel/boost"],
+  ["Chrome DevTools' server", "https://github.com/ChromeDevTools/chrome-devtools-mcp"],
   ["Redocly's server", "https://github.com/Redocly/redocly-plugin"],
   ["SmartBear's server", "https://github.com/SmartBear/smartbear-mcp"],
   ["The Apollo MCP Server", "https://github.com/apollographql/apollo-mcp-server"],
@@ -195,6 +201,40 @@ const SERVERS: [string, string][] = [
   ],
 ];
 
+/** Rule 2 of section 5, its whole line: the user's decision of 2026-11-16 on Chrome DevTools' server. */
+const RULE_TWO = "2. ";
+const RULE_2 =
+  "2. The server of a tool of section 4 is installed with the tool. Chrome DevTools' server, the own route to Lighthouse, is installed and always run on the project's test and development environments, the user's decision of 2026-11-16, written as rule 3 of the frontend team's definition (`docs/specs/2026-11-16-frontend-team-design.md`, section 5) and reaching this definition by the user's word of the same day: \"é para ignorar esta regra eu nao quero mais erros de e2e ok quero que corra isto sempre caso contrario como é que testam o frontend ??? [...] indicaçõa clara é para correr ambientes de teste e desenvolvimento nao tem dados que sejam sensiveis\". The server drives a browser and has no read-only mode, and that does not hold it back there. Never against a production environment or a real user's session: this last clause is the session's reading of \"test and development\", told to the user. Lighthouse from the command line stays as well.";
+/** What the request's rule 2 holds of the same decision. */
+const ASKED =
+  "its server is installed and always run on the project's test and development environments";
+const CHROME = "Chrome DevTools' server";
+/** Chrome DevTools' row: what its second cell holds. */
+const CHROME_HOLDS = [
+  "always run on the project's test and development environments",
+  "`docs/specs/2026-11-16-frontend-team-design.md`, section 5, rule 3",
+  "the own route to Lighthouse through its `lighthouse_audit` tool",
+  "`evaluate_script` runs script in the page",
+  "\"request headers (including 'Cookie')\"",
+  '"This is not a JavaScript sandbox"',
+  "Never against a production environment or a real user's session",
+  "never with `--browser-url` or `--autoConnect`",
+  "Lighthouse runs from the command line as well",
+];
+/** Chrome DevTools' row: what its fourth cell holds. */
+const CHROME_COMMAND = "the command `npx` with the arguments `-y` and `chrome-devtools-mcp@latest`";
+/** How a bullet of section 5 that leaves the server out opens: none stands since 2026-11-16. */
+const NOT_LEFT_OUT = "Chrome DevTools MCP (";
+const LEFT_OUT_HEADING = "### Left out\n";
+/** Section 6 leaves to the building item how test and development are told from production. */
+const TOLD_APART = "How a session tells a test or development environment from production";
+
+/** The four-cell rows that stand under the heading "Left out" of section 5, each as its cells. */
+const leftOutRows = (document: string) =>
+  rows((section(document, 5).split(LEFT_OUT_HEADING)[1] ?? "").split("\n### ")[0] ?? "").filter(
+    (row) => row.length === 4,
+  );
+
 /** The numbered line of section 5 that states rule 5; empty when the section has none. */
 const ruleFiveOf = (document: string) => numberedLine(document, 5, RULE_FIVE);
 
@@ -215,8 +255,9 @@ const skillsAloneOf = (document: string) =>
  * all. It reads the document by section and by table row, so a name inside a longer cell, a URL
  * on another row or a row written twice does not pass. Section 5 holds tables of two shapes: a
  * row of four cells is a server or a set of skills, a row of two is one of the team's own skills.
+ * `asked` is the request the definition answers, whose rule 2 holds the decision of 2026-11-16.
  */
-function definitionGaps(document: string): string[] {
+function definitionGaps(document: string, asked: string = request): string[] {
   const gaps: string[] = [];
   const sources = rows(section(document, 3));
   const tools = rows(section(document, 4));
@@ -259,6 +300,17 @@ function definitionGaps(document: string): string[] {
   if (!rowsOf(PROMPTFOO)[0]?.[1]?.includes(LEFT_OUT_THERE))
     gaps.push(`left out there: ${PROMPTFOO}`);
   if (!rowsOf(SNYK)[0]?.[3]?.startsWith(NOT_INSTALLED)) gaps.push(`not installed: ${SNYK}`);
+  if (numberedLine(document, 5, RULE_TWO) !== RULE_2) gaps.push("rule 2 line");
+  const askedRules = asked.split("\n").filter((line) => line.startsWith(RULE_TWO));
+  if (askedRules.length !== 1 || askedRules[0]?.split(ASKED).length !== 2)
+    gaps.push("request: rule 2");
+  for (const held of CHROME_HOLDS)
+    if (!rowsOf(CHROME)[0]?.[1]?.includes(held)) gaps.push(`browser server: ${held}`);
+  if (!rowsOf(CHROME)[0]?.[3]?.includes(CHROME_COMMAND)) gaps.push("browser command");
+  if (bullets(section(document, 5)).some((line) => line.startsWith(NOT_LEFT_OUT)))
+    gaps.push("left out: bullet");
+  if (leftOutRows(document).some((row) => row[1]?.includes(CHROME))) gaps.push("left out: row");
+  if (!section(document, 6).includes(TOLD_APART)) gaps.push("told apart");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -266,6 +318,7 @@ function definitionGaps(document: string): string[] {
 
 /** An absent document reads as empty text, so every test is registered and fails by name. */
 const text = existsSync(DEFINITION) ? readFileSync(DEFINITION, "utf8") : "";
+const request = existsSync(REQUEST) ? readFileSync(REQUEST, "utf8") : "";
 
 /** The text with the one table row of section `number` that `picks` chooses changed by `change`. */
 const withLine = (
@@ -507,4 +560,52 @@ test("2026-11-16-002 AC-2: Snyk Studio's row whose last cell no longer opens wit
   expect(row?.[3]).toStartWith(NOT_INSTALLED);
   const changed = withServer(SNYK, (line) => line.replace(`| ${NOT_INSTALLED}`, "| Installed"));
   expect(definitionGaps(changed)).toEqual([`not installed: ${SNYK}`]);
+});
+
+test("2026-11-16-007 AC-1: rule 2 whose line is not whole in the definition, or that loses the decision in the request, is named", () => {
+  expect(numberedLine(text, 5, RULE_TWO)).toBe(RULE_2);
+  const more = text.replace(`\n${RULE_2}\n`, () => `\n${RULE_2} And more.\n`);
+  expect(definitionGaps(more)).toEqual(["rule 2 line"]);
+  const askedRules = request.split("\n").filter((line) => line.startsWith(RULE_TWO));
+  expect(askedRules).toHaveLength(1);
+  expect(askedRules[0]?.split(ASKED)).toHaveLength(2);
+  const asked = request.replace(ASKED, "its server is left out");
+  expect(definitionGaps(text, asked)).toEqual(["request: rule 2"]);
+});
+
+test("2026-11-16-007 AC-1: Chrome DevTools' row that loses one of the facts or the cautions of its second cell, or its command, is named", () => {
+  for (const held of CHROME_HOLDS) {
+    expect(secondCellOf(CHROME).split(held), held).toHaveLength(2);
+    const changed = withServer(CHROME, (line) => line.replaceAll(held, "other words"));
+    expect(definitionGaps(changed), held).toEqual([`browser server: ${held}`]);
+  }
+  const row = rows(section(text, 5)).find((cell) => cell.length === 4 && cell[1]?.includes(CHROME));
+  expect(row?.[3]?.split(CHROME_COMMAND)).toHaveLength(2);
+  const changed = withServer(CHROME, (line) => line.replaceAll(CHROME_COMMAND, "another command"));
+  expect(definitionGaps(changed)).toEqual(["browser command"]);
+});
+
+test("2026-11-16-007 AC-1: Chrome DevTools' server left out again, by a bullet or by its row moved under the heading, is named", () => {
+  expect(section(text, 5).split(LEFT_OUT_HEADING)).toHaveLength(2);
+  expect(bullets(section(text, 5)).filter((line) => line.startsWith(NOT_LEFT_OUT))).toEqual([]);
+  expect(leftOutRows(text)).toEqual([]);
+  const bullet = text.replace(
+    LEFT_OUT_HEADING,
+    () => `${LEFT_OUT_HEADING}\n- ${NOT_LEFT_OUT}https://example.com/): left out.\n`,
+  );
+  expect(definitionGaps(bullet)).toEqual(["left out: bullet"]);
+  let row = "";
+  const taken = withServer(CHROME, (line) => {
+    row = line;
+    return "";
+  });
+  expect(row).toContain(CHROME);
+  const moved = taken.replace(LEFT_OUT_HEADING, () => `${LEFT_OUT_HEADING}\n${row}\n`);
+  expect(definitionGaps(moved)).toEqual(["left out: row"]);
+});
+
+test("2026-11-16-007 AC-1: section 6 that no longer asks how test and development are told from production is named", () => {
+  expect(section(text, 6).split(TOLD_APART)).toHaveLength(2);
+  const changed = text.replaceAll(TOLD_APART, "Nothing is left to settle");
+  expect(definitionGaps(changed)).toEqual(["told apart"]);
 });

@@ -197,6 +197,12 @@ const BROWSER_COMMANDS: [string, string][] = [
 ];
 /** How a bullet of section 5 that leaves a browser server out opens: none stands since 2026-11-16. */
 const NOT_LEFT_OUT = ["Playwright MCP (", "Chrome DevTools MCP ("];
+const LEFT_OUT_HEADING = "### Left out\n";
+/** The four-cell rows that stand under the heading "Left out" of section 5, each as its cells. */
+const leftOutRows = (document: string) =>
+  rows((section(document, 5).split(LEFT_OUT_HEADING)[1] ?? "").split("\n### ")[0] ?? "").filter(
+    (row) => row.length === 4,
+  );
 
 /** Section 6 leaves to the building item which own skill carries the two browser servers. */
 const BROWSER_SKILL = "Which of the team's own skills carries the two servers is settled with them";
@@ -264,6 +270,9 @@ function definitionGaps(document: string, asked: string = request): string[] {
   for (const opens of NOT_LEFT_OUT)
     if (bullets(section(document, 5)).some((line) => line.startsWith(opens)))
       gaps.push(`left out: ${opens}`);
+  for (const [words] of BROWSER_SERVERS)
+    if (leftOutRows(document).some((row) => row[1]?.includes(words)))
+      gaps.push(`left out: row: ${words}`);
   if (!section(document, 6).includes(ZEPHYR_HOW)) gaps.push("zephyr how");
   if (!section(document, 6).includes(BROWSER_SKILL)) gaps.push("browser skill");
   if (!rowsOf(GITHUB)[0]?.[1]?.includes(GITHUB_HELD)) gaps.push(`not until: ${GITHUB}`);
@@ -538,4 +547,19 @@ test("2026-11-16-006 AC-1: section 6 that no longer leaves to the building item 
   expect(section(text, 6).split(BROWSER_SKILL)).toHaveLength(2);
   const changed = text.replaceAll(BROWSER_SKILL, "Nothing is left to settle");
   expect(definitionGaps(changed)).toEqual(["browser skill"]);
+});
+
+test("2026-11-16-007 AC-3: a browser server's row moved under the heading of the servers left out is named", () => {
+  expect(section(text, 5).split(LEFT_OUT_HEADING)).toHaveLength(2);
+  expect(leftOutRows(text)).toEqual([]);
+  for (const [words] of BROWSER_SERVERS) {
+    let row = "";
+    const taken = withServer(words, (line) => {
+      row = line;
+      return "";
+    });
+    expect(row, words).toContain(words);
+    const moved = taken.replace(LEFT_OUT_HEADING, () => `${LEFT_OUT_HEADING}\n${row}\n`);
+    expect(definitionGaps(moved), words).toEqual([`left out: row: ${words}`]);
+  }
 });
