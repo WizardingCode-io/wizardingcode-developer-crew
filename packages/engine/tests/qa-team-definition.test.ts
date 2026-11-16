@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import {
+  bullets,
   cells,
   hasText,
   hasUrl,
@@ -16,6 +17,7 @@ import {
 } from "./definition-document.ts";
 
 const DEFINITION = new URL("../../../docs/specs/2026-11-15-qa-team-design.md", import.meta.url);
+const REQUEST = new URL("../../../docs/requests/2026-11-15-qa-team-definition.md", import.meta.url);
 
 const SUITE = "The suite in CI";
 const FUZZING = "Property-based testing and fuzzing";
@@ -82,6 +84,8 @@ const LAST_HEADING = "## 6. What the code needs, not decided here";
 const SERVERS: [string, string][] = [
   ["Laravel's own server", "https://laravel.com/docs/13.x/boost"],
   ["promptfoo's MCP server", "https://www.promptfoo.dev/docs/integrations/mcp-server/"],
+  ["Playwright's server", "https://github.com/microsoft/playwright-mcp"],
+  ["Chrome DevTools' server", "https://github.com/ChromeDevTools/chrome-devtools-mcp"],
   ["Cypress's Cloud MCP server", "https://docs.cypress.io/cloud/integrations/cloud-mcp"],
   ["SonarSource's server", "https://github.com/SonarSource/sonarqube-mcp-server"],
   ["Sentry's server", "https://github.com/getsentry/sentry-mcp"],
@@ -148,6 +152,55 @@ const RULES: [string, string, string[]][] = [
     ["GitHub's is installed without its two secret scanning tools"],
   ],
 ];
+/** Rule 2 of section 5, its whole line, which the request holds whole too: the user's decision of 2026-11-16. */
+const RULE_2_OPENS = "2. ";
+const RULE_2 =
+  "2. The server of a tool of point 2 is installed with the tool: Laravel Boost and promptfoo, as on the architects team. Playwright's and Chrome DevTools' servers are installed and always run on the project's test and development environments, the user's decision of 2026-11-16, written as rule 3 of the frontend team's definition (`docs/specs/2026-11-16-frontend-team-design.md`, section 5) and naming end-to-end errors in its own words: \"é para ignorar esta regra eu nao quero mais erros de e2e ok quero que corra isto sempre caso contrario como é que testam o frontend ??? [...] indicaçõa clara é para correr ambientes de teste e desenvolvimento nao tem dados que sejam sensiveis\". The rule on a server that writes or acts and has no read-only mode (rule 3) does not hold them back there, though both drive a browser and neither has a read-only mode. Never against a production environment or a real user's session: this last clause is the session's reading of \"test and development\", told to the user. Playwright from the command line and the crew's fixture stay as well. Bruno runs from the command line: its server sends real requests and has no read-only mode. Every other tool of point 2 runs from the command line.";
+const FRONTEND_RULE = "`docs/specs/2026-11-16-frontend-team-design.md`, section 5, rule 3";
+const ALWAYS = "always run on the project's test and development environments";
+const NEVER = "Never against a production environment or a real user's session";
+/** The two browser servers' rows: the row's words and what its second cell holds. */
+const BROWSER_SERVERS: [string, string[]][] = [
+  [
+    "Playwright's server",
+    [
+      ALWAYS,
+      FRONTEND_RULE,
+      "runs JavaScript in the page with `browser_evaluate`",
+      "so request headers with their cookies",
+      '"Playwright MCP is not a security boundary"',
+      "Playwright runs from the command line with the crew's fixture as well",
+      NEVER,
+      "never with `--extension`, `--cdp-endpoint` or `--user-data-dir`",
+    ],
+  ],
+  [
+    "Chrome DevTools' server",
+    [
+      ALWAYS,
+      FRONTEND_RULE,
+      "`evaluate_script` runs script in the page",
+      "\"request headers (including 'Cookie')\"",
+      '"This is not a JavaScript sandbox"',
+      NEVER,
+      "never with `--browser-url` or `--autoConnect`",
+    ],
+  ],
+];
+/** The two browser servers' commands: the row's words and what its fourth cell holds. */
+const BROWSER_COMMANDS: [string, string][] = [
+  ["Playwright's server", "`claude mcp add playwright npx @playwright/mcp@latest`"],
+  [
+    "Chrome DevTools' server",
+    "the command `npx` with the arguments `-y` and `chrome-devtools-mcp@latest`",
+  ],
+];
+/** How a bullet of section 5 that leaves a browser server out opens: none stands since 2026-11-16. */
+const NOT_LEFT_OUT = ["Playwright MCP (", "Chrome DevTools MCP ("];
+
+/** Section 6 leaves to the building item which own skill carries the two browser servers. */
+const BROWSER_SKILL = "Which of the team's own skills carries the two servers is settled with them";
+
 /** GitHub's server is held until its command is shown: the row's words and what its second cell holds. */
 const GITHUB = "GitHub's server";
 const GITHUB_HELD =
@@ -161,8 +214,9 @@ const LEFT_OUT_THERE = "The security team's definition leaves the server out";
  * reads the document by section and by table row, so a name inside a longer cell, a URL on
  * another row or a row written twice does not pass. Section 5 holds tables of two shapes: a row
  * of four cells is a server or a set of skills, a row of two is one of the team's own skills.
+ * `asked` is the request the definition answers, which holds rule 2's line whole.
  */
-function definitionGaps(document: string): string[] {
+function definitionGaps(document: string, asked: string = request): string[] {
   const gaps: string[] = [];
   const sources = rows(section(document, 3));
   const tools = rows(section(document, 4));
@@ -199,7 +253,19 @@ function definitionGaps(document: string): string[] {
     const rule = rules.find((line) => line.startsWith(opens)) ?? "";
     if (!holds.every((words) => rule.includes(words))) gaps.push(clause);
   }
+  if (rules.find((line) => line.startsWith(RULE_2_OPENS)) !== RULE_2) gaps.push("rule 2 line");
+  if (asked.split("\n").filter((asks) => asks === RULE_2).length !== 1)
+    gaps.push("request: rule 2 line");
+  for (const [words, holds] of BROWSER_SERVERS)
+    for (const held of holds)
+      if (!rowsOf(words)[0]?.[1]?.includes(held)) gaps.push(`browser server: ${words}: ${held}`);
+  for (const [words, command] of BROWSER_COMMANDS)
+    if (!rowsOf(words)[0]?.[3]?.includes(command)) gaps.push(`browser command: ${words}`);
+  for (const opens of NOT_LEFT_OUT)
+    if (bullets(section(document, 5)).some((line) => line.startsWith(opens)))
+      gaps.push(`left out: ${opens}`);
   if (!section(document, 6).includes(ZEPHYR_HOW)) gaps.push("zephyr how");
+  if (!section(document, 6).includes(BROWSER_SKILL)) gaps.push("browser skill");
   if (!rowsOf(GITHUB)[0]?.[1]?.includes(GITHUB_HELD)) gaps.push(`not until: ${GITHUB}`);
   if (!rowsOf(PROMPTFOO)[0]?.[1]?.includes(LEFT_OUT_THERE))
     gaps.push(`left out there: ${PROMPTFOO}`);
@@ -210,6 +276,7 @@ function definitionGaps(document: string): string[] {
 
 /** An absent document reads as empty text, so every test is registered and fails by name. */
 const text = existsSync(DEFINITION) ? readFileSync(DEFINITION, "utf8") : "";
+const request = existsSync(REQUEST) ? readFileSync(REQUEST, "utf8") : "";
 
 /** The text with the one table row of section `number` that `picks` chooses changed by `change`. */
 const withLine = (
@@ -283,6 +350,7 @@ test("2026-11-15-006 AC-1: a row more in a table read by its first cell is named
 
 test("2026-11-15-006 AC-1: a server or a set of skills whose URL leaves its own row is named, also when the URL stands on another row", () => {
   for (const [words, readAt] of SERVERS) {
+    expect(secondCellOf(words), words).toContain(words);
     const gap = `server url: ${words}`;
     const gone = withServer(words, (line) => line.replace(`| ${readAt} |`, "| |"));
     expect(definitionGaps(gone), words).toContain(gap);
@@ -295,8 +363,10 @@ test("2026-11-15-006 AC-1: a server or a set of skills whose URL leaves its own 
 });
 
 test("2026-11-15-006 AC-1: a server or a set of skills whose words pick two rows is named", () => {
-  for (const [words] of SERVERS)
+  for (const [words] of SERVERS) {
+    expect(secondCellOf(words), words).toContain(words);
     expect(definitionGaps(withServer(words, twice)), words).toContain(`server url: ${words}`);
+  }
 });
 
 test("2026-11-15-006 AC-1: a four-cell row the list does not name, with a URL or with none, or a row gone, is named", () => {
@@ -409,4 +479,63 @@ test("2026-11-16-001 AC-3: promptfoo's row that no longer says the security team
   expect(secondCellOf(PROMPTFOO).split(LEFT_OUT_THERE)).toHaveLength(2);
   const changed = withServer(PROMPTFOO, (line) => line.replaceAll(LEFT_OUT_THERE, "As elsewhere"));
   expect(definitionGaps(changed)).toEqual([`left out there: ${PROMPTFOO}`]);
+});
+
+test("2026-11-16-006 AC-1: rule 2 whose line is not whole, in the definition or in the request, is named", () => {
+  const rule = section(text, 5)
+    .split("\n")
+    .filter((line) => line.startsWith(RULE_2_OPENS));
+  expect(rule).toEqual([RULE_2]);
+  expect(request.split("\n").filter((asks) => asks === RULE_2)).toHaveLength(1);
+  const more = text.replace(`\n${RULE_2}\n`, () => `\n${RULE_2} And more.\n`);
+  expect(definitionGaps(more)).toEqual(["rule 2 line"]);
+  const asked = request.replace(`\n${RULE_2}\n`, () => `\n${RULE_2} And more.\n`);
+  expect(definitionGaps(text, asked)).toEqual(["request: rule 2 line"]);
+  const again = request.replace(`\n${RULE_2}\n`, () => `\n${RULE_2}\n${RULE_2}\n`);
+  expect(definitionGaps(text, again)).toEqual(["request: rule 2 line"]);
+});
+
+test("2026-11-16-006 AC-1: a browser server's row that loses one of the facts or the cautions of its second cell is named", () => {
+  for (const [words, holds] of BROWSER_SERVERS)
+    for (const held of holds) {
+      expect(secondCellOf(words).split(held), `${words}: ${held}`).toHaveLength(2);
+      const changed = withServer(words, (line) => line.replaceAll(held, "other words"));
+      expect(definitionGaps(changed), `${words}: ${held}`).toEqual([
+        `browser server: ${words}: ${held}`,
+      ]);
+    }
+});
+
+test("2026-11-16-006 AC-1: a browser server's row that loses its install command from its fourth cell is named", () => {
+  for (const [words, command] of BROWSER_COMMANDS) {
+    const fourth = rows(section(text, 5)).find(
+      (row) => row.length === 4 && row[1]?.includes(words),
+    );
+    expect(fourth?.[3]?.split(command), words).toHaveLength(2);
+    const changed = withServer(words, (line) => line.replaceAll(command, "another command"));
+    expect(definitionGaps(changed), words).toEqual([`browser command: ${words}`]);
+  }
+});
+
+test("2026-11-16-006 AC-1: a bullet of section 5 that leaves a browser server out again is named", () => {
+  expect(text).not.toBe("");
+  const heading = "### Left out\n";
+  expect(section(text, 5).split(heading)).toHaveLength(2);
+  for (const opens of NOT_LEFT_OUT) {
+    expect(
+      bullets(section(text, 5)).filter((line) => line.startsWith(opens)),
+      opens,
+    ).toEqual([]);
+    const changed = text.replace(
+      heading,
+      () => `${heading}\n- ${opens}https://example.com/): left out.\n`,
+    );
+    expect(definitionGaps(changed), opens).toEqual([`left out: ${opens}`]);
+  }
+});
+
+test("2026-11-16-006 AC-1: section 6 that no longer leaves to the building item which own skill carries the two browser servers is named", () => {
+  expect(section(text, 6).split(BROWSER_SKILL)).toHaveLength(2);
+  const changed = text.replaceAll(BROWSER_SKILL, "Nothing is left to settle");
+  expect(definitionGaps(changed)).toEqual(["browser skill"]);
 });

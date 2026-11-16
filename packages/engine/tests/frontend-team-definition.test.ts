@@ -744,6 +744,9 @@ const STATED: [number, string][] = [
     1,
     "After the definition and the building, the new team runs on a real project of the user's, of one of the ten kinds, with real photographs, and the result is judged blind against today's crew by the user and other people the user names, besides the gates.",
   ],
+  [5, 'in rule 5 the first sentence is the user\'s choice, "Destiladas, e impeccable instalado"'],
+  [6, "The QA team's definition carries the same order"],
+  [6, "How a session tells a test or development environment from production"],
 ];
 
 /** The numbered rules of section 5, each whole line, which the request holds whole too. */
@@ -754,7 +757,7 @@ const RULE_LINES: [string, string][] = [
   ],
   [
     "2. ",
-    "2. The standing rule of the other definitions on servers, taken by the session under the standing rules and told to the user on 2026-11-16, not asked: a server that writes or acts enters only with a reading mode and is installed with it, a server that can return a secret's value to the model is left out, and a server admitted whose reading alone the readings did not confirm is not installed until the building item shows that it only reads. A server that reads by construction enters: Nuxt UI's, Context7 and shadcn's, the last by the reading of 2026-11-16 of its source, which corrects the earlier note that listed it as writing. Figma's, Penpot's, Rive's, LottieFiles', Framer's and Webflow's were taken as writing with no switch: they are left out or held, and their tools are used from the command line. Each server enters only where the project uses its tool.",
+    "2. The standing rule of the other definitions on servers, taken by the session under the standing rules and told to the user on 2026-11-16, not asked: a server that writes or acts enters only with a reading mode and is installed with it, a server that can return a secret's value to the model is left out, and a server admitted whose reading alone the readings did not confirm is not installed until the building item shows that it only reads. A server that reads by construction enters: Nuxt UI's, Context7, shadcn's, Magic UI's and Motion's free server, shadcn's by the reading of 2026-11-16 of its source, which corrects the earlier note that listed it as writing. Figma's, Penpot's, Rive's, LottieFiles', Framer's and Webflow's were taken as writing with no switch: they are left out or held, and their tools are used from the command line. Each server enters only where the project uses its tool.",
   ],
   [
     "3. ",
@@ -810,7 +813,7 @@ const RULE_SENTENCES: [string, string][] = [
   ["1. ", "MobileBuildMCP is left out by this rule: it is Sentry's and not Apple's."],
   [
     "2. ",
-    "A server that reads by construction enters: Nuxt UI's, Context7 and shadcn's, the last by the reading of 2026-11-16 of its source, which corrects the earlier note that listed it as writing.",
+    "A server that reads by construction enters: Nuxt UI's, Context7, shadcn's, Magic UI's and Motion's free server, shadcn's by the reading of 2026-11-16 of its source, which corrects the earlier note that listed it as writing.",
   ],
   ["3. ", "The team tests every frontend change in a real browser through them."],
   [
