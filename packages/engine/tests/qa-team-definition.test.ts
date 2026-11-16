@@ -138,10 +138,15 @@ const WHERE_USED: [string, string][] = [
 ];
 /** Section 6 says the means of keeping Zephyr's tools off is not known. */
 const ZEPHYR_HOW = "did not read a switch";
-/** The user's two decisions of the consolidation, each on its numbered rule of section 5. */
+/** The user's decisions, each on its numbered rule of section 5: two of the consolidation, one of 2026-11-16. */
 const RULES: [string, string, string[]][] = [
   ["zephyr off", "3. ", ["Zephyr's tools stay off"]],
   ["rule 6", "6. ", ["promptfoo's and inspect-skills"]],
+  [
+    "github without secrets",
+    "4. ",
+    ["GitHub's is installed without its two secret scanning tools"],
+  ],
 ];
 /** GitHub's server is held until its command is shown: the row's words and what its second cell holds. */
 const GITHUB = "GitHub's server";
@@ -371,7 +376,7 @@ test("2026-11-15-007 AC-1: a set of a tool whose row no longer holds it to a pro
   }
 });
 
-test("2026-11-15-007 AC-1: a rule of section 5 that loses the user's decision of the consolidation is named", () => {
+test("2026-11-15-007 AC-1: a rule of section 5 that loses one of the user's decisions pinned on it is named", () => {
   for (const [clause, opens, holds] of RULES)
     for (const words of holds) {
       const rule = section(text, 5)

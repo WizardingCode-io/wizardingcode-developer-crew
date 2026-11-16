@@ -144,6 +144,7 @@ const RULES: [string, string][] = [
   ["5. ", "and the skills alone"],
   ["6. ", "without the server that acts on the account"],
   ["6. ", "no server that acts on an account enters by a set of skills or by another team's row"],
+  ["4. ", "GitHub's is installed without its two secret scanning tools"],
 ];
 const LAST_HEADING = "## 6. What the code needs, not decided here";
 

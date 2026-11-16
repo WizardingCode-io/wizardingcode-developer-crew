@@ -102,6 +102,8 @@ const SKILLS_ALONE_SETS = ["the Agent Toolkit for AWS", "Microsoft's azure-skill
 /** promptfoo's server stays here while the security team's definition leaves it out. */
 const PROMPTFOO = "promptfoo's MCP server";
 const LEFT_OUT_THERE = "The security team's definition leaves the server out";
+/** Snyk Studio is left out: the row's words. */
+const SNYK = "Snyk Studio";
 /** Rule 5 of section 5: a set that serves a service, a cloud or a tool enters only where it is used. */
 const RULE_FIVE = "5. ";
 const WHERE_USED = "only where the project already uses it";
@@ -256,6 +258,7 @@ function definitionGaps(document: string): string[] {
   if (!SKILLS_ALONE_SETS.every((words) => alone.includes(words))) gaps.push("skills alone: rule 5");
   if (!rowsOf(PROMPTFOO)[0]?.[1]?.includes(LEFT_OUT_THERE))
     gaps.push(`left out there: ${PROMPTFOO}`);
+  if (!rowsOf(SNYK)[0]?.[3]?.startsWith(NOT_INSTALLED)) gaps.push(`not installed: ${SNYK}`);
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -497,4 +500,11 @@ test("2026-11-16-001 AC-3: promptfoo's row that no longer says the security team
   expect(secondCellOf(PROMPTFOO).split(LEFT_OUT_THERE)).toHaveLength(2);
   const changed = withServer(PROMPTFOO, (line) => line.replaceAll(LEFT_OUT_THERE, "As elsewhere"));
   expect(definitionGaps(changed)).toEqual([`left out there: ${PROMPTFOO}`]);
+});
+
+test("2026-11-16-002 AC-2: Snyk Studio's row whose last cell no longer opens with not installed is named", () => {
+  const row = rows(section(text, 5)).find((cell) => cell.length === 4 && cell[1]?.includes(SNYK));
+  expect(row?.[3]).toStartWith(NOT_INSTALLED);
+  const changed = withServer(SNYK, (line) => line.replace(`| ${NOT_INSTALLED}`, "| Installed"));
+  expect(definitionGaps(changed)).toEqual([`not installed: ${SNYK}`]);
 });

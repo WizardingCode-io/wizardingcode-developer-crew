@@ -135,15 +135,32 @@ const OUT: [string, string][] = [
   ["Vault", VAULT],
   ["OWASP ZAP", 'ZAP\'s "MCP Integration" add-on'],
   ["promptfoo", "promptfoo's MCP server"],
+  ["Snyk Studio", "Snyk Studio"],
+  ["kubescape", "kubescape's MCP server"],
 ];
 /** Rule 2 holds the servers of the tools' table to the rule of rule 3: the user's decision of 2026-11-16. */
 const RULE_TWO = "2. ";
 const RULE_TWO_HOLDS =
   "a server of that table that writes or acts stays only with a reading mode and is installed with it, and one with none is left out and its tool runs from the command line, in the project's own local or test environment";
+/** Rule 2's sentences on the three servers left out and on the two that stay under a condition. */
+const RULE_TWO_NAMES = [
+  "OWASP ZAP's add-on, promptfoo's server and kubescape's server are left out",
+  "Semgrep's local server stays as the server alone, without the Guardian plugin and with metrics off",
+  "GitHub's server stays, in reading mode and without its two secret scanning tools",
+];
 /** GitHub's server is held until its command is shown: the row's words and what its second cell holds. */
 const GITHUB = "GitHub's official server";
 const GITHUB_HELD =
   "not installed until the building item shows the command with the read-only switch and without the secret scanning tools";
+/** Semgrep's local server is held until a scan is shown to return no secret: the row's words, the phrase. */
+const SEMGREP_LOCAL = "Semgrep's local MCP server";
+const SCAN_HELD =
+  "not installed until the building item shows that a scan returns no secret's value to the model";
+const SERVER_ALONE =
+  'installed as the server alone, without the "Semgrep Guardian" plugin and its remote form';
+/** How Trivy's server is installed: the row's words and what its second cell holds. */
+const TRIVY = "Trivy's MCP server";
+const TRIVY_HOLDS = ["without `--use-aqua-platform`", "at a pinned and verified version"];
 /** The line that installs Stripe's skills without the server: the row's words and what its last cell holds. */
 const STRIPE_SKILLS = "Stripe's skills";
 const LINE_USED = "`npx skills add https://docs.stripe.com` is the line used";
@@ -237,7 +254,13 @@ function definitionGaps(document: string): string[] {
     if (!ruleThree.includes(words)) gaps.push(`rule 3: ${words}`);
   if (!numberedLine(document, 5, RULE_TWO).includes(RULE_TWO_HOLDS))
     gaps.push(`rule 2: ${RULE_TWO_HOLDS}`);
+  for (const words of RULE_TWO_NAMES)
+    if (!numberedLine(document, 5, RULE_TWO).includes(words)) gaps.push(`rule 2: ${words}`);
   if (!rowsOf(GITHUB)[0]?.[1]?.includes(GITHUB_HELD)) gaps.push("not until: GitHub");
+  if (!rowsOf(SEMGREP_LOCAL)[0]?.[1]?.includes(SCAN_HELD)) gaps.push("not until: Semgrep local");
+  if (!rowsOf(SEMGREP_LOCAL)[0]?.[1]?.includes(SERVER_ALONE)) gaps.push("alone: Semgrep local");
+  for (const words of TRIVY_HOLDS)
+    if (!rowsOf(TRIVY)[0]?.[1]?.includes(words)) gaps.push(`how installed: Trivy: ${words}`);
   if (!rowsOf(STRIPE_SKILLS)[0]?.[3]?.includes(LINE_USED)) gaps.push("line used: Stripe's skills");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
@@ -485,4 +508,36 @@ test("2026-11-16-001 AC-1: the row of Stripe's skills that no longer says which 
   expect(last?.split(LINE_USED)).toHaveLength(2);
   const changed = withRow(5, STRIPE_SKILLS, (line) => line.replace(LINE_USED, "One line"));
   expect(definitionGaps(changed)).toEqual(["line used: Stripe's skills"]);
+});
+
+test("2026-11-16-002 AC-1: rule 2 that loses its sentence on what is left out, on Semgrep's local server or on GitHub's is named", () => {
+  const rule = numberedLine(text, 5, RULE_TWO);
+  for (const words of RULE_TWO_NAMES) {
+    expect(rule.split(words), words).toHaveLength(2);
+    const changed = text.replace(rule, () => rule.replaceAll(words, "other words"));
+    expect(definitionGaps(changed), words).toEqual([`rule 2: ${words}`]);
+  }
+});
+
+test("2026-11-16-002 AC-1: the row of Semgrep's local server that no longer holds it until a scan is shown is named", () => {
+  expect(secondCellOf(SEMGREP_LOCAL)?.split(SCAN_HELD)).toHaveLength(2);
+  expect(definitionGaps(withoutInSecond(SEMGREP_LOCAL, SCAN_HELD))).toEqual([
+    "not until: Semgrep local",
+  ]);
+});
+
+test("2026-11-16-002 AC-1: the row of Semgrep's local server that no longer keeps the plugin and its remote form out is named", () => {
+  expect(secondCellOf(SEMGREP_LOCAL)?.split(SERVER_ALONE)).toHaveLength(2);
+  expect(definitionGaps(withoutInSecond(SEMGREP_LOCAL, SERVER_ALONE))).toEqual([
+    "alone: Semgrep local",
+  ]);
+});
+
+test("2026-11-16-002 AC-1: Trivy's row that loses how its server is installed is named", () => {
+  for (const words of TRIVY_HOLDS) {
+    expect(secondCellOf(TRIVY)?.split(words), words).toHaveLength(2);
+    expect(definitionGaps(withoutInSecond(TRIVY, words)), words).toEqual([
+      `how installed: Trivy: ${words}`,
+    ]);
+  }
 });
