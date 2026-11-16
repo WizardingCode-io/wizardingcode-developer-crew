@@ -214,12 +214,14 @@ const READING_ALONE: [string, string][] = [
   ["one address per Datadog site", "reading alone is by Datadog's permission `mcp_read`"],
 ];
 
-/** The servers whose reading alone the research did not confirm: the row's words. */
 const NOT_UNTIL = "not installed until";
-const UNCONFIRMED = [
-  "inside the CLI (`infracost mcp`)",
-  "the route for a self-hosted Sentry",
-  "for the runs and the logs of GitHub Actions",
+const GITHUB_HELD =
+  "not installed until the building item shows the command with the read-only switch and without the secret scanning tools";
+/** The servers held until the building item shows something: the row's words and the words that hold it. */
+const UNCONFIRMED: [string, string][] = [
+  ["inside the CLI (`infracost mcp`)", NOT_UNTIL],
+  ["the route for a self-hosted Sentry", NOT_UNTIL],
+  ["for the runs and the logs of GitHub Actions", GITHUB_HELD],
 ];
 
 /** The line of section 5 that states a numbered rule; empty when the section has none. */
@@ -262,8 +264,8 @@ function definitionGaps(document: string): string[] {
     if (!ruleOf(document, opens).includes(words)) gaps.push(`rule ${opens.trim()} ${words}`);
   for (const [words, holds] of READING_ALONE)
     if (!rowsOf(words)[0]?.[1]?.includes(holds)) gaps.push(`reading alone: ${words}`);
-  for (const words of UNCONFIRMED)
-    if (!rowsOf(words)[0]?.[1]?.includes(NOT_UNTIL)) gaps.push(`not until: ${words}`);
+  for (const [words, holds] of UNCONFIRMED)
+    if (!rowsOf(words)[0]?.[1]?.includes(holds)) gaps.push(`not until: ${words}`);
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -439,12 +441,18 @@ test("2026-11-15-008 AC-1: a server's row that loses how reading alone is obtain
 });
 
 test("2026-11-15-008 AC-1: a server whose reading is not confirmed and whose row no longer holds it back is named", () => {
-  for (const words of UNCONFIRMED) {
-    expect(secondCellOf(words), words).toContain(NOT_UNTIL);
-    expect(definitionGaps(withoutInSecond(words, NOT_UNTIL)), words).toEqual([
-      `not until: ${words}`,
-    ]);
+  for (const [words, holds] of UNCONFIRMED) {
+    expect(secondCellOf(words), words).toContain(holds);
+    expect(definitionGaps(withoutInSecond(words, holds)), words).toEqual([`not until: ${words}`]);
   }
+});
+
+test("2026-11-16-001 AC-2: GitHub's row held by the switch alone, the secret scanning tools unsaid, is named", () => {
+  const words = "for the runs and the logs of GitHub Actions";
+  expect(secondCellOf(words).split(GITHUB_HELD)).toHaveLength(2);
+  const old = "not installed until the building item shows the command with the switch";
+  const changed = withServer(words, (line) => line.replaceAll(GITHUB_HELD, old));
+  expect(definitionGaps(changed)).toEqual([`not until: ${words}`]);
 });
 
 test("2026-11-15-008 AC-1: a section after the one on what the code needs is named", () => {

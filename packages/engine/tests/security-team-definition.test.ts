@@ -86,6 +86,7 @@ const LEFT_OUT = [
 const DECIDED = [
   "a server of this table that writes or acts stays only with a reading mode and is installed with it, and one that can return a secret's value to the model is left out",
   "Semgrep AppSec Platform's server is installed at its read-only address, Infisical's with its allow-list of reading tools and its values masked, and SonarQube's with `SONARQUBE_READ_ONLY=true`",
+  "GitGuardian's, Prowler's and Stripe's stay with a token or a key whose scopes, role or permissions only read, which was not the option recommended",
   "none of the three is installed until the building item shows that the writing tools are hidden",
   "Semgrep AppSec Platform's, GitGuardian's, Prowler's and Stripe's servers are not installed until the building item shows that no tool of the server returns a secret's value to the model",
   "1Password's and Doppler's servers and Burp Suite's extension are left out",
@@ -111,15 +112,15 @@ const READING_MODE: [string, string, string[]][] = [
     ["SONARQUBE_READ_ONLY=true", "the server is installed with it"],
   ],
 ];
-/** The servers whose reading alone is not shown yet: the name and the row's words. */
 const NOT_UNTIL = "not installed until the building item shows that the writing tools are hidden";
+/** The servers whose reading alone is not shown yet: the name and the row's words. */
 const HELD: [string, string][] = [
   ["GitGuardian", "GitGuardian's MCP server"],
   ["Prowler", "Prowler's Claude Code plugin"],
   ["Stripe", "Stripe's MCP server"],
 ];
-/** The servers not yet shown to keep a secret's value from the model: the name and the row's words. */
 const NO_SECRET = "no tool of the server returns a secret's value to the model";
+/** The servers not yet shown to keep a secret's value from the model: the name and the row's words. */
 const UNSHOWN: [string, string][] = [
   ["Semgrep AppSec Platform", "Semgrep's hosted MCP server"],
   ["GitGuardian", "GitGuardian's MCP server"],
@@ -132,7 +133,20 @@ const OUT: [string, string][] = [
   ["Doppler", "Doppler's MCP server"],
   ["Burp Suite", 'PortSwigger\'s "MCP Server" extension'],
   ["Vault", VAULT],
+  ["OWASP ZAP", 'ZAP\'s "MCP Integration" add-on'],
+  ["promptfoo", "promptfoo's MCP server"],
 ];
+/** Rule 2 holds the servers of the tools' table to the rule of rule 3: the user's decision of 2026-11-16. */
+const RULE_TWO = "2. ";
+const RULE_TWO_HOLDS =
+  "a server of that table that writes or acts stays only with a reading mode and is installed with it, and one with none is left out and its tool runs from the command line, in the project's own local or test environment";
+/** GitHub's server is held until its command is shown: the row's words and what its second cell holds. */
+const GITHUB = "GitHub's official server";
+const GITHUB_HELD =
+  "not installed until the building item shows the command with the read-only switch and without the secret scanning tools";
+/** The line that installs Stripe's skills without the server: the row's words and what its last cell holds. */
+const STRIPE_SKILLS = "Stripe's skills";
+const LINE_USED = "`npx skills add https://docs.stripe.com` is the line used";
 
 /** The numbered line of section 5 that states rule 3; empty when the section has none. */
 const ruleThreeOf = (document: string) => numberedLine(document, 5, RULE_THREE);
@@ -221,6 +235,10 @@ function definitionGaps(document: string): string[] {
   const ruleThree = ruleThreeOf(document);
   for (const words of [...LEFT_OUT, ...DECIDED])
     if (!ruleThree.includes(words)) gaps.push(`rule 3: ${words}`);
+  if (!numberedLine(document, 5, RULE_TWO).includes(RULE_TWO_HOLDS))
+    gaps.push(`rule 2: ${RULE_TWO_HOLDS}`);
+  if (!rowsOf(GITHUB)[0]?.[1]?.includes(GITHUB_HELD)) gaps.push("not until: GitHub");
+  if (!rowsOf(STRIPE_SKILLS)[0]?.[3]?.includes(LINE_USED)) gaps.push("line used: Stripe's skills");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -448,4 +466,23 @@ test("2026-11-15-009 AC-1: rule 3 that loses a decision on the servers that writ
     const changed = text.replace(rule, () => rule.replaceAll(words, "other words"));
     expect(definitionGaps(changed), words).toEqual([`rule 3: ${words}`]);
   }
+});
+
+test("2026-11-16-001 AC-1: rule 2 that loses the decision on the servers of the tools' table is named", () => {
+  const rule = numberedLine(text, 5, RULE_TWO);
+  expect(rule.split(RULE_TWO_HOLDS)).toHaveLength(2);
+  const changed = text.replace(rule, () => rule.replaceAll(RULE_TWO_HOLDS, "other words"));
+  expect(definitionGaps(changed)).toEqual([`rule 2: ${RULE_TWO_HOLDS}`]);
+});
+
+test("2026-11-16-001 AC-1: GitHub's row that no longer holds the server until its command is shown is named", () => {
+  expect(secondCellOf(GITHUB)?.split(GITHUB_HELD)).toHaveLength(2);
+  expect(definitionGaps(withoutInSecond(GITHUB, GITHUB_HELD))).toEqual(["not until: GitHub"]);
+});
+
+test("2026-11-16-001 AC-1: the row of Stripe's skills that no longer says which line is used is named", () => {
+  const last = rows(section(text, 5)).find((row) => row[1]?.includes(STRIPE_SKILLS))?.[3];
+  expect(last?.split(LINE_USED)).toHaveLength(2);
+  const changed = withRow(5, STRIPE_SKILLS, (line) => line.replace(LINE_USED, "One line"));
+  expect(definitionGaps(changed)).toEqual(["line used: Stripe's skills"]);
 });

@@ -143,6 +143,13 @@ const RULES: [string, string, string[]][] = [
   ["zephyr off", "3. ", ["Zephyr's tools stay off"]],
   ["rule 6", "6. ", ["promptfoo's and inspect-skills"]],
 ];
+/** GitHub's server is held until its command is shown: the row's words and what its second cell holds. */
+const GITHUB = "GitHub's server";
+const GITHUB_HELD =
+  "not installed until the building item shows the command with the read-only switch and without the secret scanning tools";
+/** promptfoo's server stays here while the security team's definition leaves it out. */
+const PROMPTFOO = "promptfoo's MCP server";
+const LEFT_OUT_THERE = "The security team's definition leaves the server out";
 
 /**
  * Every clause of the QA team's definition the text fails, by name; empty when it holds all. It
@@ -188,6 +195,9 @@ function definitionGaps(document: string): string[] {
     if (!holds.every((words) => rule.includes(words))) gaps.push(clause);
   }
   if (!section(document, 6).includes(ZEPHYR_HOW)) gaps.push("zephyr how");
+  if (!rowsOf(GITHUB)[0]?.[1]?.includes(GITHUB_HELD)) gaps.push(`not until: ${GITHUB}`);
+  if (!rowsOf(PROMPTFOO)[0]?.[1]?.includes(LEFT_OUT_THERE))
+    gaps.push(`left out there: ${PROMPTFOO}`);
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -382,4 +392,16 @@ test("2026-11-15-007 AC-1: section 6 that no longer says how Zephyr's tools are 
 test("2026-11-15-006 AC-1: a section after the one on what the code needs is named", () => {
   expect(text).not.toBe("");
   expect(definitionGaps(`${text}\n## 7. More\n\nMore.\n`)).toContain("last section");
+});
+
+test("2026-11-16-001 AC-2: GitHub's row that no longer holds the server until its command is shown is named", () => {
+  expect(secondCellOf(GITHUB).split(GITHUB_HELD)).toHaveLength(2);
+  const changed = withServer(GITHUB, (line) => line.replaceAll(GITHUB_HELD, "installed at once"));
+  expect(definitionGaps(changed)).toEqual([`not until: ${GITHUB}`]);
+});
+
+test("2026-11-16-001 AC-3: promptfoo's row that no longer says the security team's definition leaves the server out is named", () => {
+  expect(secondCellOf(PROMPTFOO).split(LEFT_OUT_THERE)).toHaveLength(2);
+  const changed = withServer(PROMPTFOO, (line) => line.replaceAll(LEFT_OUT_THERE, "As elsewhere"));
+  expect(definitionGaps(changed)).toEqual([`left out there: ${PROMPTFOO}`]);
 });

@@ -53,6 +53,10 @@ const SERVERS: [string, string][] = [
 ];
 
 const ASTRAL = "Astral's plugin";
+/** GitHub's server is held until its command is shown: the row's words and what its second cell holds. */
+const GITHUB = "GitHub's official server";
+const GITHUB_HELD =
+  "not installed until the building item shows the command with the read-only switch and without the secret scanning tools";
 
 /** The name a server's or a skill's pair fails under: Astral's is the clause this item corrected. */
 function gapOf(words: string): string {
@@ -96,6 +100,7 @@ function definitionGaps(text: string): string[] {
   const guide =
     text.split("\n").find((line) => line.startsWith("`https://dominikwro.github.io/` is")) ?? "";
   if (!guide.includes(GUIDE_PAGE)) gaps.push("python guide");
+  if (!rowOf(GITHUB)?.[1]?.includes(GITHUB_HELD)) gaps.push("github held");
   const headings = text.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -217,4 +222,11 @@ test("2026-11-14-008 AC-2: the Python guide's paragraph without the page its fac
 
 test("2026-11-14-008 AC-2: a section after section 6 is named", () => {
   expect(definitionGaps(`${text}\n## 7. More\n\ntext\n`)).toContain("last section");
+});
+
+test("2026-11-16-001 AC-2: GitHub's row that no longer holds the server until its command is shown is named", () => {
+  const second = rows(section(text, 5)).find((row) => row[1]?.includes(GITHUB))?.[1];
+  expect(second?.split(GITHUB_HELD)).toHaveLength(2);
+  const changed = withLine(5, GITHUB, (line) => line.replace(GITHUB_HELD, "installed at once"));
+  expect(definitionGaps(changed)).toEqual(["github held"]);
 });
