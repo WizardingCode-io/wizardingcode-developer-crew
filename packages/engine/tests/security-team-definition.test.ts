@@ -8,6 +8,7 @@ import {
   NOT_OPENED_MARK as MARK,
   markGaps,
   namedRowGaps,
+  numberedLine,
   rows,
   section,
   withChangedLine,
@@ -77,13 +78,64 @@ const VAULT = "HashiCorp's Vault MCP server";
 const NOT_INSTALLED = "Not installed";
 /** Rule 3 says a server that acts on an account or can show a secret does not enter by it. */
 const RULE_THREE = "3. ";
-const LEFT_OUT = ["HashiCorp Vault's server is left out", "the skills alone are installed"];
+const LEFT_OUT = [
+  "HashiCorp Vault's server is left out",
+  "of Cloudflare's plugin the skills alone are installed",
+];
+/** The user's decisions of 2026-11-15 on the other servers that write or act, in rule 3's words. */
+const DECIDED = [
+  "a server of this table that writes or acts stays only with a reading mode and is installed with it, and one that can return a secret's value to the model is left out",
+  "Semgrep AppSec Platform's server is installed at its read-only address, Infisical's with its allow-list of reading tools and its values masked, and SonarQube's with `SONARQUBE_READ_ONLY=true`",
+  "none of the three is installed until the building item shows that the writing tools are hidden",
+  "Semgrep AppSec Platform's, GitGuardian's, Prowler's and Stripe's servers are not installed until the building item shows that no tool of the server returns a secret's value to the model",
+  "1Password's and Doppler's servers and Burp Suite's extension are left out",
+];
+/** The servers that stay with a reading mode: the name, the row's words, what its second cell holds. */
+const READING_MODE: [string, string, string[]][] = [
+  [
+    "Semgrep AppSec Platform",
+    "Semgrep's hosted MCP server",
+    ["https://semgrep.dev/api/mcp/read-only"],
+  ],
+  [
+    "Infisical",
+    "Infisical's MCP server",
+    [
+      "INFISICAL_ENABLED_TOOLS=list-projects,list-secrets,get-secret,list-folders",
+      "INFISICAL_MASK_SECRET_VALUES=true",
+    ],
+  ],
+  [
+    "SonarQube",
+    "SonarSource's MCP server",
+    ["SONARQUBE_READ_ONLY=true", "the server is installed with it"],
+  ],
+];
+/** The servers whose reading alone is not shown yet: the name and the row's words. */
+const NOT_UNTIL = "not installed until the building item shows that the writing tools are hidden";
+const HELD: [string, string][] = [
+  ["GitGuardian", "GitGuardian's MCP server"],
+  ["Prowler", "Prowler's Claude Code plugin"],
+  ["Stripe", "Stripe's MCP server"],
+];
+/** The servers not yet shown to keep a secret's value from the model: the name and the row's words. */
+const NO_SECRET = "no tool of the server returns a secret's value to the model";
+const UNSHOWN: [string, string][] = [
+  ["Semgrep AppSec Platform", "Semgrep's hosted MCP server"],
+  ["GitGuardian", "GitGuardian's MCP server"],
+  ["Prowler", "Prowler's Claude Code plugin"],
+  ["Stripe", "Stripe's MCP server"],
+];
+/** The servers that are left out: the name and the row's words. */
+const OUT: [string, string][] = [
+  ["1Password", "1Password's Claude Code plugin"],
+  ["Doppler", "Doppler's MCP server"],
+  ["Burp Suite", 'PortSwigger\'s "MCP Server" extension'],
+  ["Vault", VAULT],
+];
 
 /** The numbered line of section 5 that states rule 3; empty when the section has none. */
-const ruleThreeOf = (document: string) =>
-  section(document, 5)
-    .split("\n")
-    .find((line) => line.startsWith(RULE_THREE)) ?? "";
+const ruleThreeOf = (document: string) => numberedLine(document, 5, RULE_THREE);
 
 /** A row of section 5: words of its second cell and the URL of its "Read at" cell. */
 const SERVERS: [string, string][] = [
@@ -157,9 +209,18 @@ function definitionGaps(document: string): string[] {
     if (!library.includes(domain)) gaps.push(`community exception: ${domain}`);
   if (!(rowsOf(AUDIT)[0]?.[1] ?? "").includes(AUDIT_WHEN)) gaps.push("audit when");
   if (!rowsOf(CLOUDFLARE)[0]?.[1]?.includes(SKILLS_ALONE)) gaps.push("skills alone: Cloudflare");
-  if (!rowsOf(VAULT)[0]?.[3]?.startsWith(NOT_INSTALLED)) gaps.push("not installed: Vault");
+  for (const [name, words] of OUT)
+    if (!rowsOf(words)[0]?.[3]?.startsWith(NOT_INSTALLED)) gaps.push(`not installed: ${name}`);
+  for (const [name, words, held] of READING_MODE)
+    if (!held.every((mode) => rowsOf(words)[0]?.[1]?.includes(mode)))
+      gaps.push(`reading mode: ${name}`);
+  for (const [name, words] of HELD)
+    if (!rowsOf(words)[0]?.[1]?.includes(NOT_UNTIL)) gaps.push(`not until: ${name}`);
+  for (const [name, words] of UNSHOWN)
+    if (!rowsOf(words)[0]?.[1]?.includes(NO_SECRET)) gaps.push(`no secret shown: ${name}`);
   const ruleThree = ruleThreeOf(document);
-  for (const words of LEFT_OUT) if (!ruleThree.includes(words)) gaps.push(`rule 3: ${words}`);
+  for (const words of [...LEFT_OUT, ...DECIDED])
+    if (!ruleThree.includes(words)) gaps.push(`rule 3: ${words}`);
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -179,6 +240,17 @@ const withRow = (number: number, words: string, change: (line: string) => string
   );
 
 const twice = (line: string) => `${line}\n${line}`;
+
+/** The text with `held` taken off the second cell of the row of section 5 that holds `words`. */
+const withoutInSecond = (words: string, held: string) =>
+  withRow(5, words, (line) => {
+    const [first, second, ...rest] = line.split(" | ");
+    return [first, (second ?? "").replaceAll(held, "other words"), ...rest].join(" | ");
+  });
+
+/** The second cell of the row of section 5 that holds `words`. */
+const secondCellOf = (words: string) =>
+  rows(section(text, 5)).find((row) => row[1]?.includes(words))?.[1];
 
 test("2026-11-15-001 AC-1: the security team's definition holds every clause", () => {
   expect(definitionGaps(text)).toEqual([]);
@@ -331,6 +403,48 @@ test("2026-11-15-008 AC-3: Cloudflare's row without the skills alone, Vault's ro
   const rule = ruleThreeOf(text);
   for (const words of LEFT_OUT) {
     expect(rule, words).toContain(words);
+    const changed = text.replace(rule, () => rule.replaceAll(words, "other words"));
+    expect(definitionGaps(changed), words).toEqual([`rule 3: ${words}`]);
+  }
+});
+
+test("2026-11-15-009 AC-1: a server that stays whose second cell loses its reading mode is named", () => {
+  for (const [name, words, held] of READING_MODE)
+    for (const mode of held) {
+      expect(secondCellOf(words), mode).toContain(mode);
+      expect(definitionGaps(withoutInSecond(words, mode)), mode).toEqual([`reading mode: ${name}`]);
+    }
+});
+
+test("2026-11-15-009 AC-1: a server held until its reading alone is shown whose second cell no longer says so is named", () => {
+  for (const [name, words] of HELD) {
+    expect(secondCellOf(words), name).toContain(NOT_UNTIL);
+    expect(definitionGaps(withoutInSecond(words, NOT_UNTIL)), name).toEqual([`not until: ${name}`]);
+  }
+});
+
+test("2026-11-15-009 AC-1: a server not yet shown to return no secret whose second cell no longer says so is named", () => {
+  for (const [name, words] of UNSHOWN) {
+    expect(secondCellOf(words), name).toContain(NO_SECRET);
+    expect(definitionGaps(withoutInSecond(words, NO_SECRET)), name).toEqual([
+      `no secret shown: ${name}`,
+    ]);
+  }
+});
+
+test("2026-11-15-009 AC-1: a server left out whose last cell no longer opens with not installed is named", () => {
+  const five = rows(section(text, 5));
+  for (const [name, words] of OUT) {
+    expect(five.find((row) => row[1]?.includes(words))?.[3], name).toStartWith(NOT_INSTALLED);
+    const changed = withRow(5, words, (line) => line.replace(`| ${NOT_INSTALLED}`, "| Installed"));
+    expect(definitionGaps(changed), name).toEqual([`not installed: ${name}`]);
+  }
+});
+
+test("2026-11-15-009 AC-1: rule 3 that loses a decision on the servers that write or act is named", () => {
+  const rule = ruleThreeOf(text);
+  for (const words of DECIDED) {
+    expect(rule.split(words), words).toHaveLength(2);
     const changed = text.replace(rule, () => rule.replaceAll(words, "other words"));
     expect(definitionGaps(changed), words).toEqual([`rule 3: ${words}`]);
   }

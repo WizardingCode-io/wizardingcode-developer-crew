@@ -10,6 +10,7 @@ import {
   markGaps,
   NOT_OPENED_MARK,
   namedRowGaps,
+  numberedLine,
   rows,
   section,
   withChangedLine,
@@ -222,10 +223,7 @@ const UNCONFIRMED = [
 ];
 
 /** The line of section 5 that states a numbered rule; empty when the section has none. */
-const ruleOf = (document: string, opens: string) =>
-  section(document, 5)
-    .split("\n")
-    .find((line) => line.startsWith(opens)) ?? "";
+const ruleOf = (document: string, opens: string) => numberedLine(document, 5, opens);
 
 /**
  * Every clause of the DevOps team's definition the text fails, by name; empty when it holds all.

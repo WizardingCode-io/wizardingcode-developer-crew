@@ -10,6 +10,7 @@ import {
   markGaps,
   NOT_OPENED_MARK,
   namedRowGaps,
+  numberedLine,
   rows,
   section,
   withChangedLine,
@@ -96,6 +97,8 @@ const LAST_HEADING = "## 6. What the code needs, not decided here";
 const SKILLS_ALONE = "Installed as the skills alone";
 const SKILLS_ALONE_RULE = "the skills alone are installed";
 const WITHOUT_SERVER = ["The Agent Toolkit for AWS", "Microsoft's azure-skills"];
+/** The two sets as the sentence of rule 5 on the skills alone names them. */
+const SKILLS_ALONE_SETS = ["the Agent Toolkit for AWS", "Microsoft's azure-skills"];
 /** Rule 5 of section 5: a set that serves a service, a cloud or a tool enters only where it is used. */
 const RULE_FIVE = "5. ";
 const WHERE_USED = "only where the project already uses it";
@@ -188,16 +191,19 @@ const SERVERS: [string, string][] = [
 ];
 
 /** The numbered line of section 5 that states rule 5; empty when the section has none. */
-const ruleFiveOf = (document: string) =>
-  section(document, 5)
-    .split("\n")
-    .find((line) => line.startsWith(RULE_FIVE)) ?? "";
+const ruleFiveOf = (document: string) => numberedLine(document, 5, RULE_FIVE);
 
 /** The one sentence of rule 5 that says where a set is installed; empty when the rule has none. */
 const whereUsedOf = (document: string) =>
   ruleFiveOf(document)
     .split(". ")
     .find((sentence) => sentence.includes(WHERE_USED)) ?? "";
+
+/** The one sentence of rule 5 that says the skills alone are installed; empty when the rule has none. */
+const skillsAloneOf = (document: string) =>
+  ruleFiveOf(document)
+    .split(". ")
+    .find((sentence) => sentence.includes(SKILLS_ALONE_RULE)) ?? "";
 
 /**
  * Every clause of the architects team's definition the text fails, by name; empty when it holds
@@ -243,7 +249,8 @@ function definitionGaps(document: string): string[] {
   if (!held || reopened) gaps.push("where used");
   for (const words of WITHOUT_SERVER)
     if (!rowsOf(words)[0]?.[1]?.includes(SKILLS_ALONE)) gaps.push(`skills alone: ${words}`);
-  if (!ruleFiveOf(document).includes(SKILLS_ALONE_RULE)) gaps.push("skills alone: rule 5");
+  const alone = skillsAloneOf(document);
+  if (!SKILLS_ALONE_SETS.every((words) => alone.includes(words))) gaps.push("skills alone: rule 5");
   const headings = document.split("\n").filter((line) => line.startsWith("## "));
   if (headings.at(-1) !== LAST_HEADING) gaps.push("last section");
   return gaps;
@@ -421,10 +428,10 @@ test("2026-11-15-005 AC-2: a section after the one on what the code needs is nam
 });
 
 test("2026-11-15-006 AC-2: rule 5 that loses where a set is installed, or one of the four sets, is named", () => {
-  const rule = ruleFiveOf(text);
+  const sentence = whereUsedOf(text);
   for (const words of [WHERE_USED, ...WHERE_USED_SETS]) {
-    expect(rule, words).toContain(words);
-    const changed = text.replace(rule, () => rule.replaceAll(words, "other words"));
+    expect(sentence, words).toContain(words);
+    const changed = text.replace(sentence, () => sentence.replaceAll(words, "other words"));
     expect(definitionGaps(changed), words).toEqual(["where used"]);
   }
 });
@@ -466,4 +473,13 @@ test("2026-11-15-008 AC-2: a cloud's set whose row, or rule 5, no longer says th
   expect(rule).toContain(SKILLS_ALONE_RULE);
   const loosened = text.replace(rule, () => rule.replaceAll(SKILLS_ALONE_RULE, "the plugin is"));
   expect(definitionGaps(loosened)).toEqual(["skills alone: rule 5"]);
+});
+
+test("2026-11-15-009 AC-2: a cloud's set taken off the sentence of rule 5 on the skills alone is named", () => {
+  const sentence = skillsAloneOf(text);
+  for (const name of SKILLS_ALONE_SETS) {
+    expect(sentence, name).toContain(name);
+    const changed = text.replace(sentence, () => sentence.replaceAll(name, "one set"));
+    expect(definitionGaps(changed), name).toEqual(["skills alone: rule 5"]);
+  }
 });

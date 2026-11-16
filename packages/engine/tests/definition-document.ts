@@ -17,6 +17,15 @@ export function section(text: string, number: number): string {
   return parts.find((part) => part.startsWith(`## ${number}. `)) ?? "";
 }
 
+/**
+ * The first line of section `number` that starts with `opens`, as the line of a numbered rule
+ * does (`"3. "`); empty when the section has none.
+ */
+export function numberedLine(text: string, number: number, opens: string): string {
+  const lines = section(text, number).split("\n");
+  return lines.find((line) => line.startsWith(opens)) ?? "";
+}
+
 /** The cells of one table line. */
 export function cells(line: string): string[] {
   return line
