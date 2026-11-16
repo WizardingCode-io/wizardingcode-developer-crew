@@ -595,6 +595,10 @@ const STATED: [number, string][] = [
     1,
     "So \"above 90%\" is said of a set of the client's real cases, a closed set of tools and flows, the first decision counted apart from the task's outcome, and each case run several times and counted right only if right every time.",
   ],
+  [
+    5,
+    "or, the MCP Inspector, is a test client and not a server the agent connects to, which writes where the server it is pointed at writes",
+  ],
 ];
 
 /** The twelve rules of section 5, each whole line, which the request holds whole too. */
@@ -613,7 +617,7 @@ const RULE_LINES: [string, string][] = [
   ],
   [
     "4. ",
-    "4. For this team alone, the user's answer of 2026-11-16 being \"Sim, mas B mais aberto\": in the project's own local or test environment the agent may also connect to the servers of the components it is building (memory, vector store, observability and evaluation), even where they write, because testing the write is part of the work, and never against the client's real data. Evaluation counts as a component the team builds by the user's decision of 2026-11-16 on promptfoo's server, \"Entra em local\", which was not the option recommended. By this opening, each only where the project uses the tool: Langfuse's, Opik's, Phoenix's, promptfoo's, Graphiti's, Cognee's, Hindsight's, Chroma's, Milvus's, Redis's and the Elastic Agent Builder endpoint, with the MCP Inspector pointed at the server under test. Chroma's server is stalled, with no change since 2025-09-17, and stays only where the project already uses Chroma, never proposed on a new project: the user's decision of 2026-11-16, \"Só onde já se usa\", the rule already given for stopped tools. A server that writes with no reading mode on its page, and that no page read shows how to point at a local or self-hosted instance, is left out: Mem0's, Braintrust's, Supermemory's, Pinecone's, Helicone's and Vercel's.",
+    "4. For this team alone, the user's answer of 2026-11-16 being \"Sim, mas B mais aberto\": in the project's own local or test environment the agent may also connect to the servers of the components it is building (memory, vector store, observability and evaluation), even where they write, because testing the write is part of the work, and never against the client's real data. Evaluation counts as a component the team builds by the user's decision of 2026-11-16 on promptfoo's server, \"Entra em local\", which was not the option recommended. By this opening, each only where the project uses the tool: Langfuse's, Opik's, Phoenix's, promptfoo's, Graphiti's, Cognee's, Hindsight's, Chroma's, Milvus's, Redis's and the Elastic Agent Builder endpoint, with the MCP Inspector pointed at the server under test. The same opening reaches the local or test form that six rows of the tables under rule 3 give, each as its row says: Weights & Biases', Qdrant's, Weaviate's, MongoDB's, Supabase's and OpenSearch's. Chroma's server is stalled, with no change since 2025-09-17, and stays only where the project already uses Chroma, never proposed on a new project: the user's decision of 2026-11-16, \"Só onde já se usa\", the rule already given for stopped tools. A server that writes with no reading mode on its page, and that no page read shows how to point at a local or self-hosted instance, is left out: Mem0's, Braintrust's, Supermemory's, Pinecone's, Helicone's and Vercel's.",
   ],
   [
     "5. ",
