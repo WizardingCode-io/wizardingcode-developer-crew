@@ -13,6 +13,7 @@ import {
   readSurface,
   type SurfaceRecord,
 } from "./design.ts";
+import { readChoices, readKind, staleEvidence } from "./design-proof.ts";
 import { allWatchedFiles, gitShowFile } from "./fingerprint.ts";
 import { nowIso, regularFileSize, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
@@ -695,14 +696,46 @@ function processHits(
     verdict: "defect",
     allowed: null,
   });
+  const hits: LintHit[] = [];
   if (!surface)
-    return [at("process/no-surface", `crew design ${work.id} surface <mode> --invention <amount>`)];
-  const problems: ProcessProblem[] = designProblems(paths, work.id, surface);
-  if (surface.invention === "extend") {
-    const why = extendRefusal(paths, work);
-    if (why) problems.push({ rule: "process/no-surface", text: why });
+    hits.push(
+      at("process/no-surface", `crew design ${work.id} surface <mode> --invention <amount>`),
+    );
+  // The kind and the choices (item 2026-11-16-008) are asked whatever the surface says, so one run
+  // names everything the change still owes.
+  const kind = readKind(paths);
+  if (!kind.record)
+    hits.push(
+      at(
+        "process/no-kind",
+        kind.untrusted
+          ? "the record is not trusted: declare it again"
+          : `crew design ${work.id} kind <kind> --metric "<metric>"`,
+      ),
+    );
+  if (surface) {
+    const problems: ProcessProblem[] = designProblems(paths, work.id, surface);
+    if (surface.invention === "extend") {
+      const why = extendRefusal(paths, work);
+      if (why) problems.push({ rule: "process/no-surface", text: why });
+    }
+    hits.push(...problems.map((p) => at(p.rule, p.text)));
   }
-  return problems.map((p) => at(p.rule, p.text));
+  const held = readChoices(paths, work.id);
+  if (held.untrusted)
+    hits.push(at("process/no-choice", `choices.json is not trusted (crew accept ${work.id})`));
+  else if (surface && surface.invention !== "extend" && held.choices.length === 0)
+    hits.push(
+      at("process/no-choice", `crew design ${work.id} choice add "<choice>" --label <label>`),
+    );
+  for (const choice of staleEvidence(paths, held.choices))
+    hits.push(
+      at(
+        "process/choice-evidence",
+        `${choice.id}: ${choice.evidence} is no longer a regular file inside the project`,
+      ),
+    );
+  return hits;
 }
 
 /** What a gate run takes from one design-lint run. */

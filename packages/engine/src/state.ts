@@ -349,8 +349,8 @@ export function isWorktreeOf(root: string, main: string): boolean {
 }
 
 /**
- * A worktree's policy and profile, taken from its main checkout when it lacks them, at the first
- * engine command (session lanes, AC-5): the main is verified first, each file read as protected in
+ * A worktree's policy, profile and design kind, taken from its main checkout when it lacks them,
+ * at the first engine command (session lanes, AC-5): the main is verified first, each file read as protected in
  * the main's own paths and copied byte for byte under the worktree's integrity record; a file the
  * worktree has is never overwritten, a file the main lacks copies nothing. Returns what was not
  * copied and why, for the command to say.
@@ -358,7 +358,7 @@ export function isWorktreeOf(root: string, main: string): boolean {
 export function adoptMainFiles(paths: CrewPaths): string[] {
   const main = worktreeMainRoot(paths.root);
   if (!main) return [];
-  const names = ["policy.json", "profile.json"].filter(
+  const names = ["policy.json", "profile.json", "design-project.json"].filter(
     (name) => !existsSync(join(paths.crewDir, name)) && existsSync(join(main, ".crew", name)),
   );
   if (!names.length) return [];

@@ -3,6 +3,7 @@
 import { expect, test } from "bun:test";
 import { designReasons, readSurface, recordSurface } from "../src/design.ts";
 import { lintInterfaceFiles, runDesignLint } from "../src/design-lint.ts";
+import { declareKind } from "../src/design-proof.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { createWork, saveWork } from "../src/work.ts";
@@ -171,6 +172,7 @@ test("AC-4: surface and world name each missing or malformed file, extend needs 
   write(a.root, `.crew/work/${a.work.id}/design/brief.md`, "## Inventory\n- one\n");
   expect(runLint(a, ["a.css"]).tail).toContain("inventory has 1 lines");
   recordSurface(a.paths, a.work.id, "operate", "extend", "2026-10-30");
+  declareKind(a.paths, { kind: "product-ui", metric: "activation" }, "2026-11-16");
   saveWork(a.paths, a.work);
   expect(runLint(a, ["a.css"]).status).toBe("pass");
 });
@@ -189,6 +191,7 @@ test("AC-19: a small change inside an established site goes through extend with 
     "src/Card.vue": "<template><p>Hello</p></template>\n",
   });
   recordSurface(a.paths, a.work.id, "persuade", "extend", "2026-10-30");
+  declareKind(a.paths, { kind: "product-ui", metric: "activation" }, "2026-11-16");
   const run = runLint(a, ["src/Card.vue"]);
   expect(run.status).toBe("pass");
   expect(designReasons(readSurface(a.paths, a.work.id), null, "f")).toEqual([]);

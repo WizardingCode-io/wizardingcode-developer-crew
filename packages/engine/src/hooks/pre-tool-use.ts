@@ -65,7 +65,7 @@ const WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
 const USER_CREW = String.raw`\.wizardingcode\/crew(?=\/|${PATH_END}|$)`;
 const ENGINE_FILES = new RegExp(
   // The run markers, `running/<pid>.json` and the old `running.json`, never a lead's `running-notes.md` (finding 146).
-  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|spec-review\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`,
+  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|design-project\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|spec-review\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`,
   "i",
 );
 // The engine's folder itself, its work folder or an item's folder, as a whole path or by its
@@ -84,9 +84,11 @@ const POWERSHELL_REMOVE_OR_MOVE =
 const HOOK_VERB_REASON =
   "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
-// engine file (the `2>` of `2>/dev/null` after a read is not).
+// engine file (the `2>` of `2>/dev/null` after a read is not). `ln` is among the verbs since item
+// 2026-11-16-008: a link planted at an engine file's path would have the engine read another file
+// as its own record (the security lead's note on the two design records).
 const WRITE_SHAPE = new RegExp(
-  String.raw`(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|${USER_CREW})`,
+  String.raw`(?:^|[\s;&|("'])(?:rm|mv|cp|ln|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|${USER_CREW})`,
   "i",
 );
 // A redirect whose target cannot be read from the text (`$F`, `$(...)`, a backtick) may reach an

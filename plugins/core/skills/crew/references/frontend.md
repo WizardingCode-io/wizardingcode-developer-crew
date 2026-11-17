@@ -32,6 +32,10 @@ Each interaction the motion thesis names has its `captureMotion()` in the captur
 
 Why 40 ms and not 100 for the stagger: both motion sources (emilkowalski/skills and jakubkrehel/skills) keep UI motion under 300 ms; at 100 ms a list of six lands its last item at 600 ms, past that ceiling; 40 ms times five keeps the list inside 200 ms. Why 0.97 and not 0.96 for the press: the press is the most frequent animation of the table, so it must be the least visible; on a 40 px control 0.97 is 1.2 px.
 
+## The kind of project and the proof labels
+
+Read `wizardingcode-frontend-strategy` before the first interface file, on every route. It declares the project's kind and primary metric once (`crew design <id> kind <kind> --metric "<text>"`), and records each design choice with one of five proof labels (`crew design <id> choice add "<choice>" --label <label>`). Then read the kind's playbook: `wizardingcode-frontend-ecommerce` for a shop; a kind with no playbook yet takes the Strategy skill alone and records its choices as hypotheses unless a norm or a platform's page carries them. On the standard and full routes an interface change with no kind recorded is not proven, and a `surface` or `world` change needs at least one recorded choice.
+
 ## A new site
 
 A site is creative work, so the process comes before the values: `wizardingcode-design-brief`, `wizardingcode-design-direction`, `wizardingcode-design-system`, `wizardingcode-design-copy`, `wizardingcode-design-build`, `wizardingcode-design-review`, each read at its own step: the brief when the item starts, the direction and the system before the first interface file, the copy before any markup, the build through the build phase, the review after the e2e gate passes. A section inside an established site is `extend` and takes none of them. On a Persuade or Experience page at `surface` or `world`, `references/frontend-site.md` adds its motion regime and the measured proportion limits to this page.

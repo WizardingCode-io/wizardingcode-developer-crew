@@ -92,6 +92,7 @@ import {
   savePictureResults,
   searchPictures,
 } from "./design-pictures.ts";
+import { addChoice, type Choice, declareKind, readChoices, relabelChoice } from "./design-proof.ts";
 import {
   ENVIRONMENT_COMMANDS,
   ENVIRONMENT_TIMEOUT_MS,
@@ -588,7 +589,19 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   strategy: [],
   "spec-review": ["not-run", "reason", "evidence", "earlier", "churn", "mode"],
   journey: ["until", "max-usd", "allow", "item", "reason", "mode"],
-  design: ["invention", "seed", "redraw", "reason", "regions"],
+  design: [
+    "invention",
+    "seed",
+    "redraw",
+    "reason",
+    "regions",
+    "metric",
+    "name",
+    "label",
+    "source",
+    "replication",
+    "evidence",
+  ],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
   decision: ["default", "supersedes"],
@@ -4073,10 +4086,70 @@ function specEvidenceProblem(root: string, itemDir: string, evidence: string): s
   return null;
 }
 
+/** One choice as `crew design` prints it: every text of the session quoted as data. */
+function choiceLine(c: Choice): string {
+  return [
+    `${c.id} · ${c.label} · ${quotedText(c.text)}`,
+    c.source === undefined ? null : `source: ${quotedText(c.source)}`,
+    c.replication === undefined ? null : `replication: ${quotedText(c.replication)}`,
+    c.evidence === undefined ? null : `evidence: ${quotedText(c.evidence)}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** `crew design <id> choice add|relabel|list` (item 2026-11-16-008); null for a form it does not know. */
+function choiceCommand(
+  paths: CrewPaths,
+  id: string,
+  args: string[],
+  flag: (name: string) => string | undefined,
+): Outcome | null {
+  const said = (done: ReturnType<typeof addChoice>): Outcome =>
+    done.ok ? ok(choiceLine(done.choice), { ...done.choice }) : refuse(done.why);
+  switch (args[2]) {
+    case "add":
+      return said(
+        addChoice(
+          paths,
+          id,
+          {
+            text: args[3],
+            label: flag("label"),
+            source: flag("source"),
+            replication: flag("replication"),
+            evidence: flag("evidence"),
+          },
+          nowIso(),
+        ),
+      );
+    case "relabel":
+      return said(
+        relabelChoice(
+          paths,
+          id,
+          args[3] ?? "",
+          { label: flag("label"), reason: flag("reason"), evidence: flag("evidence") },
+          nowIso(),
+        ),
+      );
+    case "list": {
+      const held = readChoices(paths, id);
+      if (held.untrusted) return refuse(`choices.json is not trusted (crew accept ${id})`);
+      const text = held.choices.length
+        ? held.choices.map(choiceLine).join("\n")
+        : "no choice recorded";
+      return ok(text, { choices: held.choices });
+    }
+    default:
+      return null;
+  }
+}
+
 /** `crew design <id> surface|check|deal|choose`: what a new site is built from (item 2026-10-30-005). */
 async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<Outcome> {
   const usage =
-    'usage: crew design <id> surface <persuade|operate|read|experience> --invention <extend|surface|world> | check | deal [--seed n] [--redraw <slot> --reason "<why>"] | choose <n> | pictures "<query>" | picture <n> | score | comp generate "<prompt>" | comp approve <n> --regions <file>';
+    'usage: crew design <id> surface <persuade|operate|read|experience> --invention <extend|surface|world> | kind <kind> --metric "<text>" [--name "<kind>"] [--reason "<why>"] | choice add "<choice>" --label <label> [--source "<where>"] [--replication "<note>"] [--evidence <path>] | choice relabel DC-n --label <hypothesis|measured-here> [--reason "<why>"] [--evidence <path>] | choice list | check | deal [--seed n] [--redraw <slot> --reason "<why>"] | choose <n> | pictures "<query>" | picture <n> | score | comp generate "<prompt>" | comp approve <n> --regions <file>';
   const id = args[0] ?? "";
   if (!validItemId(id)) return refuse(usage);
   const opened = openForChange(env, id);
@@ -4098,6 +4171,24 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
       const record = recordSurface(env.paths, work.id, surface, invention, nowIso());
       return ok(`${work.id}: surface ${surface}, invention ${invention}`, { ...record });
     }
+    case "kind": {
+      const done = declareKind(
+        env.paths,
+        {
+          kind: args[2] ?? "",
+          name: flag("name"),
+          metric: flag("metric"),
+          reason: flag("reason"),
+        },
+        nowIso(),
+      );
+      if (!done.ok) return refuse(done.why);
+      const { record } = done;
+      const named = record.name === undefined ? "" : ` (${quotedText(record.name)})`;
+      return ok(`kind ${record.kind}${named}, metric: ${quotedText(record.metric)}`, { ...record });
+    }
+    case "choice":
+      return choiceCommand(env.paths, work.id, args, flag) ?? refuse(usage);
     case "check": {
       const record = readSurface(env.paths, work.id);
       if (!record) return refuse(`no surface recorded (crew design ${work.id} surface …)`);
@@ -7459,6 +7550,11 @@ const HELP = `crew ${VERSION}
   strategy <id> check                   check strategy.md (the five sections, [R<n>] marks on the research's facts, the scaling table) and write the strategy's review inputs
   audit <id> run [--only a,b]           run the project's own tools over the whole tree with no baseline (an audit item in its audit phase), every result recorded, the files the reviewers read and the scope beside them
   audit <id> report                     render the audit's report from the findings (every one proof-checked): Markdown, HTML under the brand, the PDF by the project's Playwright or a browser or its reason; crew approve <id> audit signs it
+  design <id> surface <mode> --invention <extend|surface|world>   an interface change's surface and amount of invention (crew design shows every form)
+  design <id> kind <kind> --metric "<text>" [--name "<kind>"] [--reason "<why>"]   the project's kind and primary metric, once per project; --reason to change it
+  design <id> choice add "<choice>" --label <norm|platform-guidance|published-study|measured-here|hypothesis> [--source "<where>"] [--replication "<note>"] [--evidence <path>]   a design choice with its proof label
+  design <id> choice relabel DC-n --label <hypothesis|measured-here> [--reason "<why>"] [--evidence <path>]   down to a hypothesis, or to a measurement with its file; nothing else moves a label
+  design <id> choice list               the item's design choices
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   await <id> role --here [--seconds <n>]   where nobody watches: wait inside the turn for the roles this session launched (540 s, 590 at most); sets no wait

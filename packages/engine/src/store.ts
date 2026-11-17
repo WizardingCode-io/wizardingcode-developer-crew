@@ -91,12 +91,17 @@ export function recordIntegrity(paths: CrewPaths, absPath: string): boolean {
 }
 
 /**
- * The protected files a project may hold, as absolute paths: the profile, the register, and in
- * each folder of `.crew/work` that holds a `work.json`, the files of `PROTECTED_WORK_FILES`. The
- * policy is not among them: it is hand-written by design and trusted with no hash.
+ * The protected files a project may hold, as absolute paths: the profile, the register, the
+ * project's design kind, and in each folder of `.crew/work` that holds a `work.json`, the files
+ * of `PROTECTED_WORK_FILES`. The policy is not among them: it is hand-written by design and
+ * trusted with no hash.
  */
 function projectFiles(paths: CrewPaths): string[] {
-  const files = [join(paths.crewDir, "profile.json"), join(paths.crewDir, "decisions.json")];
+  const files = [
+    join(paths.crewDir, "profile.json"),
+    join(paths.crewDir, "decisions.json"),
+    join(paths.crewDir, "design-project.json"),
+  ];
   const work = join(paths.crewDir, "work");
   let ids: string[] = [];
   try {

@@ -107,6 +107,8 @@ const PROTECTED_TOP = new Set([
   ".crew/.gitignore",
   // The project's decision register (SP7 §6.6): appended by the engine at every decision.
   ".crew/decisions.json",
+  // The project's kind and primary metric (item 2026-11-16-008): declared through `crew design`.
+  ".crew/design-project.json",
 ]);
 /** The files of a work folder only the engine writes; `crew accept <id>` re-trusts the same set. */
 export const PROTECTED_WORK_FILES: readonly string[] = [
@@ -126,6 +128,8 @@ export const PROTECTED_WORK_FILES: readonly string[] = [
   "design/score.json",
   "design/comp.json",
   "design/pictures.json",
+  // The design choices with their proof labels (item 2026-11-16-008).
+  "design/choices.json",
 ];
 const PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 /** The one source of what stays the session's under `review/` (SP7b decision 16): `ui` or `e2e`, right under it or under a todo's `T-n/`; the hook's text rule builds on it too. */
