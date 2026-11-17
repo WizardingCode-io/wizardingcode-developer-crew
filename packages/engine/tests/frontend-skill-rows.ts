@@ -54,3 +54,22 @@ export function listed(path: string): Map<string, string> {
   }
   return lines;
 }
+
+/**
+ * What a page a model follows must not hold (item 2026-11-17-005): a fenced block, a command line,
+ * or a verb that tells the reader to act on a line that holds an address. One fault per finding,
+ * none for a text that tells the session nothing to fetch or run. The two word lists are the
+ * caller's: a skill's own subject decides which commands and which verbs it must not carry.
+ */
+export function tellsToFetchOrRun(text: string, commands: RegExp, verbs: RegExp): string[] {
+  const faults: string[] = [];
+  if (text.includes("```")) faults.push("a fenced block");
+  const every = new RegExp(commands.source, [...new Set(`${commands.flags}g`)].join(""));
+  for (const command of text.matchAll(every)) faults.push(`a command: ${command[0].trim()}`);
+  for (const line of text.split(/\r?\n/)) {
+    if (!/https?:\/\//.test(line)) continue;
+    const verb = line.match(verbs);
+    if (verb) faults.push(`a verb on a line with an address: ${verb[0]}`);
+  }
+  return faults;
+}
