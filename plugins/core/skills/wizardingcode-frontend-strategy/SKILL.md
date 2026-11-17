@@ -33,7 +33,7 @@ The request, the project's own description of itself (`README.md`, `PRODUCT.md`,
 
 A project that fits none declares `other` with its own name: `crew design <id> kind other --name "<the kind>" --metric "<text>"`. The table's metric is a proposal: write the one the client is judged by, in their words, when they gave one.
 
-3. **Read the kind's playbook** before the direction and the first file: `wizardingcode-frontend-ecommerce` for `e-commerce`. A kind with no playbook yet has only this skill: every choice that no norm and no platform's page carries is a `hypothesis`.
+3. **Read the kind's playbook** before the direction and the first file: `wizardingcode-frontend-ecommerce` for `e-commerce`, `wizardingcode-frontend-info-product` for `info-product`, `wizardingcode-frontend-saas-marketing` for `saas-marketing`, `wizardingcode-frontend-b2b-lead-gen` for `b2b-lead-gen` and `wizardingcode-frontend-product-ui` for `product-ui`. A kind with no playbook yet has only this skill: every choice that no norm and no platform's page carries is a `hypothesis`.
 4. **Read `wizardingcode-frontend-visual-craft`** before the direction's tokens and the first interface file: each rule of type, spacing, colour, tokens, motion and copy stands there with the label a choice built on it carries.
 5. **Read `wizardingcode-frontend-screens`** before the first screen of the change: each rule on states, keyboard and focus, measured accessibility, responsive layout and forms stands there with its label.
 6. **Read `wizardingcode-frontend-engineering`** before the first component of the change: what to read in the project first, and each rule on the framework, CSS, components, rendering and performance with its label.
