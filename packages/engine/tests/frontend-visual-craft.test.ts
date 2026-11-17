@@ -1,16 +1,13 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { LABELS } from "../src/design-proof.ts";
+import { ADDRESS, HEADER, listed, ROOT, repoFile, rows, sections } from "./frontend-skill-rows.ts";
 
-const ROOT = join(import.meta.dir, "..", "..", "..");
-const repoFile = (path: string): string => readFileSync(join(ROOT, path), "utf8");
 const DIR = "plugins/core/skills/wizardingcode-frontend-visual-craft";
 const SKILL = `${DIR}/SKILL.md`;
 const SOURCES = `${DIR}/sources.md`;
 const STRATEGY = "plugins/core/skills/wizardingcode-frontend-strategy/SKILL.md";
-const ADDRESS = /https?:\/\/[^\s|)>`]+/g;
-const HEADER = "| Rule | Label | Source | What the source is |";
 const SUBJECTS = [
   "Typography",
   "Spacing, proportion and grids",
@@ -23,44 +20,8 @@ const SUBJECTS = [
 ];
 const HTTP_ADMITTED = "http://webtypography.net/2.1.2";
 
-/** The page's sections by their `## ` title, each as its lines. */
-function sections(text: string): Map<string, string[]> {
-  const found = new Map<string, string[]>();
-  let current: string[] | null = null;
-  for (const line of text.split(/\r?\n/)) {
-    if (line.startsWith("## ")) {
-      current = [];
-      found.set(line.slice(3).trim(), current);
-    } else current?.push(line);
-  }
-  return found;
-}
-
-const cells = (line: string): string[] =>
-  line
-    .split("|")
-    .slice(1, -1)
-    .map((c) => c.trim());
-
-/** A section's rule rows: the lines of its tables after the header and the rule. */
-function rows(lines: string[]): string[][] {
-  return lines
-    .filter((l) => l.startsWith("|") && l !== HEADER)
-    .map(cells)
-    .filter((c) => !c.every((cell) => /^:?-+:?$/.test(cell)));
-}
-
 const skill = () => repoFile(SKILL);
 const allRows = () => SUBJECTS.flatMap((title) => rows(sections(skill()).get(title) ?? []));
-/** The sources file's lines by the address each holds. */
-function listed(): Map<string, string> {
-  const lines = new Map<string, string>();
-  for (const line of repoFile(SOURCES).split(/\r?\n/)) {
-    const address = line.match(ADDRESS)?.[0];
-    if (address) lines.set(address, line);
-  }
-  return lines;
-}
 
 test("visual-craft AC-8: the skill holds its eight subjects, each a rule table with the four columns, at least three rules each and forty in all", () => {
   const text = skill();
@@ -113,7 +74,7 @@ test("visual-craft AC-9: every rule has one of the five labels, never measured-h
 });
 
 test("visual-craft AC-10: every address the skill cites is in its sources file with the date it was read, what was read in part or by its abstract says so, and nothing not opened is cited", () => {
-  const lines = listed();
+  const lines = listed(SOURCES);
   const cited = new Set(skill().match(ADDRESS) ?? []);
   expect(cited.size).toBeGreaterThan(30);
   for (const address of cited) {

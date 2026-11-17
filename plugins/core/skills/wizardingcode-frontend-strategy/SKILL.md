@@ -35,7 +35,8 @@ A project that fits none declares `other` with its own name: `crew design <id> k
 
 3. **Read the kind's playbook** before the direction and the first file: `wizardingcode-frontend-ecommerce` for `e-commerce`. A kind with no playbook yet has only this skill: every choice that no norm and no platform's page carries is a `hypothesis`.
 4. **Read `wizardingcode-frontend-visual-craft`** before the direction's tokens and the first interface file: each rule of type, spacing, colour, tokens, motion and copy stands there with the label a choice built on it carries.
-5. **Record each design choice** as you make it: `crew design <id> choice add "<choice>" --label <label>`. A design choice is anything a competent designer could have done otherwise and that the project's design contract does not already settle: the order of a page, what stands above the fold, a default, a pattern for a form, a persuasion device, a motion. A token taken from `DESIGN.md` is the contract's, not a new choice.
+5. **Read `wizardingcode-frontend-screens`** before the first screen of the change: each rule on states, keyboard and focus, measured accessibility, responsive layout and forms stands there with its label.
+6. **Record each design choice** as you make it: `crew design <id> choice add "<choice>" --label <label>`. A design choice is anything a competent designer could have done otherwise and that the project's design contract does not already settle: the order of a page, what stands above the fold, a default, a pattern for a form, a persuasion device, a motion. A token taken from `DESIGN.md` is the contract's, not a new choice.
 
 | Label | When | The command asks |
 | :- | :- | :- |
@@ -45,15 +46,15 @@ A project that fits none declares `other` with its own name: `crew design <id> k
 | `measured-here` | this site measured it | `--evidence <path>`: a file of the project with the date, the sample, the metric, the effect and its interval |
 | `hypothesis` | everything else: a reasoned bet | nothing; say in the choice which metric would confirm it |
 
-6. **Hold the three rules of the labels.**
+7. **Hold the three rules of the labels.**
    - A label never upgrades without a measurement. `crew design <id> choice relabel DC-n --label hypothesis --reason "<why>"` takes a label down; `--label measured-here --evidence <path>` records a measurement; the engine refuses every other move.
    - A vendor's benchmark or case study is a `hypothesis`, whatever its sample: say it as the vendor's figure. A page that collects wins says nothing of how often the same change gained nothing.
    - A published study is carried with what it is: a usability finding is a failure rate, not a lift; an observational figure is confounded; one test on another site is weak ground. In 1,001 A/B tests of one statistics platform's users the median lift was 0.08% and 33.5% of the tests had a significant result for the variant (https://blog.analytics-toolkit.com/2022/what-can-be-learned-from-1001-a-b-tests/).
-7. **Measure only what the site's traffic can detect.** The median test of that set ran 30 days with about 60,000 users and could detect a 6% relative change. A site that cannot reach such a sample adopts the playbook's defaults, tests only large and structurally different variants, and never writes `measured-here` over a difference its sample cannot carry.
-8. **Refuse what the team never builds.** The team never invokes dopamine, neuroscience or addiction, in a spec, a choice or a client's page. It uses what works and is lawful: social proof, scarcity and urgency only when true, and defaults that serve the user. It never builds a deceptive pattern: a false timer or stock claim, a review not checked to come from a buyer, a prior price that is not the lowest of the 30 days before the reduction, a paid ranking not disclosed. A request for one is a blocking objection of the gap round, never a choice with a label. The law in force:
+8. **Measure only what the site's traffic can detect.** The median test of that set ran 30 days with about 60,000 users and could detect a 6% relative change. A site that cannot reach such a sample adopts the playbook's defaults, tests only large and structurally different variants, and never writes `measured-here` over a difference its sample cannot carry.
+9. **Refuse what the team never builds.** The team never invokes dopamine, neuroscience or addiction, in a spec, a choice or a client's page. It uses what works and is lawful: social proof, scarcity and urgency only when true, and defaults that serve the user. It never builds a deceptive pattern: a false timer or stock claim, a review not checked to come from a buyer, a prior price that is not the lowest of the 30 days before the reduction, a paid ranking not disclosed. A request for one is a blocking objection of the gap round, never a choice with a label. The law in force:
    - Directive 2005/29/EC, Annex I, points 7, 11a, 23b and 23c: http://publications.europa.eu/resource/celex/02005L0029-20220528
    - Directive 98/6/EC, Article 6a: http://publications.europa.eu/resource/celex/01998L0006-20220528
-9. **Keep the records clean.** The texts given to these commands land in files a project may commit: no credential, no token inside an address, no client's private name.
+10. **Keep the records clean.** The texts given to these commands land in files a project may commit: no credential, no token inside an address, no client's private name.
 
 ## Output
 
