@@ -70,7 +70,7 @@ No source read gives a numeric rule for a baseline grid.
 | Dark text on a light ground was the more legible, more so at small sizes | `published-study` | https://pubmed.ncbi.nlm.nih.gov/23654206/ | Piepenbrock and others, 2013, by its abstract; replication unknown |
 | Preference and judged harmony both rose with the similarity of two hues | `published-study` | https://pubmed.ncbi.nlm.nih.gov/21264737/ | Schloss and Palmer, 2011, 48 participants; replication unknown |
 
-The crew's probe grades contrast against a floor of 2.6:1, lower than the norm's 4.5:1: the norm is what a build is held to, and the probe's floor is a discrepancy the engine has yet to resolve.
+The crew's probe holds text to 4.5:1, or 3:1 for large text, against a ground it can know: a plain colour, or a gradient whose colours it can read. A text over a picture is not judged by the probe; the grade says how many text blocks it left unjudged, and a scanner and the reviewer judge those.
 
 ## Design contract and tokens
 

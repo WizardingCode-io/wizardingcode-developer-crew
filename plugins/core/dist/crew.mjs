@@ -5664,7 +5664,7 @@ function gradeProbe(probe, surface, limits) {
   if (probe.sizes > 9)
     add("type/size-count", `${probe.sizes} text sizes (limit 9)`);
   if (probe.lowContrast > 0)
-    add("colour/contrast", `${probe.lowContrast} text blocks under 2.6:1`);
+    add("colour/contrast", `${probe.lowContrast} text blocks under the standard's contrast (4.5:1, or 3:1 for large text)`);
   if (probe.aiLook && !limits.look)
     add("colour/ai-look", `${probe.aiLook}: the look a generated page falls into`);
   if (probe.eyebrows > 0)
@@ -5703,22 +5703,30 @@ function gradeDesign(paths, work) {
   const dir = join14(workDir(paths, work.id), "review", "ui");
   const names = existsSync7(dir) ? readdirSync4(dir).filter((n) => /^[a-z0-9-]+-default\.json$/.test(n)) : [];
   const offences = [];
+  const unjudged = [];
   let widest = null;
   for (const name of names.sort()) {
     const meta = readJsonQuiet(join14(dir, name));
+    const page = name.replace(/-default\.json$/, "");
+    let notJudged = 0;
     for (const probe of probesOf(meta)) {
       for (const o of gradeProbe(probe, record.surface, limits))
-        offences.push(`${o.text} (${name.replace(/-default\.json$/, "")})`);
+        offences.push(`${o.text} (${page})`);
+      if (typeof probe.contrastUnknown === "number" && Number.isFinite(probe.contrastUnknown))
+        notJudged = Math.max(notJudged, Math.floor(probe.contrastUnknown));
       if (!widest || probe.width > widest.width)
         widest = probe;
     }
+    if (notJudged > 0)
+      unjudged.push(`contrast: ${notJudged} text blocks not judged, a picture or a gradient of mixed contrast behind them (${page})`);
   }
   const comp = readComp(paths, work.id);
   if (comp && widest)
     for (const o of gradeComp(comp.regions, widest.compRegions ?? []))
       offences.push(o.text);
   const lines = [
-    `design: ${names.length} page${names.length === 1 ? "" : "s"} measured, surface ${record.surface}, invention ${record.invention}`
+    `design: ${names.length} page${names.length === 1 ? "" : "s"} measured, surface ${record.surface}, invention ${record.invention}`,
+    ...unjudged
   ];
   if (!widest?.fingerprint || !PAGE_LEVEL.has(record.surface))
     return { offences, lines, fingerprint: null };

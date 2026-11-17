@@ -235,7 +235,139 @@ export function pageProbe(doc, win) {
   const contrast = (a, b) => { const x = lum(a); const y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); };
   const hsl = (c) => { const r = c.r / 255; const g = c.g / 255; const b = c.b / 255; const max = Math.max(r, g, b); const min = Math.min(r, g, b); const l = (max + min) / 2; const d = max - min; if (!d) return { h: 0, s: 0, l }; const s = d / (1 - Math.abs(2 * l - 1)); let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4; h = (h * 60 + 360) % 360; return { h, s, l }; };
   const family = (s) => String(s.fontFamily || "").split(",")[0].replace(/["']/g, "").trim().replace(/[^A-Za-z0-9 -]/g, "").slice(0, 60) || "unknown";
-  const groundOf = (el) => { for (let e = el; e; e = e.parentElement) { const c = rgb(style(e).backgroundColor); if (c && c.a > 0.5) return c; } return { r: 255, g: 255, b: 255, a: 1 }; };
+  // The ground a text stands on is what the first ancestor that paints one gives: a plain colour, or the
+  // colours of its gradients, layer by layer from the top. A layer that does not paint the element's whole
+  // box is a mark on the ground (an underline, a highlight, one pixel) and is passed over; one whose
+  // position may move it off the box makes the ground not known. A layer whose
+  // colours are all opaque is the ground. A layer with a colour that is not opaque is a wash, laid over
+  // what stands under it: the layers below, the element's own colour, or the ground further up. `by` is
+  // the element that painted the opaque ground, under any wash, and null for the page's own white. Null is
+  // a ground that cannot be known: a picture, a colour the probe cannot read, or more colours than it combines.
+  const WHITE = { r: 255, g: 255, b: 255, a: 1 };
+  const COMBINED_MAX = 36;
+  const GRADIENT_COLOURS = /(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)/g;
+  const solid = (c) => !!c && c.a > 0.5;
+  const over = (top, under) => ({ r: top.a * top.r + (1 - top.a) * under.r, g: top.a * top.g + (1 - top.a) * under.g, b: top.a * top.b + (1 - top.a) * under.b, a: 1 });
+  // A computed list of layers, split at its top-level commas: a colour or a size holds commas of its own.
+  const layersOf = (value) => {
+    const out = [];
+    let depth = 0;
+    let layer = "";
+    for (const ch of String(value || "")) {
+      if (ch === "(") depth += 1;
+      else if (ch === ")") depth -= 1;
+      if (ch === "," && depth === 0) { out.push(layer.trim()); layer = ""; } else layer += ch;
+    }
+    if (layer.trim()) out.push(layer.trim());
+    return out;
+  };
+  // What one layer does to the element's box, axis by axis. It paints the box where it repeats. Where it
+  // does not repeat it paints the box only when it lies over all of it: a layer of exactly the box's size
+  // at any percentage (a percentage moves a layer by a share of the difference between the box and the
+  // layer, which is then nothing) or at no offset; a layer larger than the box at a percentage from nought
+  // to a hundred, or at no offset. Where its size falls short it is a mark. Where its size reaches the
+  // box and its position may move it off, nobody can say from here: the ground is not known.
+  const PAINTS = "paints";
+  const MARK = "mark";
+  const UNSURE = "unsure";
+  const layerOnBox = (size, repeat, x, y, box) => {
+    const fills = size === "cover" || size === "contain";
+    const sizes = size.split(/\s+/);
+    const repeats = repeat === "repeat-x" ? ["repeat", "no-repeat"] : repeat === "repeat-y" ? ["no-repeat", "repeat"] : repeat.split(/\s+/);
+    const exact = (token) => fills || token === "auto" || (/^[\d.]+%$/.test(token) && Number.parseFloat(token) === 100);
+    const larger = (token, length) => (/^[\d.]+%$/.test(token) && Number.parseFloat(token) > 100) || (/^[\d.]+px$/.test(token) && Number.parseFloat(token) >= length - 0.5);
+    const none = (offset) => /^-?[\d.]+px$/.test(offset) && Number.parseFloat(offset) === 0;
+    const share = (offset) => (/^-?[\d.]+%$/.test(offset) ? Number.parseFloat(offset) : Number.NaN);
+    const axis = (sizeToken, repeatToken, offset, length) => {
+      if (repeatToken === "repeat" || repeatToken === "round") return PAINTS;
+      if (exact(sizeToken)) return none(offset) || !Number.isNaN(share(offset)) ? PAINTS : UNSURE;
+      if (larger(sizeToken, length)) return none(offset) || (share(offset) >= 0 && share(offset) <= 100) ? PAINTS : UNSURE;
+      return MARK;
+    };
+    const across = axis(sizes[0] || "auto", repeats[0] || "repeat", x, box.width);
+    const down = axis(sizes[1] || "auto", repeats[1] || repeats[0] || "repeat", y, box.height);
+    return across === MARK || down === MARK ? MARK : across === UNSURE || down === UNSURE ? UNSURE : PAINTS;
+  };
+  const groundsOf = (el) => {
+    for (let e = el; e; e = e.parentElement) {
+      const s = style(e);
+      // The clip is a list, one entry per layer, and the colour takes the last layer's. Where every entry
+      // is `text` the element paints no ground at all, its colour included. Where `text` is one entry
+      // among others, which layer and whether the colour is clipped depends on how the list meets the
+      // layers: the ground is not known.
+      const clips = String(s.backgroundClip || s.webkitBackgroundClip || "").split(",").map((c) => c.trim());
+      const clipped = clips.filter((c) => /\btext\b/.test(c)).length;
+      if (clipped === clips.length) continue;
+      if (clipped) return null;
+      const own = rgb(s.backgroundColor);
+      const images = String(s.backgroundImage || "none") === "none" ? [] : layersOf(s.backgroundImage);
+      if (!images.length) {
+        if (solid(own)) return { colours: [own], by: e };
+        continue;
+      }
+      // A blend mode changes what a layer and the colour beneath it draw together: the ground is not known.
+      if (String(s.backgroundBlendMode || "normal").split(",").some((m) => m.trim() !== "normal")) return null;
+      const sizes = layersOf(s.backgroundSize || "auto");
+      const repeats = layersOf(s.backgroundRepeat || "repeat");
+      const xs = layersOf(s.backgroundPositionX || "0%");
+      const ys = layersOf(s.backgroundPositionY || "0%");
+      const box = e.getBoundingClientRect ? e.getBoundingClientRect() : { width: 0, height: 0 };
+      const washes = [];
+      let ground = null;
+      for (let i = 0; i < images.length && !ground; i++) {
+        const image = images[i];
+        if (image === "none") continue;
+        if (/url\(/.test(image) || !/gradient\(/.test(image)) return null;
+        const does = layerOnBox(sizes[i % sizes.length] || "auto", repeats[i % repeats.length] || "repeat", xs[i % xs.length] || "0%", ys[i % ys.length] || "0%", box);
+        if (does === MARK) continue;
+        if (does === UNSURE) return null;
+        const stops = (image.match(GRADIENT_COLOURS) || []).map(rgb);
+        if (!stops.length || stops.some((c) => !c)) return null;
+        if (stops.every((c) => c.a >= 0.99)) ground = { colours: stops, by: e };
+        else washes.push(stops);
+      }
+      if (!ground) ground = solid(own) ? { colours: [own], by: e } : e.parentElement ? groundsOf(e.parentElement) : { colours: [WHITE], by: null };
+      if (!ground) return null;
+      let colours = ground.colours;
+      for (let i = washes.length - 1; i >= 0; i--) {
+        if (washes[i].length * colours.length > COMBINED_MAX) return null;
+        const under = colours;
+        colours = washes[i].flatMap((c) => under.map((u) => over(c, u)));
+      }
+      return { colours, by: ground.by };
+    }
+    return { colours: [WHITE], by: null };
+  };
+  // The norm leaves an inactive control out, and nothing wider. A control is an element that takes
+  // `disabled` by its kind, a link, or an element with a control's role whose text is a label (100
+  // characters at most): the attribute or the role on a wrapper of the page leaves nothing out.
+  const FORM_TAGS = ["BUTTON", "INPUT", "SELECT", "TEXTAREA", "OPTION"];
+  const CONTROL_ROLES = ["button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "option", "textbox", "combobox", "slider", "spinbutton"];
+  const LABEL_MAX = 100;
+  const attr = (e, name) => (e.getAttribute ? e.getAttribute(name) : null);
+  const tagOf = (e) => String(e.tagName).toUpperCase();
+  // A form control is disabled by its own attribute, by a disabled `optgroup`, or by a disabled `fieldset` it is in, unless it stands in that fieldset's first `legend`.
+  const disabledByKind = (el) => {
+    if (attr(el, "disabled") !== null) return true;
+    for (let e = el.parentElement, child = el; e; child = e, e = e.parentElement) {
+      const tag = tagOf(e);
+      if (tag === "OPTGROUP" && tagOf(el) === "OPTION" && attr(e, "disabled") !== null) return true;
+      if (tag !== "FIELDSET" || attr(e, "disabled") === null) continue;
+      const first = Array.from(e.children || []).find((c) => tagOf(c) === "LEGEND");
+      if (first !== child) return true;
+    }
+    return false;
+  };
+  const inDisabledControl = (el) => {
+    for (let e = el; e; e = e.parentElement) {
+      const tag = tagOf(e);
+      if (FORM_TAGS.includes(tag)) { if (attr(e, "aria-disabled") === "true" || disabledByKind(e)) return true; continue; }
+      const link = tag === "A" && attr(e, "href") !== null;
+      const role = CONTROL_ROLES.includes(String(attr(e, "role") || "").toLowerCase());
+      if ((link || role) && attr(e, "aria-disabled") === "true" && String(e.textContent || "").trim().length <= LABEL_MAX) return true;
+    }
+    return false;
+  };
   const inTag = (el, tags) => { for (let e = el; e; e = e.parentElement) if (tags.includes(String(e.tagName).toUpperCase())) return true; return false; };
 
   const all = doc.body ? Array.from(doc.body.querySelectorAll("*")).slice(0, 5000) : [];
@@ -256,7 +388,7 @@ export function pageProbe(doc, win) {
     }
     if (["IMG", "VIDEO", "PICTURE", "CANVAS"].includes(tag) || (s.backgroundImage && s.backgroundImage !== "none" && /url\(/.test(s.backgroundImage))) {
       // A picture at near-zero opacity or under a wash does not count as shipped.
-      if (Number(s.opacity) >= 0.2 && r.width >= 120 && r.height >= 90 && r.width * r.height >= 19200) media.push({ top, bottom: top + r.height, left: r.left, right: r.right, w: r.width, h: r.height });
+      if (Number(s.opacity) >= 0.2 && r.width >= 120 && r.height >= 90 && r.width * r.height >= 19200) media.push({ el, top, bottom: top + r.height, left: r.left, right: r.right, w: r.width, h: r.height });
     }
     if (tag === "BUTTON" || (tag === "A" && /inline-block|flex|grid/.test(s.display) && rgb(s.backgroundColor)?.a > 0.5)) controls.push({ h: round(r.height) });
     const own = ownText(el);
@@ -286,7 +418,26 @@ export function pageProbe(doc, win) {
   const families = Object.keys(fam).filter((f) => fam[f] / totalChars >= 0.02);
   const sizes = new Set(texts.map((t) => Math.round(t.size)));
 
-  const lowContrast = texts.filter((t) => { const c = rgb(t.s.color); if (!c || c.a < 0.5 || t.nav) return false; return contrast(c, groundOf(t.el)) < 2.6; }).length;
+  // The standard's contrast: 4.5:1, or 3:1 for large text (24 CSS px, or 18.66 CSS px in bold), against
+  // a ground the probe can know. A picture stands behind a text when their boxes overlap and nothing
+  // between them paints a ground: the element that painted the text's ground holds the picture, or no
+  // element painted one. A text with such a picture behind it, or under the floor against some colours
+  // of its ground and over it against others, is counted apart and judged by nobody here.
+  const isLarge = (t) => t.size >= 24 || (t.size >= 18.66 && Number(t.s.fontWeight) >= 700);
+  const overlaps = (t, m) => m.left < t.right && m.right > t.left && m.top < t.bottom && m.bottom > t.top;
+  const pictureBehind = (t, by) => media.some((m) => overlaps(t, m) && (!by || (by.contains && by.contains(m.el))));
+  let lowContrast = 0;
+  let contrastUnknown = 0;
+  for (const t of texts) {
+    const c = rgb(t.s.color);
+    if (!c || c.a < 0.5 || t.nav || inDisabledControl(t.el)) continue;
+    const ground = groundsOf(t.el);
+    if (!ground || pictureBehind(t, ground.by)) { contrastUnknown += 1; continue; }
+    const floor = isLarge(t) ? 3 : 4.5;
+    const under = ground.colours.filter((g) => contrast(c, g) < floor).length;
+    if (under === ground.colours.length) lowContrast += 1;
+    else if (under > 0) contrastUnknown += 1;
+  }
 
   let eyebrows = 0;
   let microLabels = 0;
@@ -449,6 +600,7 @@ export function pageProbe(doc, win) {
     families: families.length,
     sizes: sizes.size,
     lowContrast,
+    contrastUnknown,
     eyebrows,
     microLabels,
     covered,

@@ -48,6 +48,8 @@ export interface PageProbe {
   families: number;
   sizes: number;
   lowContrast: number;
+  /** Text blocks the probe did not judge for contrast: a picture or a gradient of mixed contrast behind them. Absent on a probe recorded before the count. */
+  contrastUnknown?: number;
   eyebrows: number;
   microLabels: number;
   covered: number;
@@ -194,7 +196,11 @@ export function gradeProbe(probe: PageProbe, surface: string, limits: Limits): O
     add("craft/icon-cards", "a row of identical boxed cards, each with an icon");
   if (probe.families > 3) add("type/font-count", `${probe.families} font families (limit 3)`);
   if (probe.sizes > 9) add("type/size-count", `${probe.sizes} text sizes (limit 9)`);
-  if (probe.lowContrast > 0) add("colour/contrast", `${probe.lowContrast} text blocks under 2.6:1`);
+  if (probe.lowContrast > 0)
+    add(
+      "colour/contrast",
+      `${probe.lowContrast} text blocks under the standard's contrast (4.5:1, or 3:1 for large text)`,
+    );
   if (probe.aiLook && !limits.look)
     add("colour/ai-look", `${probe.aiLook}: the look a generated page falls into`);
   if (probe.eyebrows > 0) add("label/eyebrow", `${probe.eyebrows} eyebrow labels above a heading`);
@@ -272,14 +278,24 @@ export function gradeDesign(paths: CrewPaths, work: WorkItem): DesignGrade {
     ? readdirSync(dir).filter((n) => /^[a-z0-9-]+-default\.json$/.test(n))
     : [];
   const offences: string[] = [];
+  const unjudged: string[] = [];
   let widest: PageProbe | null = null;
   for (const name of names.sort()) {
     const meta = readJsonQuiet(join(dir, name));
+    const page = name.replace(/-default\.json$/, "");
+    let notJudged = 0;
     for (const probe of probesOf(meta)) {
       for (const o of gradeProbe(probe, record.surface, limits))
-        offences.push(`${o.text} (${name.replace(/-default\.json$/, "")})`);
+        offences.push(`${o.text} (${page})`);
+      if (typeof probe.contrastUnknown === "number" && Number.isFinite(probe.contrastUnknown))
+        notJudged = Math.max(notJudged, Math.floor(probe.contrastUnknown));
       if (!widest || probe.width > widest.width) widest = probe;
     }
+    // Shown, and no verdict: the reviewer and a scanner judge what the probe could not.
+    if (notJudged > 0)
+      unjudged.push(
+        `contrast: ${notJudged} text blocks not judged, a picture or a gradient of mixed contrast behind them (${page})`,
+      );
   }
   // The comp path (D-4): the approved comp's regions against the page's marked elements at the widest width.
   const comp = readComp(paths, work.id);
@@ -287,6 +303,7 @@ export function gradeDesign(paths: CrewPaths, work: WorkItem): DesignGrade {
     for (const o of gradeComp(comp.regions, widest.compRegions ?? [])) offences.push(o.text);
   const lines = [
     `design: ${names.length} page${names.length === 1 ? "" : "s"} measured, surface ${record.surface}, invention ${record.invention}`,
+    ...unjudged,
   ];
   if (!widest?.fingerprint || !PAGE_LEVEL.has(record.surface))
     return { offences, lines, fingerprint: null };
