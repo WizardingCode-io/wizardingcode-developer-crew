@@ -204,6 +204,18 @@ test("AC-15: a project record changed by hand, or outside the closed schema, rea
         permission_mode: "default",
       }),
     ).toEqual({});
+    // Item 2026-11-17-001 adds this assertion: `{}` is what the hook answers any command that
+    // touches no protected file, so the spoilt record's own guard is asserted beside it: a direct
+    // write of it is still denied, in the guard's words.
+    const direct = onPreToolUse(ctx, {
+      tool_name: "Write",
+      tool_input: { file_path: file },
+      permission_mode: "default",
+    }).hookSpecificOutput as { permissionDecision?: string; permissionDecisionReason?: string };
+    expect(direct.permissionDecision).toBe("deny");
+    expect(direct.permissionDecisionReason).toContain(
+      "is maintained by the engine and is changed through the crew command",
+    );
     expect(readKind(a.paths)).toMatchObject({ record: null, untrusted: true });
   }
 });

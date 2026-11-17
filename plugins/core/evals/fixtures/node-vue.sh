@@ -57,3 +57,6 @@ test("the notice animates its dismiss with a transition on transform or opacity"
   assert.match(notice, /transform|opacity/);
 });
 EOF
+
+# The design-detect gate's detector, cached for the sandbox (item 2026-11-17-001).
+. "$(dirname "$0")/../fixtures/detector.sh"

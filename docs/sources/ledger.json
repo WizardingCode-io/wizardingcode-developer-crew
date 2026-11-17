@@ -753,6 +753,14 @@
    "reason": "Expo and native are out of scope (SP9 design §11)"
   },
   {
+   "source": "impeccable",
+   "rule": "the detector as a gate, from the command line",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/gate.md",
+   "text": "npx --yes --prefer-offline --registry=https://registry.npmjs.org/ impeccable@4.9.2 detect --json --no-config",
+   "proof": "design-detect.test.ts"
+  },
+  {
    "source": "elayadesign",
    "rule": "assumption in one line",
    "status": "in",

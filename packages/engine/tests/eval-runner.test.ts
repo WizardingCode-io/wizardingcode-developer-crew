@@ -941,6 +941,10 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     '. "$(dirname "$0")/../fixtures/inbox-page.sh"',
     '. "$(dirname "$0")/../fixtures/playwright-page.sh"',
     '. "$(dirname "$0")/../fixtures/commit.sh"',
+    // 2026-11-17-001 edits this list: the detector's cache for the sandbox. detector.sh itself is
+    // not listed among the confined files, as playwright-page.sh is not: it copies the runner's own
+    // npm cache into the scaffold's home by design, and fetches nothing.
+    '. "$(dirname "$0")/../fixtures/detector.sh"',
   ];
   const forbidden = [
     /cd \//,

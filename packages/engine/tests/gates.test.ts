@@ -111,10 +111,13 @@ test("SP2b: --only with judgement names alone runs no deterministic gate and rew
   expect(readFileSync(join(only.review ?? "", "files.txt"), "utf8")).toBe("src/App.vue\n");
   // SP9-T6 AC-9 edits this line: design-lint is planned after secrets on the interface file.
   // 2026-10-29-001 edits this line: the prose scan is planned right after secrets.
-  expect(only.unproven.slice(0, 4)).toEqual([
+  // 2026-11-17-001 edits this line: design-detect is planned right after design-lint on the
+  // interface file, so the list read is one longer.
+  expect(only.unproven.slice(0, 5)).toEqual([
     "gate secrets not run",
     "gate prose not run",
     "gate design-lint not run",
+    "gate design-detect not run",
     "gate test not run",
   ]);
   // A deterministic name beside a judgement name runs that gate alone.
@@ -1372,7 +1375,8 @@ test("SP7b-T4 AC-1: the e2e gate is planned from the change and the policy, exac
   write(repo, "src/App.vue", "<template>hi</template>");
   const todo = await runTaskGate(paths, work, detected, withE2e, ["src/App.vue"]);
   // SP9-T6 AC-9 edits this line: a todo's gate lints its interface file (never the e2e run).
-  expect(todo.runs.map((r) => r.gate)).toEqual(["design-lint", "test"]);
+  // 2026-11-17-001 edits this line: the detector runs over the todo's interface file too.
+  expect(todo.runs.map((r) => r.gate)).toEqual(["design-lint", "design-detect", "test"]);
   // The item's run: unavailable, with the command that would make it run.
   const noEnvironment =
     'no environment in the profile (crew profile set environment.start "<cmd>")';
@@ -1558,7 +1562,8 @@ test("SP7b-T5 AC-1: runTaskGate returns the judgement the todo's scope plans, an
   write(root, "src/App.vue", "<template>hi</template>");
   const ui = await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/App.vue"]);
   // SP9-T6 AC-9 edits this line: a todo's gate lints its interface file beside the scoped test.
-  expect(ui.runs.map((r) => r.gate)).toEqual(["design-lint", "test"]);
+  // 2026-11-17-001 edits this line: the detector runs over the todo's interface file too.
+  expect(ui.runs.map((r) => r.gate)).toEqual(["design-lint", "design-detect", "test"]);
   expect(ui.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
   expect((await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/a.ts"])).judgement).toEqual(
     [],

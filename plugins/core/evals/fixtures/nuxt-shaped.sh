@@ -122,3 +122,6 @@ console.log(`[nuxt] ${command}: the fixture's stub, nothing run`);
 process.exit(0);
 EOF
 chmod +x node_modules/vitest/vitest.mjs node_modules/eslint/bin/eslint.js node_modules/nuxt/bin/nuxt.mjs
+
+# The design-detect gate's detector, cached for the sandbox (item 2026-11-17-001).
+. "$(dirname "$0")/../fixtures/detector.sh"

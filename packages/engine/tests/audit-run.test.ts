@@ -12,6 +12,7 @@ import {
 import { join } from "node:path";
 import type { AuditRun, AuditRuns, AuditScope } from "../src/audit-run.ts";
 import { auditFiles, auditScope, cappedRefusal, runAudit, staleRefusal } from "../src/audit-run.ts";
+import { plannedGates } from "../src/gates.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { ensureProfile } from "../src/profile.ts";
@@ -197,6 +198,22 @@ test("SP8-T4 AC-1 (the security lead's return): a tree over the walk's cap is ne
   expect("capped" in atCap).toBe(false);
   expect(existsSync(join(workDir(paths, work.id), "audit", "files.txt"))).toBe(true);
 });
+
+test("design-detect AC-14: the audit plans the design-detect gate out, as it plans the design lint out, when the tree holds an interface file", async () => {
+  const root = auditFixture();
+  mkdirSync(join(root, "src", "pages"), { recursive: true });
+  writeFileSync(join(root, "src", "pages", "index.vue"), "<template><p>hi</p></template>\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "a page");
+  const { paths, profile, work } = auditItem(root);
+  // The plan of a change over the same file holds the gate: the audit is what leaves it out.
+  expect(
+    plannedGates("full", profile, DEFAULT_POLICY, ["src/pages/index.vue"], root).map((p) => p.gate),
+  ).toContain("design-detect");
+  const result = await runAudit(paths, work, profile, DEFAULT_POLICY, {});
+  if (!("runs" in result)) throw new Error("the fixture is under the cap and HEAD unchanged");
+  expect(result.runs.map((r) => r.gate)).not.toContain("design-detect");
+}, 120_000);
 
 test("SP9-T6 AC-1: the audit plans the design-lint gate out, as it plans e2e out, even when the tree holds an interface file", async () => {
   const root = auditFixture();

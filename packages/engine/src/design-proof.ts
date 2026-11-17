@@ -180,6 +180,12 @@ export function declareKind(
     const why = textRefusal("--name", input.name, CAPS.name);
     if (why) return no(`${why} (other takes --name "<the kind>")`);
   } else if (input.name !== undefined) return no("--name goes with other, not with one of the ten");
+  // With no metric the refusal proposes the kind's usual one (section 1 of the definition); the
+  // project's own is still the person's to write.
+  if (input.metric === undefined && !other)
+    return no(
+      `--metric is required: the usual one of ${input.kind} is --metric "${KIND_METRICS[input.kind as Kind]}"`,
+    );
   const metric = storable("--metric", input.metric, CAPS.metric);
   if (!metric.ok) return metric;
   const current = readKind(paths).record;
@@ -205,7 +211,7 @@ export function declareKind(
   return { ok: true, record };
 }
 
-const UNDER_ENGINE = /^\.(?:crew|git)(?:\/|$)/;
+const UNDER_ENGINE = /^\.(?:crew|git)(?:\/|$)/i;
 
 /**
  * The file a measurement stands in, as the path stored for it: a regular file inside the project,

@@ -1,8 +1,9 @@
 import { afterAll, afterEach } from "bun:test";
-import { realpathSync } from "node:fs";
+import { chmodSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { readWaitSpent } from "../src/lock.ts";
-import { enterRun, removeTempDirs, runsHome, sweepDeadRuns } from "./helpers.ts";
+import { enterRun, removeTempDirs, runsHome, sweepDeadRuns, tempDir } from "./helpers.ts";
 
 // Named by both bunfig.toml files (the root's and the engine's). Every run of the tests gets a
 // temporary folder of its own, beside the system's: each fixture lands in it, registered with
@@ -15,6 +16,26 @@ import { enterRun, removeTempDirs, runsHome, sweepDeadRuns } from "./helpers.ts"
 const home = runsHome(realpathSync(tmpdir()));
 sweepDeadRuns(home);
 const run = enterRun(home);
+
+// No test reaches the network or the real detector (item 2026-11-17-001): a stand-in named `npx`
+// stands first on the PATH of the tests' process, in the run's own folder, and leaves with it. It
+// answers the design-detect gate's call alone, with no finding; any other call fails by name, so
+// a test that meant another `npx` command never passes on an empty array.
+const standIn = tempDir("crew-npx-");
+writeFileSync(
+  join(standIn, "npx"),
+  `#!/bin/sh
+for word in "$@"; do
+  case "$word" in
+    impeccable@*) echo "[]"; exit 0 ;;
+  esac
+done
+echo "the tests' stand-in npx answers the design-detect gate alone: $*" >&2
+exit 64
+`,
+);
+chmodSync(join(standIn, "npx"), 0o755);
+process.env.PATH = `${standIn}${delimiter}${process.env.PATH ?? ""}`;
 
 // The removal has a budget of its own: a run started without the root script's --timeout gets bun's
 // 5 seconds for a hook, which the fixtures of three of the larger files together pass (5.2 s

@@ -121,3 +121,6 @@ pkg.scripts = { ...pkg.scripts, "test:e2e": "node scripts/e2e.mjs" };
 writeFileSync("package.json", `${JSON.stringify(pkg)}\n`);
 '
 printf 'node_modules/\ntest-results/\nvar/\n' >> .gitignore
+
+# The design-detect gate's detector, cached for the sandbox (item 2026-11-17-001).
+. "$(dirname "$0")/../fixtures/detector.sh"

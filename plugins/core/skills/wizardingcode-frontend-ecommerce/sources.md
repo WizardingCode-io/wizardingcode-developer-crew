@@ -11,7 +11,7 @@ One line per address the two skills cite: the address, its title, what it is, an
 - https://baymard.com/blog/ecommerce-search-query-types · Baymard Institute, "Ecommerce Search UX 2026" · a usability benchmark, 10,000+ scores over 170+ sites and apps; published 2024-09-12, updated 2026-04-29 · read on 2026-11-16
 - https://baymard.com/blog/current-state-ecommerce-product-page-ux · Baymard Institute, "Product Page UX 2026" · a usability benchmark, 30,000+ scores over 155+ sites; published 2023-10-24, updated 2026-03-18 · read on 2026-11-16
 - https://baymard.com/blog/mobile-ux-ecommerce · Baymard Institute, "Mobile UX Trends 2026" · a usability benchmark, 71,000+ rated elements over 150+ mobile sites; published 2024-05-23, updated 2026-07-14 · read on 2026-11-16
-- https://baymard.com/blog/homepage-carousel · Baymard Institute, "10 UX Requirements for a User-Friendly Homepage Carousel Design" · usability testing; published 2019-04-30, updated 2025-04-03 · read on 2026-11-16
+- https://baymard.com/blog/homepage-carousel · Baymard Institute, "10 UX Requirements to Follow for a User-Friendly Homepage Carousel Design" · usability testing; published 2019-04-30, updated 2025-04-03 · read on 2026-11-16
 - https://baymard.com/blog/perceived-security-of-payment-form · Baymard Institute, "How Users Perceive Security During the Checkout Flow" · surveys of perceived security, not of sales · read on 2026-11-16
 - https://www.nngroup.com/articles/auto-forwarding/ · Nielsen Norman Group, "Auto-Forwarding Carousels and Accordions Annoy Users and Reduce Visibility" (Jakob Nielsen, 2013-01-19) · one usability test session · read on 2026-11-16
 
@@ -20,7 +20,7 @@ One line per address the two skills cite: the address, its title, what it is, an
 - https://www.gwern.net/doc/economics/advertising/2017-browne.pdf · Will Browne and Mike Swarbrick Jones, "What works in e-commerce - a meta-analysis of 6700 online experiments" (Qubit, 2017) · a meta-analysis of one personalisation vendor's clients' experiments, 2014-07-09 to 2017-04, revenue per visitor, about 2,600 of 6,700 categorised, method assured by PwC · read on 2026-11-16, as a PDF
 - https://blog.analytics-toolkit.com/2022/what-can-be-learned-from-1001-a-b-tests/ · Georgi Georgiev, "What Can Be Learned From 1,001 A/B Tests?" · the tests of one statistics platform's users · read on 2026-11-16
 
-## Vendors' figures, each a hypothesis in the playbook
+## Reports with no stated method and vendors' figures, each a hypothesis in the playbook
 
 - https://spiegel.medill.northwestern.edu/how-online-reviews-influence-sales/ · Spiegel Research Center (Northwestern), "How Online Reviews Influence Sales" · a report of June 2017 on a page dated 2025-12-04 that names no authors, sample, period, data provider or method · read on 2026-11-16
 - https://www.powerreviews.com/review-volume-conversion-impact/ · PowerReviews, "The Impact of Review Volume on Conversion" · a review vendor's observational data, 2020-05-12 to 2021-05-14, with no control for product popularity · read on 2026-11-16

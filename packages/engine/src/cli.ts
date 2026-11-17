@@ -1094,6 +1094,8 @@ async function taskGate(
   opened: Opened,
   parsed: Parsed,
   record: TaskRecord,
+  /** The environment of the gates' commands: the command's own (item 2026-11-17-001). */
+  gateEnv: NodeJS.ProcessEnv,
 ): Promise<Outcome> {
   const task = record.task;
   // What the gate would run on comes first: a todo with nothing in this checkout is refused
@@ -1119,7 +1121,7 @@ async function taskGate(
     opened.work.id,
     env.session,
     `crew task ${opened.work.id} gate ${task}`,
-    () => runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope),
+    () => runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope, gateEnv),
   );
   const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped;
   const planned = planTaskJudgement(env, {
@@ -5823,6 +5825,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           runGates(env.paths, opened.work, env.profile, env.policy, {
             only: only as (GateName | JudgementGateName)[] | undefined,
             tampered: env.tampered || opened.tampered,
+            // The command's own environment, so a gate finds its tools where this command does
+            // (item 2026-11-17-001).
+            env: io.env,
           }),
       );
       // A gate run is the work entering its gate phase, and its delivery when it proves the work;
@@ -6230,7 +6235,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (!task) return refuse(usage);
         const record = findTask(opened.work, task);
         if ("refused" in record) return refuse(record.refused);
-        return taskGate(env, opened, parsed, record);
+        return taskGate(env, opened, parsed, record, io.env);
       }
       if (args[1] === "brief") {
         // What the todo changed, proved and left, from the records (SP7 §8.1); the leads read it at delivery.

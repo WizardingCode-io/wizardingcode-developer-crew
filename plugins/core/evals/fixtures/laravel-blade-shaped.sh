@@ -108,3 +108,6 @@ echo 'artisan: ' . implode(' ', array_slice($argv, 1)) . "\n";
 exit(0);
 PHP
 chmod +x artisan
+
+# The design-detect gate's detector, cached for the sandbox (item 2026-11-17-001).
+. "$(dirname "$0")/../fixtures/detector.sh"

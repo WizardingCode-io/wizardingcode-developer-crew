@@ -7,6 +7,7 @@ export type GateName =
   | "secrets"
   | "prose"
   | "design-lint"
+  | "design-detect"
   | "deps"
   | "e2e";
 export const GATE_NAMES: readonly GateName[] = [
@@ -17,13 +18,19 @@ export const GATE_NAMES: readonly GateName[] = [
   "secrets",
   "prose",
   "design-lint",
+  "design-detect",
   "deps",
   "e2e",
 ];
 
-/** The gates the engine computes itself (SP9 Task 6): no command, nothing to set, unset or detect; planned by the change. */
-export type BuiltInGate = "secrets" | "prose" | "design-lint";
-export const BUILT_IN_GATES: readonly BuiltInGate[] = ["secrets", "prose", "design-lint"];
+/** The gates the engine computes or runs itself (SP9 Task 6; `design-detect`, item 2026-11-17-001): no command of the profile, nothing to set, unset or detect; planned by the change. */
+export type BuiltInGate = "secrets" | "prose" | "design-lint" | "design-detect";
+export const BUILT_IN_GATES: readonly BuiltInGate[] = [
+  "secrets",
+  "prose",
+  "design-lint",
+  "design-detect",
+];
 export function isBuiltInGate(gate: string): gate is BuiltInGate {
   return (BUILT_IN_GATES as readonly string[]).includes(gate);
 }

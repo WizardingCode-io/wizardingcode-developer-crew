@@ -36,6 +36,8 @@ Why 40 ms and not 100 for the stagger: both motion sources (emilkowalski/skills 
 
 Read `wizardingcode-frontend-strategy` before the first interface file, on every route. It declares the project's kind and primary metric once (`crew design <id> kind <kind> --metric "<text>"`), and records each design choice with one of five proof labels (`crew design <id> choice add "<choice>" --label <label>`). Then read the kind's playbook: `wizardingcode-frontend-ecommerce` for a shop; a kind with no playbook yet takes the Strategy skill alone and records its choices as hypotheses unless a norm or a platform's page carries them. On the standard and full routes an interface change with no kind recorded is not proven, and a `surface` or `world` change needs at least one recorded choice.
 
+`design-detect` runs `impeccable@4.9.2` on changed interface files (`gate.md`).
+
 ## A new site
 
 A site is creative work, so the process comes before the values: `wizardingcode-design-brief`, `wizardingcode-design-direction`, `wizardingcode-design-system`, `wizardingcode-design-copy`, `wizardingcode-design-build`, `wizardingcode-design-review`, each read at its own step: the brief when the item starts, the direction and the system before the first interface file, the copy before any markup, the build through the build phase, the review after the e2e gate passes. A section inside an established site is `extend` and takes none of them. On a Persuade or Experience page at `surface` or `world`, `references/frontend-site.md` adds its motion regime and the measured proportion limits to this page.

@@ -587,8 +587,9 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
   expect(json.data.review).toBe(`.crew/work/${id}/review`);
   // secrets, prose (2026-10-29-001 edits this count: planned on every item), design-lint (SP9-T6
   // AC-9 edits this count: the interface file plans it), test and the skipped e2e row of the full
-  // run; --only ui-ux ran nothing new.
-  expect((json.data.runs as unknown[]).length).toBe(5);
+  // run; --only ui-ux ran nothing new. 2026-11-17-001 edits this count: design-detect is planned
+  // on the interface file, right after design-lint.
+  expect((json.data.runs as unknown[]).length).toBe(6);
   expect((await c.run("gate", "run", id, "--only", "ui-ux,bogus")).err.trim()).toBe(
     "unknown gate: bogus",
   );

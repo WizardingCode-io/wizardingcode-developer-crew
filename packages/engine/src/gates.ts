@@ -10,6 +10,7 @@ import {
   riskAreasForPaths,
 } from "./classify.ts";
 import { designReasons, readScore, readSurface } from "./design.ts";
+import { detectableFiles, runDesignDetect } from "./design-detect.ts";
 import { runDesignLint } from "./design-lint.ts";
 import { proposedByPack } from "./detect/index.ts";
 import { runE2e } from "./e2e.ts";
@@ -329,6 +330,10 @@ export function plannedGates(
   // The design lint right after the scan, on a frontend path (an interface file or a design
   // contract), on every route (SP9 Task 6).
   if (changed.some(isFrontendPath)) planned.push({ gate: "design-lint", target: "." });
+  // The detector right after the lint, when an interface file of the change exists for it to read
+  // (item 2026-11-17-001).
+  if (detectableFiles(root, changed).length > 0)
+    planned.push({ gate: "design-detect", target: "." });
   const touched = profile.targets.filter(
     (t) => changed.length === 0 || changed.some((p) => covers(t, p)),
   );
@@ -425,6 +430,8 @@ export async function runTaskGate(
   profile: Profile,
   policy: Policy,
   scope: string[],
+  /** The environment of the gates' commands, the process's when none is given. */
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ status: "pass" | "fail"; runs: GateRun[]; judgement: PlannedJudgement[] }> {
   const planned = plannedGates(work.route, profile, policy, scope, paths.root).filter(
     (p) => p.gate !== "secrets" && p.gate !== "prose" && p.gate !== "e2e",
@@ -432,7 +439,9 @@ export async function runTaskGate(
   const stamp = gitHead(paths.root) ?? "none";
   const runs: GateRun[] = [];
   for (const p of planned)
-    runs.push(await runOneGate(paths, work, profile, p, stamp, scope, policy, scope));
+    runs.push(
+      await runOneGate(paths, work, profile, p, stamp, scope, policy, scope, undefined, env),
+    );
   // The judgement the scope asks for is planned here and run by the roles, never by the engine (SP7b decision 14).
   return {
     status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail",
@@ -520,6 +529,15 @@ export async function runOneGate(
         policy,
         writes: scope === undefined,
       }),
+    };
+  }
+  if (gate === "design-detect") {
+    // The detector (item 2026-11-17-001): the engine's own command over the change's interface
+    // files, or a todo's; never a command of the profile.
+    return {
+      ...base,
+      commandSource: "detected",
+      ...(await runDesignDetect({ paths, work, files: scope ?? changed, env })),
     };
   }
   const target = targetOf(profile, planned);

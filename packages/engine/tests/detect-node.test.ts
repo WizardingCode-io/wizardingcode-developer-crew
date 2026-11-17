@@ -212,6 +212,8 @@ test("SP7b-T4 AC-1: the e2e command comes from a test:e2e or e2e script (detecte
     "secrets",
     "prose",
     "design-lint",
+    // 2026-11-17-001 edits this list: design-detect joins right after design-lint.
+    "design-detect",
     "deps",
     "e2e",
   ]);

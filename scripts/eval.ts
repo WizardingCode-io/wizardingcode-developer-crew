@@ -2,8 +2,15 @@
 // bin/ first, because `crew` is not on the Bash tool's PATH inside an eval, and on macOS the real git,
 // because the /usr/bin shim cannot write its xcrun cache inside the eval sandbox.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
+import {
+  DETECT_TIMEOUT_MS,
+  DETECTOR_REGISTRY,
+  DETECTOR_VERSION,
+  detectEnv,
+} from "../packages/engine/src/design-detect.ts";
 
 export interface EvalOptions {
   root: string;
@@ -717,6 +724,60 @@ export type KitRun =
       judge: JudgeChoice;
     };
 
+/** Where the runner keeps the detector's package for the sandbox, beside Playwright's browsers. */
+export const DETECTOR_CACHE = "node_modules/.cache/crew-detector-npm";
+
+/**
+ * The design-detect gate's detector for the kit's sandbox (item 2026-11-17-001): the sandbox reaches
+ * no registry, and the gate's `npx --prefer-offline` takes the package from the npm cache of the
+ * sandbox's home. The runner, which has the network, runs the pinned launcher once with an npm
+ * cache of its own under the repository; `evals/fixtures/detector.sh` copies that cache into each
+ * scaffold's home. Answers a line to print when the package could not be fetched: the cases then
+ * run with the gate unavailable, which their traces name.
+ */
+export function seedDetectorCache(
+  root: string,
+  run: typeof spawnSync = spawnSync,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const dir = join(root, DETECTOR_CACHE);
+  const marker = join(dir, `seeded-${DETECTOR_VERSION}`);
+  // The marker and the cache it vouches for: a cache emptied after seeding is filled again.
+  if (existsSync(marker) && existsSync(join(dir, "_cacache"))) return null;
+  // One real run of the launcher, with a cache of its own: npx then installs the launcher and the
+  // platform's engine package it depends on, and both land in the cache. `npm cache add` alone
+  // holds the launcher only, and the launcher then looks for its engine on the network (the eval
+  // run of 2026-11-17, exit 127 in the sandbox). `--list-rules` scans nothing.
+  // The launcher is a third party's code: it runs as the gate runs it, in an empty folder outside
+  // the repository and with the gate's named minimum of the environment, never the runner's own,
+  // which holds the eval's provider keys.
+  mkdirSync(dir, { recursive: true });
+  const folder = mkdtempSync(join(tmpdir(), "crew-detector-seed-"));
+  let added: ReturnType<typeof spawnSync>;
+  try {
+    added = run(
+      "npx",
+      [
+        "--yes",
+        `--registry=${DETECTOR_REGISTRY}`,
+        "--cache",
+        dir,
+        `impeccable@${DETECTOR_VERSION}`,
+        "detect",
+        "--list-rules",
+        "--quiet",
+      ],
+      { cwd: folder, encoding: "utf8", timeout: DETECT_TIMEOUT_MS, env: detectEnv(env) },
+    );
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+  if (added.status !== 0)
+    return `eval: impeccable@${DETECTOR_VERSION} could not be fetched into ${DETECTOR_CACHE}; the design-detect gate will be unavailable in the sandbox`;
+  writeFileSync(marker, "");
+  return null;
+}
+
 /**
  * Runs the kit into a folder of the run's own (finding 118): the folder is created first, so a kit
  * that refused it would refuse before any paid case; the kit receives it through `--output-dir`
@@ -763,6 +824,8 @@ export function runKit(options: {
   for (const line of judge.lines) console.log(line);
   if (judge.judge === null)
     return { folder: null, relative: null, aggregate: null, status: 5, command: "", judge };
+  const unseeded = seedDetectorCache(options.root);
+  if (unseeded) console.log(unseeded);
   const folder = runFolder(results, options.suffix, new Date());
   createRunFolder(folder, results);
   const relative = `${dir}/${basename(folder)}`;
