@@ -3790,7 +3790,7 @@ var WRAPPERS = [
 ];
 
 // packages/engine/src/version.ts
-var VERSION = "0.24.5";
+var VERSION = "0.25.0";
 function compareVersions(a, b) {
   const x = a.split(".").map(Number);
   const y = b.split(".").map(Number);
