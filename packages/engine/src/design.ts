@@ -652,12 +652,13 @@ function referenceFigures(score: ScoreRecord): { site: BarFigures; level: BarFig
 }
 const scoreFile = (paths: CrewPaths, id: string) => join(designDir(paths, id), "score.json");
 
+/** The one pattern the score line is read with, by `parseScore` and by the reader of the bar's lines (item 2026-11-18-009). */
+export const SCORE_LINE =
+  /^score:\s*(\d+(?:\.\d+)?)\s*·\s*caps:\s*(.+?)\s*·\s*disposition:\s*(recapture|rebuild|fix|ship)\s*$/m;
+
 /** The reviewer's line `score: 8.7 · caps: none · disposition: ship`; null when it is not there as that shape. */
 export function parseScore(findings: string): Omit<ScoreRecord, "fingerprint" | "at"> | null {
-  const line =
-    /^score:\s*(\d+(?:\.\d+)?)\s*·\s*caps:\s*(.+?)\s*·\s*disposition:\s*(recapture|rebuild|fix|ship)\s*$/m.exec(
-      findings,
-    );
+  const line = SCORE_LINE.exec(findings);
   if (!line) return null;
   const score = Number(line[1]);
   if (!Number.isFinite(score) || score < 0 || score > 10) return null;
@@ -671,8 +672,10 @@ export function parseScore(findings: string): Omit<ScoreRecord, "fingerprint" | 
   return { score, caps, disposition };
 }
 
+/** The score the engine recorded; a record a hand changed is no score (item 2026-11-18-009), as a bar record is no record. */
 export function readScore(paths: CrewPaths, id: string): ScoreRecord | null {
-  return readProtectedJson<ScoreRecord>(paths, scoreFile(paths, id)).data;
+  const read = readProtectedJson<ScoreRecord>(paths, scoreFile(paths, id));
+  return read.tampered ? null : read.data;
 }
 
 export function saveScore(paths: CrewPaths, id: string, record: ScoreRecord): void {

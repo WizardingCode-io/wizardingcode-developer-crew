@@ -10,6 +10,7 @@ import {
   DIMENSIONS_OF_THE_BAR,
   designDir,
   SCORE_BAR,
+  SCORE_LINE,
   type ScoreRecord,
 } from "./design.ts";
 import { ensureDir, readRegular, readRegularText, sha256 } from "./fs.ts";
@@ -35,7 +36,9 @@ const RECORD_MAX_BYTES = 1024 * 1024;
 /** Why the references did not set the bar: fixed sentences, the first that applies. */
 export const BAR_SENTENCES = {
   notApproved: "no references approved by the user for the bar",
+  list: "the shot list no longer names an approved shot once",
   changed: "a reference changed since it was approved",
+  noDigest: "a pair's record does not carry the approved reference's digest",
   noPair: "an approved shot has no pair on the fixture's record",
   older: "the fixture's record is older than a capture it pairs",
   count: "the review read another number of shots than were approved",
@@ -49,8 +52,6 @@ export interface BarLines {
   level: BarFigures;
 }
 
-const SCORE_LINE =
-  /^score:\s*(\d+(?:\.\d+)?)\s*·\s*caps:\s*(.+?)\s*·\s*disposition:\s*(recapture|rebuild|fix|ship)\s*$/m;
 const FIGURES = DIMENSIONS_OF_THE_BAR.map((d) => `${d} (\\d{1,2}(?:\\.\\d+)?)`).join(" · ");
 const DIMENSIONS_LINE = new RegExp(`^dimensions: ${FIGURES}$`);
 const LEVEL_LINE = new RegExp(`^level: ${FIGURES}$`);
@@ -98,6 +99,7 @@ export interface BarShot {
 export interface BarRecord {
   /** The decision this record's question was put as. */
   decision: string;
+  /** When the question was put: for a person reading the file; the engine does not read it. */
   at: string;
   shots: BarShot[];
 }
@@ -255,6 +257,14 @@ function boundedJson(path: string): Record<string, unknown> | null {
 const timeOf = (value: unknown): number =>
   typeof value === "string" ? Date.parse(value) : Number.NaN;
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+/** True for a regular file within the reference's bound that begins as a PNG does, which is what the pair helper writes. */
+function isPng(path: string): boolean {
+  const bytes = readRegular(path, REF_MAX_BYTES);
+  return bytes instanceof Buffer && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+}
+
 /** The sentence for what the fixture's files lack for the approved shots, or null when they hold. */
 function evidenceSentence(ui: string, shots: readonly BarShot[]): string | null {
   const record = boundedJson(join(ui, "shots.json"));
@@ -269,15 +279,11 @@ function evidenceSentence(ui: string, shots: readonly BarShot[]): string | null 
         (e as Record<string, unknown>).shot === shot.shot &&
         (e as Record<string, unknown>).width === shot.width,
     );
-    if (
-      !entry ||
-      entry.pair !== pair ||
-      !(readRegular(join(ui, pair), REF_MAX_BYTES) instanceof Buffer)
-    )
-      unpaired = true;
+    if (!entry || entry.pair !== pair || !isPng(join(ui, pair))) unpaired = true;
     // The pair was composed from these bytes, by the helper's own read: other bytes than the
     // approved ones are another reference, whatever stands on disk when the score is recorded.
-    else if (entry.digest !== shot.digest) return BAR_SENTENCES.changed;
+    // A record from a fixture before item 2026-11-18-008 has no digest, and says the same.
+    else if (entry.digest !== shot.digest) return BAR_SENTENCES.noDigest;
   }
   if (unpaired) return BAR_SENTENCES.noPair;
   const paired = timeOf(record.at);
@@ -290,7 +296,7 @@ function evidenceSentence(ui: string, shots: readonly BarShot[]): string | null 
   return null;
 }
 
-/** What a score is held to: the fields of the record that say the bar, the figures and why. */
+/** What a score is held to: the fields of the record that say the bar, the figures and why, and the disposition, which replaces the parsed one where the record is written. */
 export type BarOutcome = Pick<ScoreRecord, "bar" | "why" | "dimensions" | "level"> & {
   disposition: string;
 };
@@ -319,16 +325,21 @@ export function decideBar(
   if (!bar || !barApproved(work.decisions, bar)) return overall(BAR_SENTENCES.notApproved);
   const folder = workDir(paths, work.id);
   const rows = shotRows(folder) ?? [];
-  for (const shot of bar.shots) {
-    const row = refOfShot(rows, shot.shot, shot.width);
-    if ("why" in row || row.ref !== shot.ref || refDigest(folder, shot.ref) !== shot.digest)
-      return overall(BAR_SENTENCES.changed);
+  // The list first, for every shot, then each reference: the sentences keep the order of the checks.
+  const named = bar.shots.map((shot) => refOfShot(rows, shot.shot, shot.width));
+  if (named.some((row) => "why" in row)) return overall(BAR_SENTENCES.list);
+  for (const [i, shot] of bar.shots.entries()) {
+    const row = named[i];
+    if (!row || "why" in row || row.ref !== shot.ref) return overall(BAR_SENTENCES.changed);
+    if (refDigest(folder, shot.ref) !== shot.digest) return overall(BAR_SENTENCES.changed);
   }
   const lacking = evidenceSentence(join(folder, "review", "ui"), bar.shots);
   if (lacking) return overall(lacking);
   const { word, lines } = parseBarLines(findings);
   const counted = Number(/^reference:[ \t]*(\d+)[ \t]+shots\b/m.exec(findings)?.[1] ?? Number.NaN);
-  if ((lines?.shots ?? counted) !== bar.shots.length) return overall(BAR_SENTENCES.count);
+  // A count that differs is said only where the findings hold a count: with none, the lines are unread.
+  const count = lines?.shots ?? counted;
+  if (Number.isFinite(count) && count !== bar.shots.length) return overall(BAR_SENTENCES.count);
   if (!lines) return overall(BAR_SENTENCES.unread);
   const low = DIMENSIONS_OF_THE_BAR.find((d) => lines.level[d] < LEVEL_FLOOR);
   if (low) return overall(`${BAR_SENTENCES.low} ${low}`);

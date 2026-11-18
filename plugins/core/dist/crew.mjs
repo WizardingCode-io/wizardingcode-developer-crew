@@ -5391,8 +5391,9 @@ function referenceFigures(score) {
   return whole(score.dimensions) && whole(score.level) ? { site: score.dimensions, level: score.level } : null;
 }
 var scoreFile = (paths, id) => join12(designDir(paths, id), "score.json");
+var SCORE_LINE = /^score:\s*(\d+(?:\.\d+)?)\s*·\s*caps:\s*(.+?)\s*·\s*disposition:\s*(recapture|rebuild|fix|ship)\s*$/m;
 function parseScore(findings) {
-  const line = /^score:\s*(\d+(?:\.\d+)?)\s*·\s*caps:\s*(.+?)\s*·\s*disposition:\s*(recapture|rebuild|fix|ship)\s*$/m.exec(findings);
+  const line = SCORE_LINE.exec(findings);
   if (!line)
     return null;
   const score = Number(line[1]);
@@ -5404,7 +5405,8 @@ function parseScore(findings) {
   return { score, caps, disposition };
 }
 function readScore(paths, id) {
-  return readProtectedJson(paths, scoreFile(paths, id)).data;
+  const read = readProtectedJson(paths, scoreFile(paths, id));
+  return read.tampered ? null : read.data;
 }
 function saveScore(paths, id, record) {
   ensureDir(designDir(paths, id));
@@ -18466,14 +18468,15 @@ var WIDTH_MAX = 4000;
 var RECORD_MAX_BYTES = 1024 * 1024;
 var BAR_SENTENCES = {
   notApproved: "no references approved by the user for the bar",
+  list: "the shot list no longer names an approved shot once",
   changed: "a reference changed since it was approved",
+  noDigest: "a pair's record does not carry the approved reference's digest",
   noPair: "an approved shot has no pair on the fixture's record",
   older: "the fixture's record is older than a capture it pairs",
   count: "the review read another number of shots than were approved",
   unread: "the review's lines for the dimensions and the level were not read",
   low: `the references read under ${LEVEL_FLOOR} on`
 };
-var SCORE_LINE = /^score:\s*(\d+(?:\.\d+)?)\s*·\s*caps:\s*(.+?)\s*·\s*disposition:\s*(recapture|rebuild|fix|ship)\s*$/m;
 var FIGURES = DIMENSIONS_OF_THE_BAR.map((d) => `${d} (\\d{1,2}(?:\\.\\d+)?)`).join(" · ");
 var DIMENSIONS_LINE = new RegExp(`^dimensions: ${FIGURES}$`);
 var LEVEL_LINE = new RegExp(`^level: ${FIGURES}$`);
@@ -18628,6 +18631,11 @@ function boundedJson(path) {
   }
 }
 var timeOf = (value) => typeof value === "string" ? Date.parse(value) : Number.NaN;
+var PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+function isPng(path) {
+  const bytes = readRegular(path, REF_MAX_BYTES);
+  return bytes instanceof Buffer && bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE);
+}
 function evidenceSentence(ui, shots) {
   const record = boundedJson(join57(ui, "shots.json"));
   if (record?.by !== "fixture" || !Array.isArray(record.pairs))
@@ -18636,10 +18644,10 @@ function evidenceSentence(ui, shots) {
   for (const shot of shots) {
     const pair = `${named2(shot)}.pair.png`;
     const entry = record.pairs.find((e) => typeof e === "object" && e !== null && e.shot === shot.shot && e.width === shot.width);
-    if (!entry || entry.pair !== pair || !(readRegular(join57(ui, pair), REF_MAX_BYTES) instanceof Buffer))
+    if (!entry || entry.pair !== pair || !isPng(join57(ui, pair)))
       unpaired = true;
     else if (entry.digest !== shot.digest)
-      return BAR_SENTENCES.changed;
+      return BAR_SENTENCES.noDigest;
   }
   if (unpaired)
     return BAR_SENTENCES.noPair;
@@ -18668,9 +18676,14 @@ function decideBar(paths, work, findings, parsed) {
     return overall(BAR_SENTENCES.notApproved);
   const folder = workDir(paths, work.id);
   const rows = shotRows(folder) ?? [];
-  for (const shot of bar.shots) {
-    const row = refOfShot(rows, shot.shot, shot.width);
-    if ("why" in row || row.ref !== shot.ref || refDigest(folder, shot.ref) !== shot.digest)
+  const named = bar.shots.map((shot) => refOfShot(rows, shot.shot, shot.width));
+  if (named.some((row) => ("why" in row)))
+    return overall(BAR_SENTENCES.list);
+  for (const [i, shot] of bar.shots.entries()) {
+    const row = named[i];
+    if (!row || "why" in row || row.ref !== shot.ref)
+      return overall(BAR_SENTENCES.changed);
+    if (refDigest(folder, shot.ref) !== shot.digest)
       return overall(BAR_SENTENCES.changed);
   }
   const lacking = evidenceSentence(join57(folder, "review", "ui"), bar.shots);
@@ -18678,7 +18691,8 @@ function decideBar(paths, work, findings, parsed) {
     return overall(lacking);
   const { word, lines } = parseBarLines(findings);
   const counted = Number(/^reference:[ \t]*(\d+)[ \t]+shots\b/m.exec(findings)?.[1] ?? Number.NaN);
-  if ((lines?.shots ?? counted) !== bar.shots.length)
+  const count = lines?.shots ?? counted;
+  if (Number.isFinite(count) && count !== bar.shots.length)
     return overall(BAR_SENTENCES.count);
   if (!lines)
     return overall(BAR_SENTENCES.unread);

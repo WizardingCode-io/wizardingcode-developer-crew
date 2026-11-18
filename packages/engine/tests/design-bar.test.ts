@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
+import * as designModule from "../src/design.ts";
 import {
   designReasons,
   designScoreLines,
@@ -22,13 +23,22 @@ import {
   readSurface,
   type ScoreRecord,
 } from "../src/design.ts";
-import { BAR_SENTENCES, barApproved, barQuestion, parseBarLines } from "../src/design-bar.ts";
+import {
+  BAR_SENTENCES,
+  barApproved,
+  barQuestion,
+  decideBar,
+  parseBarLines,
+  readBar,
+} from "../src/design-bar.ts";
 import { PROTECTED_WORK_FILES } from "../src/paths.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const repoFile = (path: string): string => readFileSync(join(ROOT, path), "utf8");
 
+/** What the pair helper writes: a PNG, here its signature and a few bytes. */
+const PNG_PAIR = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
 const digestOf = (bytes: string): string => createHash("sha256").update(bytes).digest("hex");
 const SCORE = "score: 7.9 · caps: none · disposition: ship";
 const DIMS = "dimensions: design 8.2 · usability 8 · creativity 7.6 · content 8";
@@ -137,7 +147,7 @@ async function site() {
         join(ui, `${shot}.json`),
         JSON.stringify({ page, state, by: "fixture", at: captured, viewports: [] }),
       );
-      writeFileSync(join(ui, `${shot}@${width}.pair.png`), "a pair");
+      writeFileSync(join(ui, `${shot}@${width}.pair.png`), PNG_PAIR);
     }
     record({ at: paired });
   };
@@ -704,10 +714,10 @@ test("bar AC-18: the pair helper records the digest of the bytes it paired, and 
   ];
   const cases: [string, unknown, string | null][] = [
     ["the approved bytes", digestOf("the first reference"), null],
-    ["a weaker picture's bytes", digestOf("a weaker picture"), BAR_SENTENCES.changed],
-    ["no digest", undefined, BAR_SENTENCES.changed],
-    ["a null digest", null, BAR_SENTENCES.changed],
-    ["the other reference's digest", digestOf("the second reference"), BAR_SENTENCES.changed],
+    ["a weaker picture's bytes", digestOf("a weaker picture"), BAR_SENTENCES.noDigest],
+    ["no digest", undefined, BAR_SENTENCES.noDigest],
+    ["a null digest", null, BAR_SENTENCES.noDigest],
+    ["the other reference's digest", digestOf("the second reference"), BAR_SENTENCES.noDigest],
   ];
   for (const [what, digest, sentence] of cases) {
     const a = await site();
@@ -769,5 +779,293 @@ test("bar AC-18: the pair helper records the digest of the bytes it paired, and 
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+  }
+});
+
+// Item 2026-11-18-009: the advisories of item 2026-11-18-008, closed. The rows are titled "bar2".
+
+type Site = Awaited<ReturnType<typeof site>>;
+/** One case: a site with everything in place for the references' bar, one thing changed, and the sentence the record must say; null where the references set the bar. */
+async function after(
+  what: string,
+  change: (a: Site) => void | Promise<void>,
+  sentence: string | null,
+): Promise<Site> {
+  const a = await site();
+  await a.approve();
+  a.evidence();
+  a.review(SCORE, DIMS, REFS, LEVEL);
+  await change(a);
+  const got = await a.score();
+  expect(got.saved?.bar, what).toBe(sentence === null ? "references" : "overall");
+  expect(got.saved?.why, what).toBe(sentence ?? undefined);
+  if (sentence !== null) expect(got.reasons.join("; "), what).toContain("7.9 under the bar of 8.5");
+  return a;
+}
+const HOME = { shot: "home-default", width: 1280, ref: "home.png" };
+const SHOP = { shot: "shop-default", width: 360, ref: "shop.png" };
+const homeEntry = (over: Record<string, unknown> = {}) => ({
+  ...HOME,
+  pair: "home-default@1280.pair.png",
+  digest: digestOf("the first reference"),
+  ...over,
+});
+const shopEntry = (over: Record<string, unknown> = {}) => ({
+  ...SHOP,
+  pair: "shop-default@360.pair.png",
+  digest: digestOf("the second reference"),
+  ...over,
+});
+const rowsOf = (...rows: string[]): string =>
+  `${HEADER}\n| :- | :- | :- | :- | :- | :- | :- |\n${rows.join("\n")}\n`;
+
+test("bar2 AC-1: a score record a hand changed is no score, and one the engine wrote is read as before", async () => {
+  const a = await after("the references set the bar", () => {}, null);
+  const file = join(a.design, "score.json");
+  const written = readScore(a.paths, a.id);
+  expect(written?.score).toBe(7.9);
+  expect((await a.run("status", a.id)).text).not.toContain("design score not recorded");
+  writeFileSync(file, JSON.stringify({ ...written, score: 9.9, caps: [], disposition: "ship" }));
+  expect(readScore(a.paths, a.id)).toBeNull();
+  expect(designReasons(readSurface(a.paths, a.id), readScore(a.paths, a.id), "f")).toEqual([
+    "design score not recorded (crew design <id> score, after the review)",
+  ]);
+  // Through the command a person runs: the item's status says the score is not recorded.
+  const status = await a.run("status", a.id);
+  expect(status.text).toContain("design score not recorded");
+  // The engine's own next write is a record again, the round counted from one.
+  const again = await a.score();
+  expect(again.saved?.score).toBe(7.9);
+  expect(again.saved?.round).toBe(1);
+  // A record with none of item 008's fields, written by the engine, is read as it is.
+  const old = { score: 8.6, caps: [], disposition: "ship", fingerprint: "f", at: "x" };
+  designModule.saveScore(a.paths, a.id, old);
+  expect(readScore(a.paths, a.id)).toEqual(old);
+});
+
+test("bar2 AC-2: each cause has the sentence that is so", async () => {
+  const S = BAR_SENTENCES;
+  expect(S.list).toBe("the shot list no longer names an approved shot once");
+  expect(S.noDigest).toBe("a pair's record does not carry the approved reference's digest");
+  const home = shotRow("home-default", "home.png", 1280);
+  const shop = shotRow("shop-default", "shop.png", 360);
+  await after("an approved shot with no row", (a) => writeFileSync(a.list, rowsOf(shop)), S.list);
+  await after(
+    "an approved shot with two rows",
+    (a) => writeFileSync(a.list, rowsOf(home, shop, home)),
+    S.list,
+  );
+  await after("the shot list gone", (a) => unlinkSync(a.list), S.list);
+  await after("a shot list with no table", (a) => writeFileSync(a.list, "no table here\n"), S.list);
+  await after(
+    "an entry with another digest",
+    (a) => a.record({}, [homeEntry({ digest: digestOf("a weaker picture") }), shopEntry()]),
+    S.noDigest,
+  );
+  await after(
+    "an entry with no digest",
+    (a) => a.record({}, [homeEntry({ digest: undefined }), shopEntry()]),
+    S.noDigest,
+  );
+  await after(
+    "a row that names another file",
+    (a) => writeFileSync(a.list, rowsOf(shotRow("home-default", "shop.png", 1280), shop)),
+    S.changed,
+  );
+  await after(
+    "a file with other bytes",
+    (a) => writeFileSync(join(a.refs, "home.png"), "a weaker picture"),
+    S.changed,
+  );
+  await after("findings with no count of shots", (a) => a.review(SCORE, DIMS), S.unread);
+  await after(
+    "reference: none while references are approved",
+    (a) => a.review(SCORE, DIMS, "reference: none"),
+    S.unread,
+  );
+  await after(
+    "a count that differs",
+    (a) => a.review(SCORE, DIMS, "reference: 3 shots", LEVEL),
+    S.count,
+  );
+});
+
+test("bar2 AC-3: a pair is a file that begins with a PNG's signature", async () => {
+  const pair = (a: Site) => join(a.ui, "home-default@1280.pair.png");
+  await after("a pair of one byte", (a) => writeFileSync(pair(a), "x"), BAR_SENTENCES.noPair);
+  await after(
+    "a pair of text",
+    (a) => writeFileSync(pair(a), "a pair, in words"),
+    BAR_SENTENCES.noPair,
+  );
+  await after(
+    "a pair one byte short of the signature",
+    (a) => writeFileSync(pair(a), PNG_PAIR.subarray(0, 7)),
+    BAR_SENTENCES.noPair,
+  );
+  await after("an empty pair", (a) => writeFileSync(pair(a), ""), BAR_SENTENCES.noPair);
+  await after("the signature alone", (a) => writeFileSync(pair(a), PNG_PAIR.subarray(0, 8)), null);
+});
+
+test("bar2 AC-9: one exported pattern reads the score line for both parsers", () => {
+  const pattern = (designModule as Record<string, unknown>).SCORE_LINE;
+  expect(pattern).toBeInstanceOf(RegExp);
+  const source = repoFile("packages/engine/src/design-bar.ts");
+  expect(source).toContain("SCORE_LINE");
+  expect(/\/\^?score:/.test(source)).toBe(false);
+  const texts: [string, string | null][] = [
+    ["score: 8.7 · caps: none · disposition: ship", "ship"],
+    // The raw word: `parseScore` turns it into `fix` under 8.5, `parseBarLines` gives it as written.
+    ["score: 7.9 · caps: none · disposition: ship", "ship"],
+    ["score: 8.7 · caps: creativity 7 · disposition: ship", "ship"],
+    ["score: 6 · caps: none · disposition: rebuild", "rebuild"],
+    ["score: 8.7 · caps: none", null],
+    ["Score: 8.7 · caps: none · disposition: ship", null],
+    ["score: 8.7 · caps: none · disposition: accept", null],
+    ["score: 8.7 · caps: none · disposition: ship · more", null],
+    ["no line at all", null],
+  ];
+  for (const [line, word] of texts) {
+    const text = `read: 4 images\n${line}\n`;
+    expect(parseBarLines(text).word, line).toBe(word);
+    expect(parseScore(text) === null, line).toBe(word === null);
+    expect(pattern instanceof RegExp && pattern.exec(text)?.[3], line).toBe(word ?? undefined);
+  }
+  expect(parseScore("score: 7.9 · caps: none · disposition: ship\n")?.disposition).toBe("fix");
+  // The line twice: both read the first.
+  const twice =
+    "score: 9 · caps: none · disposition: ship\nscore: 6 · caps: none · disposition: fix\n";
+  expect(parseBarLines(twice).word).toBe("ship");
+  expect(parseScore(twice)?.score).toBe(9);
+});
+
+test("bar2 AC-13: a bar record rewritten by hand after the user's yes is no record", async () => {
+  const a = await site();
+  await a.approve();
+  a.evidence();
+  const file = join(a.design, "bar.json");
+  const record = JSON.parse(readFileSync(file, "utf8"));
+  expect(readBar(a.paths, a.id)).toEqual(record);
+  // A weaker picture under the approved name, paired, and the record pointed at its digest by hand.
+  writeFileSync(join(a.refs, "home.png"), "a weaker picture");
+  record.shots[0].digest = digestOf("a weaker picture");
+  writeFileSync(file, JSON.stringify(record));
+  a.record({}, [homeEntry({ digest: digestOf("a weaker picture") }), shopEntry()]);
+  a.review(SCORE, DIMS, REFS, LEVEL);
+  expect(readBar(a.paths, a.id)).toBeNull();
+  const direct = decideBar(a.paths, a.work(), findings(SCORE, DIMS, REFS, LEVEL), {
+    caps: [],
+    disposition: "fix",
+  });
+  expect(direct.bar).toBe("overall");
+  expect(direct.why).toBe(BAR_SENTENCES.notApproved);
+  const got = await a.score();
+  expect(got.saved?.bar).toBe("overall");
+  expect(got.saved?.why).toBe(BAR_SENTENCES.notApproved);
+  expect(got.reasons.join("; ")).toContain("7.9 under the bar of 8.5");
+});
+
+test("bar2 AC-11: each bound the engine copies is the fixture's own", () => {
+  const fixture = repoFile("plugins/core/e2e/playwright.mjs");
+  const engine = repoFile("packages/engine/src/design-bar.ts");
+  const boundOf = (source: string, name: string): string =>
+    new RegExp(`^const ${name} =\\s*([^;]+);`, "m")
+      .exec(source)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() ?? `no ${name}`;
+  const bounds: [string, string, string][] = [
+    ["the shot's name", "SHOT_NAME", "NAME"],
+    ["the reference's name", "REF_NAME", "REF_NAME"],
+    ["the shot list's header", "SHOTS_HEADER", "SHOTS_HEADER"],
+    ["the shot list's size", "SHOTS_MAX_BYTES", "SHOTS_MAX_BYTES"],
+    ["the shot list's rows", "SHOTS_MAX_ROWS", "SHOTS_MAX_ROWS"],
+    ["the reference's size", "REF_MAX_BYTES", "REF_MAX_BYTES"],
+    ["the least width", "WIDTH_MIN", "SIZE_MIN"],
+    ["the greatest width", "WIDTH_MAX", "SIZE_MAX"],
+  ];
+  for (const [what, ours, theirs] of bounds) {
+    expect(boundOf(fixture, theirs), what).not.toBe(`no ${theirs}`);
+    expect(`${what}: ${boundOf(engine, ours)}`).toBe(`${what}: ${boundOf(fixture, theirs)}`);
+  }
+});
+
+test("bar2 AC-7: the branches the code already decides, each with its row", async () => {
+  // The bar command's refusals, and the widths at their edges.
+  const a = await site();
+  const refused = async (what: string, ...args: string[]) => {
+    const got = await a.run("design", a.id, "bar", ...args);
+    expect(got.code, what).not.toBe(0);
+    expect(a.work().decisions ?? [], what).toEqual([]);
+    expect(() => readFileSync(join(a.design, "bar.json")), what).toThrow();
+  };
+  await refused("a shot named twice", "--shots", "home-default@1280,home-default@1280");
+  writeFileSync(
+    a.list,
+    rowsOf(shotRow("home-default", "home.png", 199), shotRow("shop-default", "shop.png", 4001)),
+  );
+  await refused("a width of 199", "--shots", "home-default@199");
+  await refused("a width of 4001", "--shots", "shop-default@4001");
+  unlinkSync(a.list);
+  await refused("no shot list", "--shots", "home-default@1280");
+  writeFileSync(
+    a.list,
+    rowsOf(shotRow("home-default", "home.png", 200), shotRow("shop-default", "shop.png", 4000)),
+  );
+  const taken = await a.run("design", a.id, "bar", "--shots", "home-default@200,shop-default@4000");
+  expect(taken.code).toBe(0);
+
+  // The figures' edges, and a fenced block closed before the score line.
+  const withDesign = (figure: string) =>
+    findings(SCORE, DIMS.replace("design 8.2", `design ${figure}`), REFS, LEVEL);
+  expect(parseBarLines(withDesign("10")).lines?.dimensions.design).toBe(10);
+  expect(parseBarLines(withDesign("0")).lines?.dimensions.design).toBe(0);
+  expect(parseBarLines(withDesign("10.1")).lines).toBeNull();
+  const closed = `# notes\n\`\`\`\nan example\n\`\`\`\n${findings(SCORE, DIMS, REFS, LEVEL)}`;
+  expect(parseBarLines(closed).lines?.shots).toBe(2);
+
+  // The times: equal is not older; a time that does not parse is.
+  const at = "2026-11-18T10:00:00.000Z";
+  await after("a record at the capture's own time", (b) => b.evidence(at, at), null);
+  await after(
+    "a capture's time that does not parse",
+    (b) =>
+      writeFileSync(
+        join(b.ui, "home-default.json"),
+        JSON.stringify({ page: "home", state: "default", by: "fixture", at: "yesterday" }),
+      ),
+    BAR_SENTENCES.older,
+  );
+
+  // Two causes at once: the earlier sentence is said.
+  await after(
+    "no record and a capture with no metadata",
+    (b) => {
+      unlinkSync(join(b.ui, "shots.json"));
+      unlinkSync(join(b.ui, "home-default.json"));
+    },
+    BAR_SENTENCES.noPair,
+  );
+  await after(
+    "the lines unread and a count that differs",
+    (b) => b.review(SCORE, DIMS, "reference: 3 shots"),
+    BAR_SENTENCES.count,
+  );
+  const digestSentence =
+    (BAR_SENTENCES as Record<string, string>).noDigest ?? BAR_SENTENCES.changed;
+  await after(
+    "one shot with no pair and another with another digest",
+    (b) => b.record({}, [shopEntry({ digest: digestOf("a weaker picture") })]),
+    digestSentence,
+  );
+
+  // The answers given through `crew decide` are the answers the engine recorded.
+  for (const answer of ["no", "Yes", "yes, for the home page only", "yes"]) {
+    const c = await site();
+    const { decided, decision } = await c.approve(answer);
+    expect(decided.code, answer).toBe(0);
+    const recorded = c.work().decisions.find((d: { id: string }) => d.id === decision);
+    expect(recorded.answer, answer).toBe(answer);
+    expect(recorded.by, answer).toBe("user");
+    expect(barApproved(c.work().decisions, readBar(c.paths, c.id)), answer).toBe(answer === "yes");
   }
 });
