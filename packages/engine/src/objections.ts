@@ -3,7 +3,7 @@ import { tddDone } from "./criteria.ts";
 import { nowIso } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
-import { readProtectedJson, writeProtectedJson } from "./store.ts";
+import { readProtectedJson, recordedAndGone, writeProtectedJson } from "./store.ts";
 import type {
   Decision,
   Evidence,
@@ -27,7 +27,12 @@ export function loadLedger(
   id: string,
 ): { ledger: ObjectionLedger; tampered: boolean } {
   const read = readProtectedJson<ObjectionLedger>(paths, ledgerPath(paths, id));
-  return { ledger: read.data ?? emptyLedger(), tampered: read.tampered };
+  // A ledger with a recorded hash whose file is gone was removed by a hand, since no writer of
+  // the engine removes one: it is state changed outside the engine, and never an empty ledger that
+  // would let an open blocking objection vanish (item 2026-11-18-013).
+  const removed =
+    read.data === null && !read.tampered && recordedAndGone(paths, ledgerPath(paths, id));
+  return { ledger: read.data ?? emptyLedger(), tampered: read.tampered || removed };
 }
 
 export function saveLedger(paths: CrewPaths, id: string, ledger: ObjectionLedger): void {

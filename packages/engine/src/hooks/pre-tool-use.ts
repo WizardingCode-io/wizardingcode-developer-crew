@@ -1156,6 +1156,14 @@ function userOnlyDecision(
         "deny",
         `Crew: no person is watching this session (${where}) and the policy is changed by a person alone: edit .crew/policy.json by hand and run crew policy accept in a session a person watches (crew policy set takes no --mode)`,
       ];
+    // Files changed outside the engine are accepted by a person alone (item 2026-11-18-013): the
+    // command refuses --mode, so the answer names the person's way and no flag to add, as for a
+    // policy command (finding 122).
+    if (verb === "accept")
+      return [
+        "deny",
+        `Crew: no person is watching this session (${where}) and files changed outside the engine are accepted by a person alone: run crew accept in a session a person watches; nothing is accepted until then.`,
+      ];
     if (flagged === mode) return null;
     if (flagged === undefined) {
       return [

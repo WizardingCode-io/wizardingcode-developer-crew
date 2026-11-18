@@ -15,7 +15,7 @@ import { guaranteeLines, runtimeOf } from "./runtimes.ts";
 import { sourceLine } from "./source.ts";
 import { specReviewLine } from "./spec-review.ts";
 import { oneLine } from "./state.ts";
-import { readProtectedJson, writeProtectedJson } from "./store.ts";
+import { readProtectedJson, recordedAndGone, writeProtectedJson } from "./store.ts";
 import {
   RESEARCH_AND_BASE,
   STRATEGY_SECTIONS,
@@ -137,7 +137,11 @@ export function loadEvidence(
   id: string,
 ): { evidence: Evidence; tampered: boolean } {
   const read = readProtectedJson<Evidence>(paths, evidencePath(paths, id));
-  return { evidence: read.data ?? emptyEvidence(), tampered: read.tampered };
+  // Evidence with a recorded hash whose file is gone was removed by a hand: state changed outside
+  // the engine, so no writer makes a fresh file in its place as the engine's own (item 2026-11-18-013).
+  const removed =
+    read.data === null && !read.tampered && recordedAndGone(paths, evidencePath(paths, id));
+  return { evidence: read.data ?? emptyEvidence(), tampered: read.tampered || removed };
 }
 
 export function saveEvidence(paths: CrewPaths, id: string, evidence: Evidence): void {
@@ -223,6 +227,8 @@ export interface VerdictInput {
   expected: PlannedGate[];
   currentFingerprint: string;
   tampered: boolean;
+  /** The ledger and the evidence file where each has a recorded hash and is gone (item 2026-11-18-013). */
+  removed?: readonly string[];
   /** Decides whether a skip the agent recorded with no person watching counts. */
   policy: Policy;
   /** The objection ledger; a blocking objection open or bound to an unproven criterion keeps the work unproven. */
@@ -345,6 +351,11 @@ export function computeVerdict(input: VerdictInput): {
       unproven.push(`judgement gate ${gate} not run: ${record.reason ?? "no reason given"}`);
   }
   unproven.push(...(input.design ?? []));
+  // A ledger or an evidence file removed by a hand, named with what undoes it (item 2026-11-18-013).
+  for (const name of input.removed ?? [])
+    unproven.push(
+      `record removed outside the engine: ${name} (the user accepts it with crew accept ${work.id})`,
+    );
   // The leads the route seats (finding 209): the item is not proven while one of them has no
   // current validation of the spec as it stands and of the delivery on the last gate run's
   // evidence. The phases ask the same on the way; the verdict asks it wherever the item is.

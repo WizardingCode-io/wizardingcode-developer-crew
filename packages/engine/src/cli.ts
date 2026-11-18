@@ -395,6 +395,7 @@ import {
   changedDesignRecords,
   forgetIntegrity,
   integrityOf,
+  protectedTextChanged,
   readProtectedJson,
   recordedAndGone,
   recordIntegrity,
@@ -672,7 +673,10 @@ function unknownFlag(command: string, parsed: Parsed): Outcome | null {
     command === "start" && unknown === "kind"
       ? '; for a criterion that existing tests keep green use --preserve "<text>", for one no test can fail first --observed "<text>"'
       : "";
-  return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}`);
+  // Files changed outside the engine are accepted by a person, never by an agent with nobody
+  // watching (item 2026-11-18-013): `crew accept` knows no --mode, and its refusal says why.
+  const person = command === "accept" && unknown === "mode" ? `: ${ACCEPT_NEEDS_A_PERSON}` : "";
+  return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}${person}`);
 }
 
 /** `stdout` prints the text on stdout even when the code is not 0: the text is a result, not an error. */
@@ -857,7 +861,7 @@ function skipRefusal(step: string): string {
 }
 
 /** The user trusts the current content of a target's protected files again. Asks the user (PreToolUse). */
-function accept(env: Env, target: string): Outcome {
+function accept(env: Env, target: string, parsed: Parsed): Outcome {
   if (target === "profile" || target === "policy" || target === "decisions") {
     if (!recordIntegrity(env.paths, join(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
@@ -868,20 +872,55 @@ function accept(env: Env, target: string): Outcome {
   const dir = workDir(env.paths, target);
   if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync(join(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
+  // The record of who accepted is appended to the register, so the register is trusted first: a
+  // changed one is accepted by its own command before any item's files (item 2026-11-18-013).
+  if (registerTampered(env.paths))
+    return refuse(
+      `${tamperMessage({ file: ".crew/decisions.json", accept: "decisions" })}; then crew accept ${target}`,
+    );
+  const decision = decisionFlag(parsed, env.policy);
+  if (isOutcome(decision)) return decision;
   // A protected file that is gone and had its hash recorded is accepted as gone (item
   // 2026-11-18-012): without it an item whose record was removed could never be opened again.
   const gone = PROTECTED_WORK_FILES.filter((name) => recordedAndGone(env.paths, join(dir, name)));
+  // What was changed, read before anything is trusted again: the record says which files the user
+  // accepted as changed and which were whole.
+  const changed = PROTECTED_WORK_FILES.filter((name) =>
+    protectedTextChanged(env.paths, join(dir, name)),
+  );
+  // The decision first, the trust after it: a failure to write the record leaves nothing accepted,
+  // where the other order left files trusted with no record of who accepted (the judge's advisory).
+  if (changed.length > 0 || gone.length > 0)
+    decide(env, target, {
+      kind: "accept",
+      text: `files accepted after a change outside the engine; changed: ${changed.join(", ") || "none"}; gone: ${gone.join(", ") || "none"}`,
+      by: whoDecides(decision),
+    });
   for (const name of gone) forgetIntegrity(env.paths, join(dir, name));
   const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join(dir, name)));
+  const givenUp = gone.flatMap((name) => (GIVEN_UP[name] ? [`${name}: ${GIVEN_UP[name]}`] : []));
   const goneText = gone.length
-    ? `; taken as gone: ${gone.join(", ")}${gone.includes("design/surface.json") ? `; the item has no design gate until a surface is recorded again (crew design ${target} surface …)` : ""}`
+    ? `; taken as gone: ${gone.join(", ")}${givenUp.length ? `; ${givenUp.join("; ")}` : ""}${gone.includes("design/surface.json") ? `; the item has no design gate until a surface is recorded again (crew design ${target} surface …)` : ""}`
     : "";
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are${goneText}`, {
     accepted: target,
     files,
     gone,
+    changed,
   });
 }
+
+/** What `crew accept` answers to `--mode`: nothing is accepted with nobody watching. */
+const ACCEPT_NEEDS_A_PERSON =
+  "a person accepts what was changed outside the engine, an item's files, a file of .crew/ or a mailbox: run crew accept in a session a person watches, with no --mode; nothing is accepted until then";
+
+/** What is given up with a protected file of an item accepted as gone, in fixed words true of every such file. */
+const GIVEN_UP: Readonly<Record<string, string>> = {
+  "objections.json":
+    "the item's objections are no longer on record, any open blocking one among them",
+  "evidence.json":
+    "the item's proof and its roles' records are no longer on record; the gates run again",
+};
 
 /** What `crew accept` takes: an item, a file of .crew/, or this project's own mailbox. */
 const ACCEPT_USAGE =
@@ -4800,7 +4839,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(
             "crew policy accept takes no --mode or --validator: a hand edit of the policy is accepted by a person",
           );
-        return accept(env, "policy");
+        return accept(env, "policy", parsed);
       }
       if (args[0] === "set" && args[1] === "standingE2eSkip")
         return setStandingE2eSkip(env, parsed);
@@ -4835,7 +4874,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(ACCEPT_USAGE);
         return acceptMailbox(env, parsed, which);
       }
-      return accept(env, args[0]);
+      return accept(env, args[0], parsed);
     }
     case "start": {
       const input = args.join(" ").trim();

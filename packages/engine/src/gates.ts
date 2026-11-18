@@ -37,7 +37,7 @@ import { runProse } from "./prose.ts";
 import { reviewSignals } from "./review-signals.ts";
 import { runCommand, shellWord } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
-import { changedDesignRecords } from "./store.ts";
+import { changedDesignRecords, removedItemRecords } from "./store.ts";
 import { plannedSeats, primaryTeam, teamsFor } from "./team.ts";
 import type {
   Evidence,
@@ -900,6 +900,7 @@ export async function runGates(
       tampered,
       specText: specTextOf(paths, work),
       design: designGateReasons(paths, work.id, currentFingerprint),
+      removed: removedItemRecords(paths, workDir(paths, work.id)),
     });
   // Saved into the evidence as it stands now, under the lock (finding 81): the runs and the stamp
   // are this run's, the test-first and the roles' records are whatever landed meanwhile, and the
@@ -934,6 +935,8 @@ export async function runGates(
 export interface Assessment {
   /** Why a new site is not yet at the bar (item 2026-10-30-005). */
   design?: readonly string[];
+  /** The ledger and the evidence file removed outside the engine (item 2026-11-18-013). */
+  removed?: readonly string[];
   evidence: Evidence;
   verdict: "proven" | "unproven";
   unproven: string[];
@@ -1018,6 +1021,7 @@ export function assess(
       standing: standingState(policy, profile),
       specText: specTextOf(paths, work),
       design: designGateReasons(paths, work.id, currentFingerprint),
+      removed: removedItemRecords(paths, workDir(paths, work.id)),
       audit: {
         run: audit.run !== null,
         runAtHead: audit.runAtHead,
@@ -1052,6 +1056,7 @@ export function reassess(a: AssessmentInputs, work: WorkItem, policy: Policy): A
     policy,
     specText: a.specText,
     ...(a.design ? { design: a.design } : {}),
+    ...(a.removed ? { removed: a.removed } : {}),
   });
   return { ...a, ...verdict };
 }

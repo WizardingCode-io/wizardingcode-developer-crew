@@ -268,6 +268,20 @@ export function recordedAndGone(paths: CrewPaths, absPath: string): boolean {
 }
 
 /**
+ * True when a protected file is there and its text no longer has its recorded hash, or has none
+ * where the engine recorded others. Asked of the text and never of what it parses to: a report and
+ * a knowledge listing are protected and are no JSON (the QA lead's return of item 2026-11-18-013).
+ */
+export function protectedTextChanged(paths: CrewPaths, absPath: string): boolean {
+  const read = readProtectedText<unknown>(paths, absPath);
+  if (read.text === null) return read.tampered;
+  const { map, corrupt } = readIntegrityFile(paths.integrityFile);
+  if (corrupt) return true;
+  const expected = map[rel(paths, absPath)];
+  return expected === undefined ? Object.keys(map).length > 0 : expected !== sha256(read.text);
+}
+
+/**
  * The design records of an item that were changed or removed outside the engine (item
  * 2026-11-18-012), as their names in `PROTECTED_WORK_FILES` (`design/surface.json`, …): one whose
  * content no longer has its recorded hash, and one with a recorded hash whose file is gone. The one
@@ -278,4 +292,15 @@ export function changedDesignRecords(paths: CrewPaths, workFolder: string): stri
     const file = join(workFolder, name);
     return readProtectedJson<unknown>(paths, file).tampered || recordedAndGone(paths, file);
   });
+}
+
+/**
+ * The ledger and the evidence file of an item where each has a recorded hash and is gone (item
+ * 2026-11-18-013): removed by a hand, since no writer of the engine removes either. The verdict
+ * names each; the two loaders refuse on the same fact.
+ */
+export function removedItemRecords(paths: CrewPaths, workFolder: string): string[] {
+  return ["evidence.json", "objections.json"].filter((name) =>
+    recordedAndGone(paths, join(workFolder, name)),
+  );
 }

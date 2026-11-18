@@ -4261,11 +4261,24 @@ function forgetIntegrity(paths, absPath) {
 function recordedAndGone(paths, absPath) {
   return readText(absPath) === null && integrityOf(paths)[rel(paths, absPath)] !== undefined;
 }
+function protectedTextChanged(paths, absPath) {
+  const read = readProtectedText(paths, absPath);
+  if (read.text === null)
+    return read.tampered;
+  const { map, corrupt } = readIntegrityFile(paths.integrityFile);
+  if (corrupt)
+    return true;
+  const expected = map[rel(paths, absPath)];
+  return expected === undefined ? Object.keys(map).length > 0 : expected !== sha256(read.text);
+}
 function changedDesignRecords(paths, workFolder) {
   return PROTECTED_WORK_FILES.filter((name) => name.startsWith("design/")).filter((name) => {
     const file = join8(workFolder, name);
     return readProtectedJson(paths, file).tampered || recordedAndGone(paths, file);
   });
+}
+function removedItemRecords(paths, workFolder) {
+  return ["evidence.json", "objections.json"].filter((name) => recordedAndGone(paths, join8(workFolder, name)));
 }
 
 // packages/engine/src/decisions.ts
@@ -7023,7 +7036,8 @@ function emptyLedger() {
 }
 function loadLedger(paths, id) {
   const read = readProtectedJson(paths, ledgerPath(paths, id));
-  return { ledger: read.data ?? emptyLedger(), tampered: read.tampered };
+  const removed = read.data === null && !read.tampered && recordedAndGone(paths, ledgerPath(paths, id));
+  return { ledger: read.data ?? emptyLedger(), tampered: read.tampered || removed };
 }
 function saveLedger(paths, id, ledger) {
   writeProtectedJson(paths, ledgerPath(paths, id), ledger);
@@ -15561,7 +15575,8 @@ async function runGates(paths, work, profile, policy, options = {}) {
     currentFingerprint,
     tampered,
     specText: specTextOf(paths, work),
-    design: designGateReasons(paths, work.id, currentFingerprint)
+    design: designGateReasons(paths, work.id, currentFingerprint),
+    removed: removedItemRecords(paths, workDir(paths, work.id))
   });
   const saved = updateEvidence(paths, work.id, (fresh) => {
     fresh.runs = evidence.runs;
@@ -15618,6 +15633,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     standing: standingState(policy, profile),
     specText: specTextOf(paths, work),
     design: designGateReasons(paths, work.id, currentFingerprint),
+    removed: removedItemRecords(paths, workDir(paths, work.id)),
     audit: {
       run: audit.run !== null,
       runAtHead: audit.runAtHead,
@@ -15639,7 +15655,8 @@ function reassess(a, work, policy) {
     audit: a.audit,
     policy,
     specText: a.specText,
-    ...a.design ? { design: a.design } : {}
+    ...a.design ? { design: a.design } : {},
+    ...a.removed ? { removed: a.removed } : {}
   });
   return { ...a, ...verdict };
 }
@@ -17049,7 +17066,8 @@ function evidencePath2(paths, id) {
 }
 function loadEvidence(paths, id) {
   const read = readProtectedJson(paths, evidencePath2(paths, id));
-  return { evidence: read.data ?? emptyEvidence(), tampered: read.tampered };
+  const removed = read.data === null && !read.tampered && recordedAndGone(paths, evidencePath2(paths, id));
+  return { evidence: read.data ?? emptyEvidence(), tampered: read.tampered || removed };
 }
 function saveEvidence(paths, id, evidence) {
   writeProtectedJson(paths, evidencePath2(paths, id), evidence);
@@ -17158,6 +17176,8 @@ function computeVerdict(input) {
       unproven.push(`judgement gate ${gate} not run: ${record.reason ?? "no reason given"}`);
   }
   unproven.push(...input.design ?? []);
+  for (const name of input.removed ?? [])
+    unproven.push(`record removed outside the engine: ${name} (the user accepts it with crew accept ${work.id})`);
   const subject = { specText: input.specText ?? null, evidence };
   unproven.push(...leadsMissing(work, subject, "spec"), ...leadsMissing(work, subject, "delivery"));
   if (input.ledger) {
@@ -20695,6 +20715,11 @@ function userOnlyDecision(command, permissionMode, headless, policy, line) {
       return [
         "deny",
         `Crew: no person is watching this session (${where}) and the policy is changed by a person alone: edit .crew/policy.json by hand and run crew policy accept in a session a person watches (crew policy set takes no --mode)`
+      ];
+    if (verb === "accept")
+      return [
+        "deny",
+        `Crew: no person is watching this session (${where}) and files changed outside the engine are accepted by a person alone: run crew accept in a session a person watches; nothing is accepted until then.`
       ];
     if (flagged === mode)
       return null;
@@ -24316,7 +24341,8 @@ function unknownFlag(command, parsed) {
     return null;
   const takes = [...known, "json"].map((k) => `--${k}`).join(", ");
   const hint = command === "start" && unknown === "kind" ? '; for a criterion that existing tests keep green use --preserve "<text>", for one no test can fail first --observed "<text>"' : "";
-  return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}`);
+  const person = command === "accept" && unknown === "mode" ? `: ${ACCEPT_NEEDS_A_PERSON}` : "";
+  return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}${person}`);
 }
 var ok = (text, data = {}) => ({ code: 0, text, data });
 var refuse = (text, data = {}) => ({
@@ -24441,7 +24467,7 @@ function skipRefusal(step) {
     return `a red is traced to its origin, never skipped: ${base}. A criterion that can have no red run is observed (crew criteria <id> add "<text>" --kind observed, proven with crew tdd observed); a check that cannot fail belongs in code the test drives; a person may list tdd in policy.json allowSkips.`;
   return base;
 }
-function accept(env, target) {
+function accept(env, target, parsed) {
   if (target === "profile" || target === "policy" || target === "decisions") {
     if (!recordIntegrity(env.paths, join71(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
@@ -24452,17 +24478,36 @@ function accept(env, target) {
   const dir = workDir(env.paths, target);
   if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync31(join71(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
+  if (registerTampered(env.paths))
+    return refuse(`${tamperMessage({ file: ".crew/decisions.json", accept: "decisions" })}; then crew accept ${target}`);
+  const decision = decisionFlag(parsed, env.policy);
+  if (isOutcome(decision))
+    return decision;
   const gone = PROTECTED_WORK_FILES.filter((name) => recordedAndGone(env.paths, join71(dir, name)));
+  const changed = PROTECTED_WORK_FILES.filter((name) => protectedTextChanged(env.paths, join71(dir, name)));
+  if (changed.length > 0 || gone.length > 0)
+    decide(env, target, {
+      kind: "accept",
+      text: `files accepted after a change outside the engine; changed: ${changed.join(", ") || "none"}; gone: ${gone.join(", ") || "none"}`,
+      by: whoDecides(decision)
+    });
   for (const name of gone)
     forgetIntegrity(env.paths, join71(dir, name));
   const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join71(dir, name)));
-  const goneText = gone.length ? `; taken as gone: ${gone.join(", ")}${gone.includes("design/surface.json") ? `; the item has no design gate until a surface is recorded again (crew design ${target} surface …)` : ""}` : "";
+  const givenUp = gone.flatMap((name) => GIVEN_UP[name] ? [`${name}: ${GIVEN_UP[name]}`] : []);
+  const goneText = gone.length ? `; taken as gone: ${gone.join(", ")}${givenUp.length ? `; ${givenUp.join("; ")}` : ""}${gone.includes("design/surface.json") ? `; the item has no design gate until a surface is recorded again (crew design ${target} surface …)` : ""}` : "";
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are${goneText}`, {
     accepted: target,
     files,
-    gone
+    gone,
+    changed
   });
 }
+var ACCEPT_NEEDS_A_PERSON = "a person accepts what was changed outside the engine, an item's files, a file of .crew/ or a mailbox: run crew accept in a session a person watches, with no --mode; nothing is accepted until then";
+var GIVEN_UP = {
+  "objections.json": "the item's objections are no longer on record, any open blocking one among them",
+  "evidence.json": "the item's proof and its roles' records are no longer on record; the gates run again"
+};
 var ACCEPT_USAGE = "usage: crew accept <id|profile|policy|decisions> | crew accept mail inbox|outbox";
 function acceptMailbox(env, parsed, which) {
   const decision = decisionFlag(parsed, env.policy);
@@ -27304,7 +27349,7 @@ async function dispatch(parsed, io) {
       if (args[0] === "accept") {
         if (unattended)
           return refuse("crew policy accept takes no --mode or --validator: a hand edit of the policy is accepted by a person");
-        return accept(env, "policy");
+        return accept(env, "policy", parsed);
       }
       if (args[0] === "set" && args[1] === "standingE2eSkip")
         return setStandingE2eSkip(env, parsed);
@@ -27335,7 +27380,7 @@ async function dispatch(parsed, io) {
           return refuse(ACCEPT_USAGE);
         return acceptMailbox(env, parsed, which);
       }
-      return accept(env, args[0]);
+      return accept(env, args[0], parsed);
     }
     case "start": {
       const input = args.join(" ").trim();
