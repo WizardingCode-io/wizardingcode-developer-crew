@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WORK_ID } from "../analysis.ts";
 import { isNewSite, readSurface } from "../design.ts";
+import { isReadingOf } from "../design-readers.ts";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
 import { errorText, nowIso, readText, readTextQuietly, writeText } from "../fs.ts";
 import { sleep, withLock } from "../lock.ts";
@@ -612,20 +613,16 @@ export function fileAnswer(
   // (items 2026-11-18-011 and 012): no other role's filing depends on the surface's record.
   const newSite = agent === "review-ui-ux" && isNewSite(readSurface(ctx.paths, id));
   // A reader of a new site's design resumed (item 2026-11-18-015): what decides is whether this
-  // agent id already has a reading of the present round, a record that carries the evidence's
-  // fingerprint and holds a file. It has one: the answer joins that record's file. It has none
+  // agent id already has a reading of the present round, by the round's own test of a reading's
+  // record (`isReadingOf`, item 2026-11-18-016). It has one: the answer joins that record's file. It has none
   // (a reader of an earlier round, one filed before any gate run, one cut off with no answer): the
   // answer is a first answer of this round. Asked of the protected records and never of the disk,
   // so a reading removed by hand is not replaced by its reader's next answer.
+  const fingerprint = evidence.fingerprint ?? null;
   const resumedReader =
-    !!earlier && newSite && input.filedBy === "hook" && !!input.agentId && !!evidence.fingerprint;
+    !!earlier && newSite && input.filedBy === "hook" && !!input.agentId && fingerprint !== null;
   const ofRound = resumedReader
-    ? roles.find(
-        (r) =>
-          r.agentId === input.agentId &&
-          r.code === evidence.fingerprint &&
-          typeof r.file === "string",
-      )
+    ? roles.find((r) => r.agentId === input.agentId && isReadingOf(r, fingerprint))
     : undefined;
   const newReading = resumedReader && !ofRound;
   const joinTo = ofRound?.file ?? earlier?.file;

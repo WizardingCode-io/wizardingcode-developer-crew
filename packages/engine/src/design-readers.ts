@@ -50,16 +50,25 @@ export function roundReadings(paths: CrewPaths, id: string): RoundReadings {
   return { filed, three };
 }
 
-/** Where three or more were filed and the first three are not whole: which reading and why, in fixed words; null otherwise. */
-export function brokenReading(paths: CrewPaths, id: string): string | null {
-  return readRound(paths, id).broken ?? null;
+/**
+ * How many of the round's first three were resumed readers (item 2026-11-18-016): a reader whose
+ * agent id has another `review-ui-ux` record on the item before its reading's record, one of an
+ * earlier round, one from before any gate run, or a cut-off. Counted from the protected records,
+ * in the order they were filed, of the same three `roundReadings` gives; null where those three do
+ * not stand whole, since there are then no three to count among.
+ */
+export function resumedReaders(paths: CrewPaths, id: string): number | null {
+  return readRound(paths, id).resumed ?? null;
 }
 
-function readRound(paths: CrewPaths, id: string): RoundReadings & { broken?: string } {
-  const { evidence, tampered } = loadEvidence(paths, id);
-  const fingerprint = evidence.fingerprint;
-  if (tampered || !fingerprint) return { filed: 0, three: null };
-  const own = (r: RoleRecord): boolean =>
+/**
+ * Whether a record is a reading of a fingerprint: a `review-ui-ux` the hook filed with an agent id,
+ * on that fingerprint, in a file whose name is a reading's. The one meaning of a reading's record,
+ * for the round and for the hook's question on a resumed reader (item 2026-11-18-016).
+ */
+export function isReadingOf(r: RoleRecord, fingerprint: string | null): boolean {
+  return (
+    fingerprint !== null &&
     r.agent === "review-ui-ux" &&
     typeof r.agentId === "string" &&
     // A session's filing carries no agent id today, so the line above already refuses it; this one
@@ -67,8 +76,31 @@ function readRound(paths: CrewPaths, id: string): RoundReadings & { broken?: str
     r.filedBy !== "session" &&
     r.code === fingerprint &&
     typeof r.file === "string" &&
-    READING_FILE.test(r.file);
-  const records = (evidence.roles ?? []).filter(own);
+    READING_FILE.test(r.file)
+  );
+}
+
+/** Where three or more were filed and the first three are not whole: which reading and why, in fixed words; null otherwise. */
+export function brokenReading(paths: CrewPaths, id: string): string | null {
+  return readRound(paths, id).broken ?? null;
+}
+
+/**
+ * The round read once, with all it knows: how many were filed, the three, why they do not stand
+ * whole, and how many of them were resumed. The score command reads it once, so every figure it
+ * records is of one reading of the round (the judge's ruling of item 2026-11-18-016: a count taken
+ * from a second read could be of another round than the median's). The three functions above each
+ * answer one part of it.
+ */
+export function readRound(
+  paths: CrewPaths,
+  id: string,
+): RoundReadings & { broken?: string; resumed?: number } {
+  const { evidence, tampered } = loadEvidence(paths, id);
+  const fingerprint = evidence.fingerprint;
+  if (tampered || !fingerprint) return { filed: 0, three: null };
+  const roles = evidence.roles ?? [];
+  const records = roles.filter((r) => isReadingOf(r, fingerprint));
   const first: RoleRecord[] = [];
   for (const r of records) if (!first.some((f) => f.agentId === r.agentId)) first.push(r);
   if (first.length < READERS) return { filed: first.length, three: null };
@@ -91,7 +123,15 @@ function readRound(paths: CrewPaths, id: string): RoundReadings & { broken?: str
     if (!parseScore(answer)) return broken(index, "it holds no score line");
     three.push(answer);
   }
-  return { filed: first.length, three };
+  // A resumed reader: another record of its agent id stands before its reading's in the roles.
+  const resumed = first
+    .slice(0, READERS)
+    .filter((reader) =>
+      roles
+        .slice(0, roles.indexOf(reader))
+        .some((r) => r.agent === "review-ui-ux" && r.agentId === reader.agentId),
+    ).length;
+  return { filed: first.length, three, resumed };
 }
 
 const median = (values: readonly number[]): number =>

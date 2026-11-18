@@ -642,6 +642,8 @@ export interface ScoreRecord {
   readers?: number;
   /** How many readers the hook filed on that code, where three were read. */
   filed?: number;
+  /** How many of the three were resumed readers, each with a record on the item before its reading (item 2026-11-18-016); absent on one reader's score and on an older record. */
+  resumed?: number;
   /** How many readers named a cap that was not applied, being alone in naming one. */
   capsUnapplied?: number;
 }
@@ -723,7 +725,15 @@ function readersPhrase(score: ScoreRecord, what: string): string {
   const unapplied = score.capsUnapplied
     ? `; ${score.capsUnapplied} reader named a cap that was not applied, being alone in it`
     : "";
-  return `three readers ${what}, the median of each figure${filed}${unapplied}`;
+  // Said only where it is so: a line with no such words is of three fresh readers, or of a record
+  // written before the count was kept.
+  const resumed =
+    score.resumed === 1
+      ? "; 1 of the three was a resumed reader, with a record on this item before its reading of this code"
+      : score.resumed
+        ? `; ${score.resumed} of the three were resumed readers, each with a record on this item before its reading of this code`
+        : "";
+  return `three readers ${what}, the median of each figure${filed}${unapplied}${resumed}`;
 }
 
 /** Which bar a score was held to, in the engine's words and the record's figures: the command and the report say it alike. */

@@ -97,12 +97,7 @@ import {
   searchPictures,
 } from "./design-pictures.ts";
 import { addChoice, type Choice, declareKind, readChoices, relabelChoice } from "./design-proof.ts";
-import {
-  brokenReading,
-  medianFindings,
-  READERS_REFUSALS,
-  roundReadings,
-} from "./design-readers.ts";
+import { medianFindings, READERS_REFUSALS, readRound } from "./design-readers.ts";
 import {
   ENVIRONMENT_COMMANDS,
   ENVIRONMENT_TIMEOUT_MS,
@@ -4350,11 +4345,14 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
       );
       // Three readers and their median (2026-11-18-011): with more than one reading of this code on
       // record, the first three stand whole or no score is recorded; with one or none, the plain file.
-      const readings = roundReadings(env.paths, work.id);
+      // The round is read once: the three, the count of resumed readers and the reason of a broken
+      // round are of one reading of it.
+      const readings = readRound(env.paths, work.id);
       if (readings.filed === READERS - 1) return refuse(READERS_REFUSALS.third);
       if (readings.filed >= READERS && !readings.three) {
-        const which = brokenReading(env.paths, work.id);
-        return refuse(`${READERS_REFUSALS.broken}${which ? ` (${which})` : ""}`);
+        return refuse(
+          `${READERS_REFUSALS.broken}${readings.broken ? ` (${readings.broken})` : ""}`,
+        );
       }
       const medians = readings.three ? medianFindings(readings.three) : null;
       const read = medians?.text ?? text;
@@ -4377,7 +4375,13 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
         ...parsedScore,
         ...decideBar(env.paths, work, read, parsedScore, medians ? READERS : 1),
         readers: medians ? READERS : 1,
-        ...(medians ? { filed: readings.filed } : {}),
+        ...(medians
+          ? {
+              filed: readings.filed,
+              // Counted with the three, in the same read; never a number that was not counted.
+              ...(readings.resumed === undefined ? {} : { resumed: readings.resumed }),
+            }
+          : {}),
         ...(medians?.capsUnapplied ? { capsUnapplied: medians.capsUnapplied } : {}),
         fingerprint,
         at: nowIso(),

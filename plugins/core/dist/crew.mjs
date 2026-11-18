@@ -5474,7 +5474,8 @@ function readersPhrase(score, what) {
     return `one reader ${what}`;
   const filed = score.filed && score.filed > 3 ? ` (the first three of ${score.filed} filed)` : "";
   const unapplied = score.capsUnapplied ? `; ${score.capsUnapplied} reader named a cap that was not applied, being alone in it` : "";
-  return `three readers ${what}, the median of each figure${filed}${unapplied}`;
+  const resumed = score.resumed === 1 ? "; 1 of the three was a resumed reader, with a record on this item before its reading of this code" : score.resumed ? `; ${score.resumed} of the three were resumed readers, each with a record on this item before its reading of this code` : "";
+  return `three readers ${what}, the median of each figure${filed}${unapplied}${resumed}`;
 }
 function barLine(score) {
   const held = referenceFigures(score);
@@ -19002,20 +19003,16 @@ function firstAnswer(text) {
   return at < 0 ? text : lines.slice(0, at).join(`
 `);
 }
-function roundReadings(paths, id) {
-  const { filed, three } = readRound(paths, id);
-  return { filed, three };
-}
-function brokenReading(paths, id) {
-  return readRound(paths, id).broken ?? null;
+function isReadingOf(r, fingerprint) {
+  return fingerprint !== null && r.agent === "review-ui-ux" && typeof r.agentId === "string" && r.filedBy !== "session" && r.code === fingerprint && typeof r.file === "string" && READING_FILE.test(r.file);
 }
 function readRound(paths, id) {
   const { evidence, tampered } = loadEvidence(paths, id);
   const fingerprint = evidence.fingerprint;
   if (tampered || !fingerprint)
     return { filed: 0, three: null };
-  const own = (r) => r.agent === "review-ui-ux" && typeof r.agentId === "string" && r.filedBy !== "session" && r.code === fingerprint && typeof r.file === "string" && READING_FILE.test(r.file);
-  const records = (evidence.roles ?? []).filter(own);
+  const roles = evidence.roles ?? [];
+  const records = roles.filter((r) => isReadingOf(r, fingerprint));
   const first = [];
   for (const r of records)
     if (!first.some((f) => f.agentId === r.agentId))
@@ -19041,7 +19038,8 @@ function readRound(paths, id) {
       return broken(index, "it holds no score line");
     three.push(answer);
   }
-  return { filed: first.length, three };
+  const resumed = first.slice(0, READERS).filter((reader) => roles.slice(0, roles.indexOf(reader)).some((r) => r.agent === "review-ui-ux" && r.agentId === reader.agentId)).length;
+  return { filed: first.length, three, resumed };
 }
 var median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)] ?? Number.NaN;
 function medianFindings(three) {
@@ -19859,8 +19857,9 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
     throw new Error(`no record ${input.as} to resume (crew evidence ${id})`);
   const agent = earlier?.agent ?? agentName(role, roles);
   const newSite = agent === "review-ui-ux" && isNewSite(readSurface(ctx.paths, id));
-  const resumedReader = !!earlier && newSite && input.filedBy === "hook" && !!input.agentId && !!evidence.fingerprint;
-  const ofRound = resumedReader ? roles.find((r) => r.agentId === input.agentId && r.code === evidence.fingerprint && typeof r.file === "string") : undefined;
+  const fingerprint = evidence.fingerprint ?? null;
+  const resumedReader = !!earlier && newSite && input.filedBy === "hook" && !!input.agentId && fingerprint !== null;
+  const ofRound = resumedReader ? roles.find((r) => r.agentId === input.agentId && isReadingOf(r, fingerprint)) : undefined;
   const newReading = resumedReader && !ofRound;
   const joinTo = ofRound?.file ?? earlier?.file;
   let saved;
@@ -26951,12 +26950,11 @@ async function designCommand(env, args, parsed) {
     }
     case "score": {
       const text = readTextQuietly(join71(workDir(env.paths, work.id), "review", "ui-ux.findings.md"));
-      const readings = roundReadings(env.paths, work.id);
+      const readings = readRound(env.paths, work.id);
       if (readings.filed === READERS - 1)
         return refuse(READERS_REFUSALS.third);
       if (readings.filed >= READERS && !readings.three) {
-        const which = brokenReading(env.paths, work.id);
-        return refuse(`${READERS_REFUSALS.broken}${which ? ` (${which})` : ""}`);
+        return refuse(`${READERS_REFUSALS.broken}${readings.broken ? ` (${readings.broken})` : ""}`);
       }
       const medians = readings.three ? medianFindings(readings.three) : null;
       const read = medians?.text ?? text;
@@ -26971,7 +26969,10 @@ async function designCommand(env, args, parsed) {
         ...parsedScore,
         ...decideBar(env.paths, work, read, parsedScore, medians ? READERS : 1),
         readers: medians ? READERS : 1,
-        ...medians ? { filed: readings.filed } : {},
+        ...medians ? {
+          filed: readings.filed,
+          ...readings.resumed === undefined ? {} : { resumed: readings.resumed }
+        } : {},
         ...medians?.capsUnapplied ? { capsUnapplied: medians.capsUnapplied } : {},
         fingerprint,
         at: nowIso(),
