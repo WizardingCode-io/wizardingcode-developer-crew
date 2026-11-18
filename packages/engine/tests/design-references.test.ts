@@ -81,7 +81,7 @@ test("references AC-9: what is not taken, and what a build takes from a referenc
     "a written observation of the crew's own with the original site's link",
     "`wizardingcode-frontend-verification`",
     "unless the user decides, on record",
-    "A page the session captures itself is not taken until the user decides",
+    "one the session captures itself is not taken until the user decides",
     "only what is the client's is recreated",
     "never its code, copy, pictures or signature effect",
   ])
@@ -103,7 +103,9 @@ test("references AC-10: references stay out of commits and of what ships, and a 
 
 test("references AC-11: the build captures each shot at its width", () => {
   const text = step(skill("wizardingcode-design-build"), 8, "Capture");
-  expect(inOrder(text, ["`design/shots.md`", "one `capture()` per shot at its width"])).toBe(true);
+  expect(
+    inOrder(text, ["`design/shots.md`", "each shot's page and state has its `capture()`"]),
+  ).toBe(true);
 });
 
 test("references AC-12: the review reads each capture beside its reference and says what the score was read against", () => {

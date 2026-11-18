@@ -119,8 +119,7 @@ test("floor AC-11: the ledger holds the four rows, each read at the commit it na
     rows.find((row) => (row.rule ?? "").startsWith(rule))?.note ?? "";
   for (const rule of ["what fills the eight", "a repeated reveal", "a move names its purpose"])
     expect(noteOf(rule)).toContain("the crew's own");
-  expect(noteOf("no animation on an action started from the keyboard")).not.toContain(
-    "the crew's own",
-  );
-  expect(noteOf("no animation on an action started from the keyboard")).toContain("64eb3de");
+  expect(noteOf("no animation on a shortcut")).not.toContain("the crew's own");
+  expect(noteOf("no animation on a shortcut")).toContain("64eb3de");
+  expect(noteOf("no animation on a shortcut")).toContain("an exception of the crew's");
 });

@@ -41,12 +41,13 @@ The reviewer files, right after its `read:` line, exactly: `score: <n> · caps: 
 Right after the score line the reviewer files two more, each on a line of its own, in this order. Nothing is added to the score line itself: the engine reads it by its exact shape.
 
 ```
+score: <n> · caps: <none or a comma list> · disposition: <recapture|rebuild|fix|ship>
 dimensions: design <n> · usability <n> · creativity <n> · content <n>
 reference: <n> shots
 ```
 
 The third line is `reference: <n> shots`, or `reference: none` where the brief says `no references`. The three stand together, before the fixes. Each of the four figures is out of 10, after its own caps; the overall figure is their weighted sum after the overall caps.
 
-With shots (`design/shots.md`, `design/refs/`), the reviewer names for each shot the three largest gaps between the capture and its reference, each with where, what is wrong and what to change, and only on what the shot's row says to take. The gaps are findings: they enter the material fixes, which stay eight at most, in the order above. A score filed with `reference: none` was read against nothing but the rubric, and the session's report says so. The weakest dimension is named in words in the sentence after the three lines: the overall figure does not hide it.
+With shots (`design/shots.md`, `design/refs/`), the reviewer names for each shot the three largest gaps between the capture and its reference, each with where, what is wrong and what to change, each filed with its shot and its dimension, and only on what the shot's row says to take. The gaps are findings: they enter the material fixes, which stay eight at most, in the order above. A score filed with `reference: none` was read against nothing but the rubric, and the session's report says so. The weakest dimension is named in words in the first sentence the reviewer files after the three lines: the overall figure does not hide it.
 
 Provenance (ADR 0017): the passes, the weights and the caps distil taste-skill v2.1.2's critique (MIT, Leonxlnx, `b9ca2fd`); the dispositions and the fresh review distil Impeccable's finish reviewer (Apache-2.0, pbakaus, `6743a34`). The proportion cap is the user's (D-5, item 2026-10-30-005). The shot list, a figure per dimension and the three gaps distil cook (MIT, Leon Lin, `b23cac6`); the four dimensions, the overall figure kept beside them and the shot list's columns on whose a reference is, what to leave and its width are the crew's own.

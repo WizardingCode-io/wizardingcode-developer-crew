@@ -2442,12 +2442,12 @@
   },
   {
    "source": "emilkowalski",
-   "rule": "no animation on an action started from the keyboard",
+   "rule": "no animation on a shortcut, a palette, a jump of focus or the arrows; a control's own key excepted by the crew",
    "status": "in",
    "file": "plugins/core/skills/crew/references/frontend-site.md",
    "text": "none animates, whatever it opens",
    "proof": "motion-floor.test.ts",
-   "note": "read at 64eb3de (skills animate, remove-animations, find-animation-opportunities); the arrows are the crew's reading of the same rule; the line on a control's own key is an exception of the crew's, against the source's letter, resting on the source's reason (an action repeated all day) and on the crew's (one interface for the keyboard and the pointer)"
+   "note": "read at 64eb3de (skills animate, remove-animations, find-animation-opportunities); the arrows are the crew's reading of the same rule; the line on a control's own key is an exception of the crew's, against the source's letter, resting on the source's reason, an action repeated all day, not reaching an occasional press, and on the crew's (one interface for the keyboard and the pointer)"
   },
   {
    "source": "cook",
