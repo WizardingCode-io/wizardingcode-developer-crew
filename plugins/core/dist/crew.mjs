@@ -4205,17 +4205,17 @@ function readProtected(integrityFile, key, absPath, handWritten) {
   try {
     text = readText(absPath);
   } catch {
-    return { data: null, tampered: true, text: null };
+    return { data: null, tampered: true, text: null, hashChanged: true };
   }
   if (text === null)
-    return { data: null, tampered: false, text };
+    return { data: null, tampered: false, text, hashChanged: false };
   const { map, corrupt } = readIntegrityFile(integrityFile);
   const expected = map[key];
-  const tampered = corrupt ? true : expected === undefined ? !handWritten && Object.keys(map).length > 0 : expected !== sha256(text);
+  const hashChanged = corrupt ? true : expected === undefined ? !handWritten && Object.keys(map).length > 0 : expected !== sha256(text);
   try {
-    return { data: JSON.parse(text), tampered, text };
+    return { data: JSON.parse(text), tampered: hashChanged, text, hashChanged };
   } catch {
-    return { data: null, tampered: true, text };
+    return { data: null, tampered: true, text, hashChanged };
   }
 }
 function readProtectedJson(paths, absPath, waitMs) {
@@ -4229,6 +4229,11 @@ function readProtectedText(paths, absPath, waitMs) {
   if (!first.tampered)
     return first;
   return readUnderLock(dirname4(paths.integrityFile), first, read, { ...STORE_LOCK, waitMs });
+}
+function protectedTextChanged(paths, absPath) {
+  const key = rel(paths, absPath);
+  const read = () => readProtected(paths.integrityFile, key, absPath, key === HAND_WRITTEN).hashChanged;
+  return read() && readUnderLock(dirname4(paths.integrityFile), true, read, STORE_LOCK);
 }
 function writeProtectedJsonAt(integrityFile, absPath, data) {
   const text = `${JSON.stringify(data, null, 2)}
@@ -4260,16 +4265,6 @@ function forgetIntegrity(paths, absPath) {
 }
 function recordedAndGone(paths, absPath) {
   return readText(absPath) === null && integrityOf(paths)[rel(paths, absPath)] !== undefined;
-}
-function protectedTextChanged(paths, absPath) {
-  const read = readProtectedText(paths, absPath);
-  if (read.text === null)
-    return read.tampered;
-  const { map, corrupt } = readIntegrityFile(paths.integrityFile);
-  if (corrupt)
-    return true;
-  const expected = map[rel(paths, absPath)];
-  return expected === undefined ? Object.keys(map).length > 0 : expected !== sha256(read.text);
 }
 function changedDesignRecords(paths, workFolder) {
   return PROTECTED_WORK_FILES.filter((name) => name.startsWith("design/")).filter((name) => {

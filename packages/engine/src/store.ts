@@ -164,32 +164,36 @@ export interface Protected<T> {
  * when the integrity file does not parse, or when the engine never recorded it although it
  * recorded others. A file with no hash is trusted only on true first use (nothing recorded yet)
  * or when it is hand-written by design. A missing file is not tampered: it simply holds nothing.
+ *
+ * Two facts, answered apart (item 2026-11-18-014): `hashChanged` is the rule above, asked of the
+ * text alone; `tampered` is that, or a text that does not parse as JSON. A protected file that is
+ * no JSON (a report, a knowledge listing) is asked by the first.
  */
 function readProtected<T>(
   integrityFile: string,
   key: string,
   absPath: string,
   handWritten: boolean,
-): Protected<T> & { text: string | null } {
+): Protected<T> & { text: string | null; hashChanged: boolean } {
   // A file that is there but cannot be read (finding 30) holds nothing to trust.
   let text: string | null;
   try {
     text = readText(absPath);
   } catch {
-    return { data: null, tampered: true, text: null };
+    return { data: null, tampered: true, text: null, hashChanged: true };
   }
-  if (text === null) return { data: null, tampered: false, text };
+  if (text === null) return { data: null, tampered: false, text, hashChanged: false };
   const { map, corrupt } = readIntegrityFile(integrityFile);
   const expected = map[key];
-  const tampered = corrupt
+  const hashChanged = corrupt
     ? true
     : expected === undefined
       ? !handWritten && Object.keys(map).length > 0
       : expected !== sha256(text);
   try {
-    return { data: JSON.parse(text) as T, tampered, text };
+    return { data: JSON.parse(text) as T, tampered: hashChanged, text, hashChanged };
   } catch {
-    return { data: null, tampered: true, text };
+    return { data: null, tampered: true, text, hashChanged };
   }
 }
 
@@ -217,6 +221,21 @@ export function readProtectedText<T>(
   const first = read();
   if (!first.tampered) return first;
   return readUnderLock(dirname(paths.integrityFile), first, read, { ...STORE_LOCK, waitMs });
+}
+
+/**
+ * True when a protected file is there and its text no longer has its recorded hash, or has none
+ * where the engine recorded others: the tamper rule's answer on the hash, never on what the text
+ * parses to, since a report and a knowledge listing are protected and are no JSON (the QA lead's
+ * return of item 2026-11-18-013). A file that is gone is not changed. A text read as whole takes
+ * no lock; one read as changed is read again under the store's lock, as every protected read is
+ * (finding 239), and where that lock cannot be taken the first answer, changed, stands.
+ */
+export function protectedTextChanged(paths: CrewPaths, absPath: string): boolean {
+  const key = rel(paths, absPath);
+  const read = () =>
+    readProtected<unknown>(paths.integrityFile, key, absPath, key === HAND_WRITTEN).hashChanged;
+  return read() && readUnderLock(dirname(paths.integrityFile), true, read, STORE_LOCK);
 }
 
 /**
@@ -265,20 +284,6 @@ export function forgetIntegrity(paths: CrewPaths, absPath: string): boolean {
 /** True when the engine recorded a hash for the file and the file is gone: a hand removed it, since no writer of the engine does. */
 export function recordedAndGone(paths: CrewPaths, absPath: string): boolean {
   return readText(absPath) === null && integrityOf(paths)[rel(paths, absPath)] !== undefined;
-}
-
-/**
- * True when a protected file is there and its text no longer has its recorded hash, or has none
- * where the engine recorded others. Asked of the text and never of what it parses to: a report and
- * a knowledge listing are protected and are no JSON (the QA lead's return of item 2026-11-18-013).
- */
-export function protectedTextChanged(paths: CrewPaths, absPath: string): boolean {
-  const read = readProtectedText<unknown>(paths, absPath);
-  if (read.text === null) return read.tampered;
-  const { map, corrupt } = readIntegrityFile(paths.integrityFile);
-  if (corrupt) return true;
-  const expected = map[rel(paths, absPath)];
-  return expected === undefined ? Object.keys(map).length > 0 : expected !== sha256(read.text);
 }
 
 /**
