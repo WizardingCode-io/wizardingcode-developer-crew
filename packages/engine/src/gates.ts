@@ -37,6 +37,7 @@ import { runProse } from "./prose.ts";
 import { reviewSignals } from "./review-signals.ts";
 import { runCommand, shellWord } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
+import { changedDesignRecords } from "./store.ts";
 import { plannedSeats, primaryTeam, teamsFor } from "./team.ts";
 import type {
   Evidence,
@@ -898,11 +899,7 @@ export async function runGates(
       currentFingerprint,
       tampered,
       specText: specTextOf(paths, work),
-      design: designReasons(
-        readSurface(paths, work.id),
-        readScore(paths, work.id),
-        currentFingerprint,
-      ),
+      design: designGateReasons(paths, work.id, currentFingerprint),
     });
   // Saved into the evidence as it stands now, under the lock (finding 81): the runs and the stamp
   // are this run's, the test-first and the roles' records are whatever landed meanwhile, and the
@@ -1020,11 +1017,7 @@ export function assess(
       tampered: tampered || read.tampered || led.tampered,
       standing: standingState(policy, profile),
       specText: specTextOf(paths, work),
-      design: designReasons(
-        readSurface(paths, work.id),
-        readScore(paths, work.id),
-        currentFingerprint,
-      ),
+      design: designGateReasons(paths, work.id, currentFingerprint),
       audit: {
         run: audit.run !== null,
         runAtHead: audit.runAtHead,
@@ -1061,4 +1054,19 @@ export function reassess(a: AssessmentInputs, work: WorkItem, policy: Policy): A
     ...(a.design ? { design: a.design } : {}),
   });
   return { ...a, ...verdict };
+}
+
+/**
+ * Why the design gate does not hold: each design record changed or removed outside the engine,
+ * named with what undoes it (item 2026-11-18-012), then what the surface and the score say. A
+ * surface changed by hand to `extend`, or removed, would otherwise give no reason at all.
+ */
+function designGateReasons(paths: CrewPaths, id: string, currentFingerprint: string): string[] {
+  return [
+    ...changedDesignRecords(paths, workDir(paths, id)).map(
+      (name) =>
+        `design record changed outside the engine: ${name} (the user accepts it with crew accept ${id})`,
+    ),
+    ...designReasons(readSurface(paths, id), readScore(paths, id), currentFingerprint),
+  ];
 }

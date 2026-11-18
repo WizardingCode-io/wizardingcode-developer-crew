@@ -539,6 +539,7 @@ function knowledgePath(userDir) {
   return join2(knowledgeDir(userDir), "base.json");
 }
 var PLAIN_READING = "review/ui-ux.findings.md";
+var CLARIFICATIONS_HEADING = "## Clarifications";
 var READING_FILE = /^review\/ui-ux(?:\.reading-[1-9]\d*)?\.findings\.md$/;
 
 // packages/engine/src/worktree.ts
@@ -4246,6 +4247,26 @@ function readProtectedJsonAt(integrityFile, absPath) {
   const { data, tampered } = readProtected(integrityFile, basename3(absPath), absPath, false);
   return { data, tampered };
 }
+function forgetIntegrity(paths, absPath) {
+  return withStoreLock(paths, () => {
+    const integrity = readIntegrityFile(paths.integrityFile).map;
+    const key = rel(paths, absPath);
+    if (integrity[key] === undefined)
+      return false;
+    delete integrity[key];
+    writeJson(paths.integrityFile, integrity);
+    return true;
+  });
+}
+function recordedAndGone(paths, absPath) {
+  return readText(absPath) === null && integrityOf(paths)[rel(paths, absPath)] !== undefined;
+}
+function changedDesignRecords(paths, workFolder) {
+  return PROTECTED_WORK_FILES.filter((name) => name.startsWith("design/")).filter((name) => {
+    const file = join8(workFolder, name);
+    return readProtectedJson(paths, file).tampered || recordedAndGone(paths, file);
+  });
+}
 
 // packages/engine/src/decisions.ts
 function registerPath(paths) {
@@ -5385,6 +5406,7 @@ function recentDealt(rows) {
   return rows.slice(-RECENT_ROWS).flatMap((r) => r.dealt ?? []);
 }
 var SCORE_BAR = 8.5;
+var READERS = 3;
 var DIMENSIONS_OF_THE_BAR = ["design", "usability", "creativity", "content"];
 function referenceFigures(score) {
   if (score.bar !== "references" || !score.dimensions || !score.level)
@@ -5440,7 +5462,7 @@ function designReasons(surface, score, currentFingerprint) {
   return out;
 }
 function readersPhrase(score, what) {
-  if (score.readers !== 3)
+  if (score.readers !== READERS)
     return `one reader ${what}`;
   const filed = score.filed && score.filed > 3 ? ` (the first three of ${score.filed} filed)` : "";
   const unapplied = score.capsUnapplied ? `; ${score.capsUnapplied} reader named a cap that was not applied, being alone in it` : "";
@@ -15539,7 +15561,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     currentFingerprint,
     tampered,
     specText: specTextOf(paths, work),
-    design: designReasons(readSurface(paths, work.id), readScore(paths, work.id), currentFingerprint)
+    design: designGateReasons(paths, work.id, currentFingerprint)
   });
   const saved = updateEvidence(paths, work.id, (fresh) => {
     fresh.runs = evidence.runs;
@@ -15595,7 +15617,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     tampered: tampered || read.tampered || led.tampered,
     standing: standingState(policy, profile),
     specText: specTextOf(paths, work),
-    design: designReasons(readSurface(paths, work.id), readScore(paths, work.id), currentFingerprint),
+    design: designGateReasons(paths, work.id, currentFingerprint),
     audit: {
       run: audit.run !== null,
       runAtHead: audit.runAtHead,
@@ -15620,6 +15642,12 @@ function reassess(a, work, policy) {
     ...a.design ? { design: a.design } : {}
   });
   return { ...a, ...verdict };
+}
+function designGateReasons(paths, id, currentFingerprint) {
+  return [
+    ...changedDesignRecords(paths, workDir(paths, id)).map((name) => `design record changed outside the engine: ${name} (the user accepts it with crew accept ${id})`),
+    ...designReasons(readSurface(paths, id), readScore(paths, id), currentFingerprint)
+  ];
 }
 
 // packages/engine/src/test-run.ts
@@ -18699,7 +18727,7 @@ function decideBar(paths, work, findings, parsed, readers = 1) {
   const lacking = evidenceSentence(join57(folder, "review", "ui"), bar.shots);
   if (lacking)
     return overall(lacking);
-  if (readers < 3)
+  if (readers < READERS)
     return overall(BAR_SENTENCES.readers);
   const { word, lines } = parseBarLines(findings);
   const counted = Number(/^reference:[ \t]*(\d+)[ \t]+shots\b/m.exec(findings)?.[1] ?? Number.NaN);
@@ -18946,7 +18974,7 @@ async function savePicture(paths, id, result, options = {}) {
 // packages/engine/src/design-readers.ts
 import { join as join59 } from "node:path";
 var READING_MAX_BYTES = 1024 * 1024;
-var CLARIFICATIONS = "## Clarifications";
+var ORDINALS = ["first", "second", "third"];
 var COUNT_LINE = /^reference:[ \t]*(\d+)[ \t]+shots\b/m;
 var READERS_REFUSALS = {
   third: "two readings of this code are on record: a third reader is owed before a score is recorded",
@@ -18955,11 +18983,18 @@ var READERS_REFUSALS = {
 function firstAnswer(text) {
   const lines = text.split(`
 `);
-  const at = lines.findIndex((line) => line.trimEnd() === CLARIFICATIONS);
+  const at = lines.findIndex((line) => line.trimEnd() === CLARIFICATIONS_HEADING);
   return at < 0 ? text : lines.slice(0, at).join(`
 `);
 }
 function roundReadings(paths, id) {
+  const { filed, three } = readRound(paths, id);
+  return { filed, three };
+}
+function brokenReading(paths, id) {
+  return readRound(paths, id).broken ?? null;
+}
+function readRound(paths, id) {
   const { evidence, tampered } = loadEvidence(paths, id);
   const fingerprint = evidence.fingerprint;
   if (tampered || !fingerprint)
@@ -18970,18 +19005,25 @@ function roundReadings(paths, id) {
   for (const r of records)
     if (!first.some((f) => f.agentId === r.agentId))
       first.push(r);
-  if (first.length < 3)
+  if (first.length < READERS)
     return { filed: first.length, three: null };
   const dir = workDir(paths, id);
   const three = [];
-  for (const reader of first.slice(0, 3)) {
+  const broken = (index, why) => ({
+    filed: first.length,
+    three: null,
+    broken: `the ${ORDINALS[index] ?? "last"} reading: ${why}`
+  });
+  for (const [index, reader] of first.slice(0, READERS).entries()) {
     const latest = records.filter((r) => r.agentId === reader.agentId && r.file === reader.file).at(-1);
     const text = reader.file ? readRegularText(join59(dir, reader.file), READING_MAX_BYTES) : null;
-    if (text === null || !latest?.fileHash || fileHash(text) !== latest.fileHash)
-      return { filed: first.length, three: null };
+    if (text === null)
+      return broken(index, "its file is missing");
+    if (!latest?.fileHash || fileHash(text) !== latest.fileHash)
+      return broken(index, "its file changed since it was filed");
     const answer = firstAnswer(text);
     if (!parseScore(answer))
-      return { filed: first.length, three: null };
+      return broken(index, "it holds no score line");
     three.push(answer);
   }
   return { filed: first.length, three };
@@ -19801,8 +19843,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   if (input.as && !earlier)
     throw new Error(`no record ${input.as} to resume (crew evidence ${id})`);
   const agent = earlier?.agent ?? agentName(role, roles);
-  const invention = readSurface(ctx.paths, id)?.invention;
-  const newSite = invention === "surface" || invention === "world";
+  const newSite = agent === "review-ui-ux" && isNewSite(readSurface(ctx.paths, id));
   let saved;
   let note = null;
   let keptAs = null;
@@ -19909,7 +19950,7 @@ function joinEarlierFile(dir, agent, answer, kind, earlierFile, roles) {
     const file = READING_FILE.test(earlierFile) ? earlierFile : answerFile(agent, answer, kind);
     const current = (readText(join60(dir, file)) ?? "").trimEnd();
     const heading = `
-## Clarifications`;
+${CLARIFICATIONS_HEADING}`;
     const body = current.includes(heading) ? current : `${current}
 ${heading}`;
     writeText(join60(dir, file), `${body}
@@ -21929,6 +21970,22 @@ var CHILD_RECORD_FILES = [
   "objections.json",
   "mail.json"
 ];
+function trustChildRecords(paths, childPaths, child) {
+  const here = workDir(paths, child);
+  const there = workDir(childPaths, child);
+  for (const name of CHILD_RECORD_FILES)
+    recordIntegrity(paths, join62(here, name));
+  for (const name of PROTECTED_WORK_FILES) {
+    if (!name.startsWith("design/"))
+      continue;
+    const theirs = readTextQuietly(join62(there, name));
+    const recorded = integrityOf(childPaths)[rel(childPaths, join62(there, name))];
+    if (theirs === null || recorded === undefined || recorded !== sha256(theirs))
+      continue;
+    if (readTextQuietly(join62(here, name)) === theirs)
+      recordIntegrity(paths, join62(here, name));
+  }
+}
 function mergeTask(ctx, env, work, task, options = {}) {
   if (ctx.self.openedBy)
     return { refused: `a session opened by mail (${ctx.self.openedBy}) never merges` };
@@ -21989,8 +22046,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
       force: false,
       errorOnExist: false
     });
-  for (const name of CHILD_RECORD_FILES)
-    recordIntegrity(env.paths, join62(childDir, name));
+  trustChildRecords(env.paths, childPaths, child);
   const kept = removeWorktree(env.paths.root, record.worktree);
   if (!kept)
     dropOpenedMarker(ctx.paths.userDir, childPaths.root);
@@ -24354,6 +24410,8 @@ function tamperRefusal(env, opened) {
       found.push({ file: `${base}/evidence.json`, accept: opened.work.id });
     if (loadLedger(env.paths, opened.work.id).tampered)
       found.push({ file: `${base}/objections.json`, accept: opened.work.id });
+    for (const name of changedDesignRecords(env.paths, workDir(env.paths, opened.work.id)))
+      found.push({ file: `${base}/${name}`, accept: opened.work.id });
   }
   const first = found[0];
   return first ? refuse(tamperMessage(first)) : null;
@@ -24394,10 +24452,15 @@ function accept(env, target) {
   const dir = workDir(env.paths, target);
   if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync31(join71(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
+  const gone = PROTECTED_WORK_FILES.filter((name) => recordedAndGone(env.paths, join71(dir, name)));
+  for (const name of gone)
+    forgetIntegrity(env.paths, join71(dir, name));
   const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join71(dir, name)));
-  return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
+  const goneText = gone.length ? `; taken as gone: ${gone.join(", ")}${gone.includes("design/surface.json") ? `; the item has no design gate until a surface is recorded again (crew design ${target} surface …)` : ""}` : "";
+  return ok(`${target} accepted: ${files.join(", ")} now trusted as they are${goneText}`, {
     accepted: target,
-    files
+    files,
+    gone
   });
 }
 var ACCEPT_USAGE = "usage: crew accept <id|profile|policy|decisions> | crew accept mail inbox|outbox";
@@ -26845,10 +26908,12 @@ async function designCommand(env, args, parsed) {
     case "score": {
       const text = readTextQuietly(join71(workDir(env.paths, work.id), "review", "ui-ux.findings.md"));
       const readings = roundReadings(env.paths, work.id);
-      if (readings.filed === 2)
+      if (readings.filed === READERS - 1)
         return refuse(READERS_REFUSALS.third);
-      if (readings.filed >= 3 && !readings.three)
-        return refuse(READERS_REFUSALS.broken);
+      if (readings.filed >= READERS && !readings.three) {
+        const which = brokenReading(env.paths, work.id);
+        return refuse(`${READERS_REFUSALS.broken}${which ? ` (${which})` : ""}`);
+      }
       const medians = readings.three ? medianFindings(readings.three) : null;
       const read = medians?.text ?? text;
       if (read === null)
@@ -26860,8 +26925,8 @@ async function designCommand(env, args, parsed) {
       const round = (readScore(env.paths, work.id)?.round ?? 0) + 1;
       const record = {
         ...parsedScore,
-        ...decideBar(env.paths, work, read, parsedScore, medians ? 3 : 1),
-        readers: medians ? 3 : 1,
+        ...decideBar(env.paths, work, read, parsedScore, medians ? READERS : 1),
+        readers: medians ? READERS : 1,
         ...medians ? { filed: readings.filed } : {},
         ...medians?.capsUnapplied ? { capsUnapplied: medians.capsUnapplied } : {},
         fingerprint,

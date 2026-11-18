@@ -1,13 +1,13 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WORK_ID } from "../analysis.ts";
-import { readSurface } from "../design.ts";
+import { isNewSite, readSurface } from "../design.ts";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
 import { errorText, nowIso, readText, readTextQuietly, writeText } from "../fs.ts";
 import { sleep, withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { mailStatus } from "../mail-status.ts";
-import { PLAIN_READING, READING_FILE, workDir } from "../paths.ts";
+import { CLARIFICATIONS_HEADING, PLAIN_READING, READING_FILE, workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName, WorkItem, WorkKind } from "../types.ts";
@@ -605,9 +605,9 @@ export function fileAnswer(
   if (input.as && !earlier)
     throw new Error(`no record ${input.as} to resume (crew evidence ${id})`);
   const agent = earlier?.agent ?? agentName(role, roles);
-  // A new site: an item whose recorded design surface invents one (item 2026-11-18-011).
-  const invention = readSurface(ctx.paths, id)?.invention;
-  const newSite = invention === "surface" || invention === "world";
+  // A new site, by the engine's one test of it, read only where a design reader is being filed
+  // (items 2026-11-18-011 and 012): no other role's filing depends on the surface's record.
+  const newSite = agent === "review-ui-ux" && isNewSite(readSurface(ctx.paths, id));
   let saved: { file: string | null; agent: string };
   let note: string | null = null;
   // The archive an earlier answer went to, named even when the record cannot be made; one note
@@ -792,7 +792,7 @@ function joinEarlierFile(
     // A reader of a site's design resumed joins its own reading, whichever file that was (2026-11-18-011).
     const file = READING_FILE.test(earlierFile) ? earlierFile : answerFile(agent, answer, kind);
     const current = (readText(join(dir, file)) ?? "").trimEnd();
-    const heading = "\n## Clarifications";
+    const heading = `\n${CLARIFICATIONS_HEADING}`;
     const body = current.includes(heading) ? current : `${current}\n${heading}`;
     writeText(join(dir, file), `${body}\n- ${answer.replace(/\n/g, "\n  ")}\n`);
     return { file, archived: null };

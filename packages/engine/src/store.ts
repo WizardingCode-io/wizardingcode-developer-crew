@@ -246,3 +246,36 @@ export function readProtectedJsonAt<T>(integrityFile: string, absPath: string): 
   const { data, tampered } = readProtected<T>(integrityFile, basename(absPath), absPath, false);
   return { data, tampered };
 }
+
+/**
+ * Forgets the recorded hash of a protected file the user accepted as gone (item 2026-11-18-012),
+ * under the store's lock. Answers false when no hash was recorded for it.
+ */
+export function forgetIntegrity(paths: CrewPaths, absPath: string): boolean {
+  return withStoreLock(paths, () => {
+    const integrity = readIntegrityFile(paths.integrityFile).map;
+    const key = rel(paths, absPath);
+    if (integrity[key] === undefined) return false;
+    delete integrity[key];
+    writeJson(paths.integrityFile, integrity);
+    return true;
+  });
+}
+
+/** True when the engine recorded a hash for the file and the file is gone: a hand removed it, since no writer of the engine does. */
+export function recordedAndGone(paths: CrewPaths, absPath: string): boolean {
+  return readText(absPath) === null && integrityOf(paths)[rel(paths, absPath)] !== undefined;
+}
+
+/**
+ * The design records of an item that were changed or removed outside the engine (item
+ * 2026-11-18-012), as their names in `PROTECTED_WORK_FILES` (`design/surface.json`, …): one whose
+ * content no longer has its recorded hash, and one with a recorded hash whose file is gone. The one
+ * list both the refusal on opening an item and the verdict read, so the two never disagree.
+ */
+export function changedDesignRecords(paths: CrewPaths, workFolder: string): string[] {
+  return PROTECTED_WORK_FILES.filter((name) => name.startsWith("design/")).filter((name) => {
+    const file = join(workFolder, name);
+    return readProtectedJson<unknown>(paths, file).tampered || recordedAndGone(paths, file);
+  });
+}

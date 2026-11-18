@@ -43,7 +43,7 @@ const scored = (n: number, caps = "none", word = "ship"): string =>
   reading(`score: ${n} · caps: ${caps} · disposition: ${word}`);
 
 /** An item of a new site, with one reference in its shot list, and the commands to drive it. */
-async function site(invention: "world" | "extend" | null = "world") {
+async function site(invention: "world" | "surface" | "extend" | null = "world") {
   const root = makeRepo({ "README.md": "# t\n", "package.json": '{"name":"t"}\n' });
   const env = testEnv();
   const run = async (...args: string[]) => {
@@ -574,4 +574,94 @@ test("readers AC-6: the skill, the rubric, the gate's reference and the ADR say 
   expect(gate).toContain("median");
   const adr = repoFile("docs/adr/0018-a-new-site-has-a-creation-process-the-engine-requires.md");
   expect(adr.slice(adr.indexOf("Note of 2026-11-18"))).toContain("three readers");
+});
+
+// Item 2026-11-18-012: the refusal of a round names its cause, and rows for what the code decides.
+
+test("readers2 AC-2: the refusal of a round that is not whole names the reading and the cause", async () => {
+  const a = await site();
+  const refusal = async (change: (files: string[]) => void): Promise<string> => {
+    a.round();
+    const files = [a.file(scored(8.1)), a.file(scored(8.3)), a.file(scored(8.7))].map(
+      (r) => r.file,
+    );
+    change(files);
+    const got = await a.score();
+    expect(got.answer.code).not.toBe(0);
+    return got.answer.text;
+  };
+  const missing = await refusal((f) => unlinkSync(join(a.folder, f[0] ?? "")));
+  expect(missing).toContain(`${READERS_REFUSALS.broken} (the first reading: its file is missing)`);
+  const changed = await refusal((f) =>
+    writeFileSync(join(a.folder, f[1] ?? ""), `${scored(9.9)}SECRET-WORDS\n`),
+  );
+  expect(changed).toContain(
+    `${READERS_REFUSALS.broken} (the second reading: its file changed since it was filed)`,
+  );
+  expect(changed).not.toContain("SECRET-WORDS");
+  // The third reader filed no score line: the hook's own filing, so the hash holds and the line is what lacks.
+  a.round();
+  a.file(scored(8.1));
+  a.file(scored(8.3));
+  a.file(
+    "# ui-ux findings for x\nreviewer: review-ui-ux\nthe captures did not load, CUT-OFF-WORDS",
+  );
+  const scoreless = (await a.score()).answer.text;
+  expect(scoreless).toContain(
+    `${READERS_REFUSALS.broken} (the third reading: it holds no score line)`,
+  );
+  expect(scoreless).not.toContain("CUT-OFF-WORDS");
+});
+
+test("readers2 AC-3: the review skill names the reviewer cut off before its score line", () => {
+  const review = repoFile("plugins/core/skills/wizardingcode-design-review/SKILL.md");
+  expect(step(review, 2, "Launch")).toContain("cut off before its score line");
+});
+
+test("readers2 AC-9: a site of invention surface, a surface recorded after a first reader, and a new site before any gate run", async () => {
+  const records = (a: Site) =>
+    (loadEvidence(a.paths, a.id).evidence.roles ?? []).filter((r) => r.agent === "review-ui-ux");
+  const three = [
+    "review/ui-ux.findings.md",
+    "review/ui-ux.reading-2.findings.md",
+    "review/ui-ux.reading-3.findings.md",
+  ];
+
+  // Invention `surface` is a new site as `world` is.
+  const s = await site("surface");
+  const code = s.round();
+  expect([s.file(scored(7.9)).file, s.file(scored(8.6)).file, s.file(scored(9)).file]).toEqual(
+    three,
+  );
+  expect(records(s).map((r) => r.code)).toEqual([code, code, code]);
+  expect((await s.score()).saved?.score).toBe(8.6);
+
+  // A surface recorded after a first reader filed: that reader is of no round and its file is written over.
+  const late = await site(null);
+  late.round();
+  const first = late.file(scored(9.9));
+  expect(
+    (await late.run("design", late.id, "surface", "persuade", "--invention", "world")).code,
+  ).toBe(0);
+  const second = late.file(scored(8.1));
+  expect([first.file, second.file]).toEqual([
+    "review/ui-ux.findings.md",
+    "review/ui-ux.findings.md",
+  ]);
+  expect(textOf(late, second.file)).toBe(scored(8.1));
+  expect(records(late).map((r) => r.code === undefined)).toEqual([true, false]);
+  expect(roundReadings(late.paths, late.id).filed).toBe(1);
+  expect(late.file(scored(8.3)).file).toBe("review/ui-ux.reading-2.findings.md");
+  expect((await late.score()).answer.text).toContain(READERS_REFUSALS.third);
+
+  // A new site before any gate run: three files, none written over, no code and no round.
+  const early = await site();
+  expect([
+    early.file(scored(8.6)).file,
+    early.file(scored(8.7)).file,
+    early.file(scored(8.8)).file,
+  ]).toEqual(three);
+  expect(textOf(early, three[0] ?? "")).toBe(scored(8.6));
+  expect(records(early).map((r) => r.code)).toEqual([undefined, undefined, undefined]);
+  expect(roundReadings(early.paths, early.id).filed).toBe(0);
 });

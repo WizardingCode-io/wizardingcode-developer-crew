@@ -4,16 +4,16 @@
 // the protected records and never from the files that still stand, so a session cannot drop a
 // reading it dislikes and keep the rest.
 import { join } from "node:path";
-import { DIMENSIONS_OF_THE_BAR, parseScore } from "./design.ts";
+import { DIMENSIONS_OF_THE_BAR, parseScore, READERS } from "./design.ts";
 import { type BarLines, parseBarLines } from "./design-bar.ts";
 import { loadEvidence } from "./evidence.ts";
 import { readRegularText } from "./fs.ts";
-import { type CrewPaths, READING_FILE, workDir } from "./paths.ts";
+import { CLARIFICATIONS_HEADING, type CrewPaths, READING_FILE, workDir } from "./paths.ts";
 import type { RoleRecord } from "./types.ts";
 import { fileHash } from "./validation.ts";
 
 const READING_MAX_BYTES = 1024 * 1024;
-const CLARIFICATIONS = "## Clarifications";
+const ORDINALS = ["first", "second", "third"] as const;
 const COUNT_LINE = /^reference:[ \t]*(\d+)[ \t]+shots\b/m;
 
 /** What the score command says when it records nothing: fixed words, each with its own remedy. */
@@ -34,7 +34,7 @@ export interface RoundReadings {
 /** A reviewer's first answer: the text above its clarifications, which a resumed reviewer adds below. */
 function firstAnswer(text: string): string {
   const lines = text.split("\n");
-  const at = lines.findIndex((line) => line.trimEnd() === CLARIFICATIONS);
+  const at = lines.findIndex((line) => line.trimEnd() === CLARIFICATIONS_HEADING);
   return at < 0 ? text : lines.slice(0, at).join("\n");
 }
 
@@ -46,12 +46,24 @@ function firstAnswer(text: string): string {
  * session's filing, and a record with no agent id are of no round.
  */
 export function roundReadings(paths: CrewPaths, id: string): RoundReadings {
+  const { filed, three } = readRound(paths, id);
+  return { filed, three };
+}
+
+/** Where three or more were filed and the first three are not whole: which reading and why, in fixed words; null otherwise. */
+export function brokenReading(paths: CrewPaths, id: string): string | null {
+  return readRound(paths, id).broken ?? null;
+}
+
+function readRound(paths: CrewPaths, id: string): RoundReadings & { broken?: string } {
   const { evidence, tampered } = loadEvidence(paths, id);
   const fingerprint = evidence.fingerprint;
   if (tampered || !fingerprint) return { filed: 0, three: null };
   const own = (r: RoleRecord): boolean =>
     r.agent === "review-ui-ux" &&
     typeof r.agentId === "string" &&
+    // A session's filing carries no agent id today, so the line above already refuses it; this one
+    // says the rule and holds if a session's filing ever carried one.
     r.filedBy !== "session" &&
     r.code === fingerprint &&
     typeof r.file === "string" &&
@@ -59,18 +71,24 @@ export function roundReadings(paths: CrewPaths, id: string): RoundReadings {
   const records = (evidence.roles ?? []).filter(own);
   const first: RoleRecord[] = [];
   for (const r of records) if (!first.some((f) => f.agentId === r.agentId)) first.push(r);
-  if (first.length < 3) return { filed: first.length, three: null };
+  if (first.length < READERS) return { filed: first.length, three: null };
   const dir = workDir(paths, id);
   const three: string[] = [];
-  for (const reader of first.slice(0, 3)) {
+  const broken = (index: number, why: string): RoundReadings & { broken: string } => ({
+    filed: first.length,
+    three: null,
+    broken: `the ${ORDINALS[index] ?? "last"} reading: ${why}`,
+  });
+  for (const [index, reader] of first.slice(0, READERS).entries()) {
     const latest = records
       .filter((r) => r.agentId === reader.agentId && r.file === reader.file)
       .at(-1);
     const text = reader.file ? readRegularText(join(dir, reader.file), READING_MAX_BYTES) : null;
-    if (text === null || !latest?.fileHash || fileHash(text) !== latest.fileHash)
-      return { filed: first.length, three: null };
+    if (text === null) return broken(index, "its file is missing");
+    if (!latest?.fileHash || fileHash(text) !== latest.fileHash)
+      return broken(index, "its file changed since it was filed");
     const answer = firstAnswer(text);
-    if (!parseScore(answer)) return { filed: first.length, three: null };
+    if (!parseScore(answer)) return broken(index, "it holds no score line");
     three.push(answer);
   }
   return { filed: first.length, three };

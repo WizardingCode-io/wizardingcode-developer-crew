@@ -198,4 +198,6 @@ export function knowledgePath(userDir: string): string {
 
 /** The first reader's file of a site's design review, and the shape of every reader's (item 2026-11-18-011), relative to the work folder. */
 export const PLAIN_READING = "review/ui-ux.findings.md";
+/** The heading a resumed reviewer's answers join under: written by the hook, read by the round, which takes the text above it as the first answer. */
+export const CLARIFICATIONS_HEADING = "## Clarifications";
 export const READING_FILE = /^review\/ui-ux(?:\.reading-[1-9]\d*)?\.findings\.md$/;

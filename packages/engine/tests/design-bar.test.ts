@@ -836,10 +836,12 @@ test("bar2 AC-1: a score record a hand changed is no score, and one the engine w
   // Through the command a person runs: the item's status says the score is not recorded.
   const status = await a.run("status", a.id);
   expect(status.text).toContain("design score not recorded");
-  // The engine's own next write is a record again, the round counted from one.
+  // The score command refuses on a record changed outside the engine, naming it (item 2026-11-18-012).
   const again = await a.score();
-  expect(again.saved?.score).toBe(7.9);
-  expect(again.saved?.round).toBe(1);
+  expect(again.answer.code).not.toBe(0);
+  expect(again.answer.text).toContain(
+    `design/score.json; the user can accept it with crew accept ${a.id}`,
+  );
   // A record with none of item 008's fields, written by the engine, is read as it is.
   const old = { score: 8.6, caps: [], disposition: "ship", fingerprint: "f", at: "x" };
   designModule.saveScore(a.paths, a.id, old);
@@ -962,10 +964,12 @@ test("bar2 AC-13: a bar record rewritten by hand after the user's yes is no reco
   });
   expect(direct.bar).toBe("overall");
   expect(direct.why).toBe(BAR_SENTENCES.notApproved);
+  // The score command refuses on a record changed outside the engine, naming it (item 2026-11-18-012).
   const got = await a.score();
-  expect(got.saved?.bar).toBe("overall");
-  expect(got.saved?.why).toBe(BAR_SENTENCES.notApproved);
-  expect(got.reasons.join("; ")).toContain("7.9 under the bar of 8.5");
+  expect(got.answer.code).not.toBe(0);
+  expect(got.answer.text).toContain(
+    `design/bar.json; the user can accept it with crew accept ${a.id}`,
+  );
 });
 
 test("bar2 AC-11: each bound the engine copies is the fixture's own", () => {

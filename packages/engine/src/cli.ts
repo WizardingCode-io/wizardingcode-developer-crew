@@ -70,6 +70,7 @@ import {
   parseScore,
   QUERY_MAX,
   queryRefusal,
+  READERS,
   REASON_MAX,
   readDeal,
   readHistory,
@@ -96,7 +97,12 @@ import {
   searchPictures,
 } from "./design-pictures.ts";
 import { addChoice, type Choice, declareKind, readChoices, relabelChoice } from "./design-proof.ts";
-import { medianFindings, READERS_REFUSALS, roundReadings } from "./design-readers.ts";
+import {
+  brokenReading,
+  medianFindings,
+  READERS_REFUSALS,
+  roundReadings,
+} from "./design-readers.ts";
 import {
   ENVIRONMENT_COMMANDS,
   ENVIRONMENT_TIMEOUT_MS,
@@ -386,8 +392,11 @@ import {
 } from "./state.ts";
 import {
   adoptFirstUse,
+  changedDesignRecords,
+  forgetIntegrity,
   integrityOf,
   readProtectedJson,
+  recordedAndGone,
   recordIntegrity,
   rel,
   writeProtectedJson,
@@ -809,6 +818,9 @@ function tamperRefusal(env: Env, opened?: Opened): Outcome | null {
       found.push({ file: `${base}/evidence.json`, accept: opened.work.id });
     if (loadLedger(env.paths, opened.work.id).tampered)
       found.push({ file: `${base}/objections.json`, accept: opened.work.id });
+    // The design records too (item 2026-11-18-012): changed or removed, each stops the command.
+    for (const name of changedDesignRecords(env.paths, workDir(env.paths, opened.work.id)))
+      found.push({ file: `${base}/${name}`, accept: opened.work.id });
   }
   const first = found[0];
   return first ? refuse(tamperMessage(first)) : null;
@@ -856,10 +868,18 @@ function accept(env: Env, target: string): Outcome {
   const dir = workDir(env.paths, target);
   if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync(join(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
+  // A protected file that is gone and had its hash recorded is accepted as gone (item
+  // 2026-11-18-012): without it an item whose record was removed could never be opened again.
+  const gone = PROTECTED_WORK_FILES.filter((name) => recordedAndGone(env.paths, join(dir, name)));
+  for (const name of gone) forgetIntegrity(env.paths, join(dir, name));
   const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join(dir, name)));
-  return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
+  const goneText = gone.length
+    ? `; taken as gone: ${gone.join(", ")}${gone.includes("design/surface.json") ? `; the item has no design gate until a surface is recorded again (crew design ${target} surface …)` : ""}`
+    : "";
+  return ok(`${target} accepted: ${files.join(", ")} now trusted as they are${goneText}`, {
     accepted: target,
     files,
+    gone,
   });
 }
 
@@ -4292,8 +4312,11 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
       // Three readers and their median (2026-11-18-011): with more than one reading of this code on
       // record, the first three stand whole or no score is recorded; with one or none, the plain file.
       const readings = roundReadings(env.paths, work.id);
-      if (readings.filed === 2) return refuse(READERS_REFUSALS.third);
-      if (readings.filed >= 3 && !readings.three) return refuse(READERS_REFUSALS.broken);
+      if (readings.filed === READERS - 1) return refuse(READERS_REFUSALS.third);
+      if (readings.filed >= READERS && !readings.three) {
+        const which = brokenReading(env.paths, work.id);
+        return refuse(`${READERS_REFUSALS.broken}${which ? ` (${which})` : ""}`);
+      }
       const medians = readings.three ? medianFindings(readings.three) : null;
       const read = medians?.text ?? text;
       if (read === null) return refuse("no ui-ux findings yet: run the review first");
@@ -4313,8 +4336,8 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
       // Which bar the score is held to is decided here, once, and kept with the figures read (2026-11-18-008).
       const record: ScoreRecord = {
         ...parsedScore,
-        ...decideBar(env.paths, work, read, parsedScore, medians ? 3 : 1),
-        readers: medians ? 3 : 1,
+        ...decideBar(env.paths, work, read, parsedScore, medians ? READERS : 1),
+        readers: medians ? READERS : 1,
         ...(medians ? { filed: readings.filed } : {}),
         ...(medians?.capsUnapplied ? { capsUnapplied: medians.capsUnapplied } : {}),
         fingerprint,

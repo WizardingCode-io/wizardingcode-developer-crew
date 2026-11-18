@@ -9,6 +9,7 @@ import {
   type BarFigures,
   DIMENSIONS_OF_THE_BAR,
   designDir,
+  READERS,
   SCORE_BAR,
   SCORE_LINE,
   type ScoreRecord,
@@ -338,7 +339,7 @@ export function decideBar(
   }
   const lacking = evidenceSentence(join(folder, "review", "ui"), bar.shots);
   if (lacking) return overall(lacking);
-  if (readers < 3) return overall(BAR_SENTENCES.readers);
+  if (readers < READERS) return overall(BAR_SENTENCES.readers);
   const { word, lines } = parseBarLines(findings);
   const counted = Number(/^reference:[ \t]*(\d+)[ \t]+shots\b/m.exec(findings)?.[1] ?? Number.NaN);
   // A count that differs is said only where the findings hold a count: with none, the lines are unread.

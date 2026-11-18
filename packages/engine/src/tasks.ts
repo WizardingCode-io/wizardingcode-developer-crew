@@ -2,7 +2,7 @@ import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadEvidence, tddSummary, updateEvidence } from "./evidence.ts";
 import { gitChangedPaths, gitHead, isGitRepo, isWatched } from "./fingerprint.ts";
-import { nowIso, readText, writeText } from "./fs.ts";
+import { nowIso, readText, readTextQuietly, sha256, writeText } from "./fs.ts";
 import { findingsText } from "./judgement.ts";
 import {
   loadItemMail,
@@ -18,9 +18,9 @@ import {
 import { mailStatus, readContracts } from "./mail-status.ts";
 import { openSession, type StartFailure, sessionLog, sweepSafely, taskPrompt } from "./open.ts";
 import { dropOpenedMarker } from "./opened.ts";
-import { type CrewPaths, resolvePaths, workDir } from "./paths.ts";
+import { type CrewPaths, PROTECTED_WORK_FILES, resolvePaths, workDir } from "./paths.ts";
 import { oneLine } from "./state.ts";
-import { recordIntegrity } from "./store.ts";
+import { integrityOf, recordIntegrity, rel } from "./store.ts";
 import type {
   Decision,
   Evidence,
@@ -495,6 +495,30 @@ const CHILD_RECORD_FILES = [
 ];
 
 /**
+ * A merged child's record, trusted here as the engine's own: the five files of its record, and each
+ * design record its folder holds (item 2026-11-18-012), since a copied file with no recorded hash
+ * reads as changed outside the engine. A design record is trusted only when the child's own store
+ * held it whole and the copy has the child's bytes: one changed by hand in the child stays changed
+ * here, and is refused as it would have been there.
+ */
+export function trustChildRecords(paths: CrewPaths, childPaths: CrewPaths, child: string): void {
+  const here = workDir(paths, child);
+  const there = workDir(childPaths, child);
+  for (const name of CHILD_RECORD_FILES) recordIntegrity(paths, join(here, name));
+  for (const name of PROTECTED_WORK_FILES) {
+    if (!name.startsWith("design/")) continue;
+    // Whole in the child's store: a hash the child's engine recorded for the file, and the file
+    // has it. A file with no recorded hash there is trusted by nobody, whatever else that store
+    // holds (the security lead's reading): only what the child's engine wrote is trusted here.
+    const theirs = readTextQuietly(join(there, name));
+    const recorded = integrityOf(childPaths)[rel(childPaths, join(there, name))];
+    if (theirs === null || recorded === undefined || recorded !== sha256(theirs)) continue;
+    // The parent's copy is read after the copy and must be the child's bytes.
+    if (readTextQuietly(join(here, name)) === theirs) recordIntegrity(paths, join(here, name));
+  }
+}
+
+/**
  * Merges a task's branch into the lead's checkout (SP2c §7). Refused in a session opened by mail,
  * for a task already merged, with no reply yet, when the worktree is gone (the child's record is
  * checked there, so the merge needs it), when the child's record in its worktree changed outside
@@ -591,7 +615,7 @@ export function mergeTask(
       force: false,
       errorOnExist: false,
     });
-  for (const name of CHILD_RECORD_FILES) recordIntegrity(env.paths, join(childDir, name));
+  trustChildRecords(env.paths, childPaths, child);
   const kept = removeWorktree(env.paths.root, record.worktree);
   // The record of what opened the implementer normally went with the sweep that settled its
   // session (a merge waits for that), and a start that failed took its own; this drop covers a

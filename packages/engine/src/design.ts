@@ -621,6 +621,8 @@ export function recentDealt(rows: readonly HistoryRow[]): string[] {
 // The bar (D-5): the reviewer's score, read from the file the engine filed.
 
 export const SCORE_BAR = 8.5;
+/** How many readers a round of a new site's design review has (item 2026-11-18-011): the session's number, one place to change it. */
+export const READERS = 3;
 export interface ScoreRecord {
   score: number;
   caps: string[];
@@ -716,7 +718,7 @@ export function designReasons(
 
 /** Who read: three readers and the median of each figure, or one reader; never a jury. */
 function readersPhrase(score: ScoreRecord, what: string): string {
-  if (score.readers !== 3) return `one reader ${what}`;
+  if (score.readers !== READERS) return `one reader ${what}`;
   const filed = score.filed && score.filed > 3 ? ` (the first three of ${score.filed} filed)` : "";
   const unapplied = score.capsUnapplied
     ? `; ${score.capsUnapplied} reader named a cap that was not applied, being alone in it`
