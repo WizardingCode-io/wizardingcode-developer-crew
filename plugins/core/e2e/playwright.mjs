@@ -4,7 +4,8 @@
 // UI/UX gate reads: `capture()` (the screenshots per viewport and scheme, the console slice, the
 // accessibility snapshot, axe, the web vitals, the reduced-motion pass) and `captureMotion()` (a motion
 // sample: the frames of an interaction, one strip, the frame times, the animations, the rerun under
-// reduced motion). Import `test` and `expect` from here instead of `@playwright/test`:
+// reduced motion). A third, `pairShots()`, lays each reference of the item's shot list beside its
+// capture. Import `test` and `expect` from here instead of `@playwright/test`:
 //
 //   import { test, expect, capture, captureMotion } from "${CLAUDE_PLUGIN_ROOT}/e2e/playwright.mjs";
 //
@@ -16,9 +17,19 @@
 // session's side of the engine that writes it). A helper writes files or throws: a forged or partial
 // capture can fail the engine's grading and never pass it. The file names carry the page, the state and
 // the interaction for a person; the engine reads them from the JSON fields of the metadata.
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   appMeasures,
   brokenImages,
@@ -781,4 +792,252 @@ export async function captureMotion(page, pageName, interaction, trigger, option
   };
   writeFileSync(join(dir, `${key}.motion.json`), `${JSON.stringify(sample, null, 1)}\n`);
   return sample;
+}
+
+// The pair of a reference and its capture (item 2026-11-18-006): for each row of the item's shot
+// list, one image with the reference on the left and the capture on the right, at one width, and a
+// record of every row. A reference is a third party's picture: it is read only from the item's own
+// folder, composed on a blank page of the helper's own and never handed to the page under test.
+
+const PAIR_NAME = /^[a-z0-9-]+@\d+\.pair\.png$/;
+const REF_NAME = /^[A-Za-z0-9_-][A-Za-z0-9._-]*\.(png|jpe?g|webp)$/i;
+const WIDTH_CELL = /^\d{1,5}$/;
+const SHOTS_HEADER = "| Shot | Ref | Whose and from where | Shows | Take from it | Leave | Width |";
+const SHOTS_RECORD = "shots.json";
+const SHOTS_MAX_BYTES = 256 * 1024;
+const SHOTS_MAX_ROWS = 50;
+const REF_MAX_BYTES = 20 * 1024 * 1024;
+const PAIR_CELL = 720;
+const PAIR_GAP = 24;
+const PAIR_MAX_HEIGHT = 2880;
+const PAIR_MAX_SIDE = 16384;
+const PAIR_MAX_PIXELS = 50_000_000;
+const PAIR_GROUND = "#808080";
+
+/** What a path is, without following a link: `file`, `dir`, `link`, `other`, or null when nothing is there. */
+function kindOf(path) {
+  try {
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) return "link";
+    if (stat.isFile()) return "file";
+    return stat.isDirectory() ? "dir" : "other";
+  } catch {
+    return null;
+  }
+}
+
+/** The item's folder when the evidence folder is `<item>/review/ui`, and null for any other layout: the helper never walks further up. */
+function itemFolder(dir) {
+  const ui = resolve(dir);
+  if (basename(ui) !== "ui" || basename(dirname(ui)) !== "review") return null;
+  return dirname(dirname(ui));
+}
+
+/** Removes what an earlier call left in the evidence folder: the files whose whole name has the pair's shape, and the record. No record is read to decide it. */
+function removePairs(dir) {
+  if (kindOf(dir) !== "dir") return;
+  for (const name of readdirSync(dir)) {
+    if (!PAIR_NAME.test(name) && name !== SHOTS_RECORD) continue;
+    try {
+      unlinkSync(join(dir, name));
+    } catch {
+      // a folder under that name: not the helper's, left
+    }
+  }
+}
+
+/** Writes a new regular file: the name is unlinked first and the write is exclusive, so a link under that name is never followed. */
+function writeNew(path, data) {
+  try {
+    unlinkSync(path);
+  } catch {
+    // nothing there
+  }
+  writeFileSync(path, data, { flag: "wx" });
+}
+
+/** The rows of the item's shot list as cells, or the reason the list gives none; null when the item has no shot list. */
+function readShotList(item) {
+  const design = join(item, "design");
+  const file = join(design, "shots.md");
+  const designKind = kindOf(design);
+  if (designKind === null) return null;
+  if (designKind !== "dir") return { reason: "shot list not readable", rows: [] };
+  const fileKind = kindOf(file);
+  if (fileKind === null) return null;
+  if (fileKind !== "file" || lstatSync(file).size > SHOTS_MAX_BYTES) {
+    return { reason: "shot list not readable", rows: [] };
+  }
+  const lines = readFileSync(file, "utf8").split("\n").map((line) => line.trim());
+  const header = lines.indexOf(SHOTS_HEADER);
+  if (header < 0) return { reason: "no table", rows: [] };
+  const rows = [];
+  for (const line of lines.slice(header + 1)) {
+    if (!line.startsWith("|")) break;
+    const cells = line.split("|").slice(1, -1).map((cell) => cell.trim());
+    if (cells.every((cell) => /^:?-+:?$/.test(cell))) continue;
+    rows.push(cells);
+    if (rows.length > SHOTS_MAX_ROWS) return { reason: "too many rows", rows: [] };
+  }
+  return { reason: null, rows };
+}
+
+/** A cell stripped of the backticks a Markdown row may wrap it in. */
+function bare(cell) {
+  return String(cell ?? "").replace(/^`+|`+$/g, "");
+}
+
+/** One row's entry before any picture is read: the cells that passed their shape, and the first reason the row has no pair, or null. */
+function checkRow(cells, item, dir, seen) {
+  const shotCell = bare(cells[0]);
+  const refCell = bare(cells[1]);
+  const widthCell = bare(cells[6]);
+  const shot = NAME.test(shotCell) ? shotCell : null;
+  const number = WIDTH_CELL.test(widthCell) ? Number(widthCell) : null;
+  const width = number !== null && number >= SIZE_MIN && number <= SIZE_MAX ? number : null;
+  const ref = REF_NAME.test(refCell) ? refCell : null;
+  const entry = { shot, width, ref, capture: null, pair: null, cut: null, reason: null };
+  const fail = (reason) => ({ ...entry, reason });
+  if (shot === null) return fail("shot name");
+  if (width === null) return fail("width");
+  if (ref === null) return fail("ref name");
+  const key = `${shot}@${width}`;
+  const refs = join(item, "design", "refs");
+  const refPath = join(refs, ref);
+  const refKind = kindOf(refPath);
+  if (refKind === null) return fail("reference missing");
+  if (refKind !== "file") return fail("reference not a regular file");
+  let inside = false;
+  try {
+    inside = kindOf(refs) === "dir" && realpathSync(refPath).startsWith(`${realpathSync(item)}${sep}`);
+  } catch {
+    inside = false;
+  }
+  if (!inside) return fail("reference outside the folder");
+  if (lstatSync(refPath).size > REF_MAX_BYTES) return fail("reference too large");
+  const capture = `${key}.png`;
+  if (kindOf(join(dir, capture)) !== "file") return fail("capture missing");
+  // The first row that passed its checks keeps the pair's name; a later one with the same Shot and Width has none.
+  if (seen.has(key)) return fail("duplicate");
+  seen.add(key);
+  return { ...entry, capture };
+}
+
+/** A picture's bytes as a `data:` URL of its kind. */
+function dataUrlOf(path) {
+  const lower = path.toLowerCase();
+  const kind = lower.endsWith(".png") ? "png" : lower.endsWith(".webp") ? "webp" : "jpeg";
+  return `data:image/${kind};base64,${readFileSync(path).toString("base64")}`;
+}
+
+/** In the blank page: both pictures at one width on one canvas, or the reason there is none. */
+function crewPair(input) {
+  const load = (src) =>
+    new Promise((done) => {
+      const image = new Image();
+      image.onload = () => done(image);
+      image.onerror = () => done(null);
+      image.src = src;
+    });
+  return Promise.all([load(input.reference), load(input.capture)]).then(([reference, capture]) => {
+    if (!reference || !capture) return { reason: "not composed" };
+    // A picture with no size (nothing to scale) is refused with the oversize ones: neither is drawn.
+    const outOfBounds = (image) =>
+      image.naturalWidth < 1 ||
+      image.naturalHeight < 1 ||
+      image.naturalWidth > input.maxSide ||
+      image.naturalHeight > input.maxSide ||
+      image.naturalWidth * image.naturalHeight > input.maxPixels;
+    if (outOfBounds(reference) || outOfBounds(capture)) return { reason: "too many pixels" };
+    const scaled = (image) => Math.max(1, Math.round((image.naturalHeight / image.naturalWidth) * input.cell));
+    const heights = [scaled(reference), scaled(capture)];
+    const height = Math.min(Math.max(heights[0], heights[1]), input.maxHeight);
+    const canvas = document.createElement("canvas");
+    canvas.width = input.cell * 2 + input.gap;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return { reason: "not composed" };
+    context.fillStyle = input.ground;
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    for (const [i, image] of [reference, capture].entries()) {
+      const shown = Math.min(heights[i], height);
+      const source = image.naturalHeight * (shown / heights[i]);
+      context.drawImage(image, 0, 0, image.naturalWidth, source, i * (input.cell + input.gap), 0, input.cell, shown);
+    }
+    const cut = [heights[0] > height, heights[1] > height];
+    return {
+      reason: null,
+      cut: cut[0] && cut[1] ? "both" : cut[0] ? "reference" : cut[1] ? "capture" : null,
+      dataUrl: canvas.toDataURL("image/png"),
+    };
+  });
+}
+
+/**
+ * A blank page of the helper's own, never the page under test: in a context of its own, so that
+ * nothing set on the project's context (an init script, a route, a cookie) reaches it; in the page's
+ * context only where the browser cannot be reached from it.
+ */
+async function blankPage(page) {
+  const browser = page.context().browser();
+  return browser ? browser.newPage() : page.context().newPage();
+}
+
+/** One row composed on the blank page and written: its entry with the pair, or with the reason there is none. */
+async function composeRow(blank, item, dir, entry) {
+  let made;
+  try {
+    made = await blank.evaluate(crewPair, {
+      reference: dataUrlOf(join(item, "design", "refs", entry.ref)),
+      capture: dataUrlOf(join(dir, entry.capture)),
+      cell: PAIR_CELL,
+      gap: PAIR_GAP,
+      maxHeight: PAIR_MAX_HEIGHT,
+      maxSide: PAIR_MAX_SIDE,
+      maxPixels: PAIR_MAX_PIXELS,
+      ground: PAIR_GROUND,
+    });
+  } catch {
+    // A file gone since it was checked, or a page that failed: one reason for both, and no text of either.
+    made = { reason: "not composed" };
+  }
+  const comma = made.reason === null ? String(made.dataUrl).indexOf(",") : -1;
+  if (comma < 0) return { ...entry, reason: made.reason ?? "not composed" };
+  const pair = `${entry.shot}@${entry.width}.pair.png`;
+  writeNew(join(dir, pair), Buffer.from(String(made.dataUrl).slice(comma + 1), "base64"));
+  return { ...entry, pair, cut: made.cut };
+}
+
+/**
+ * The pairs of the item's shot list (`design/shots.md`): for each row whose reference and capture both
+ * exist, `<Shot>@<Width>.pair.png` in the evidence folder, the reference on the left and the capture on
+ * the right, each 720 px wide with its proportions kept, and `shots.json`, the record of every row with
+ * the reason a row has no pair. Called once, after the captures. Returns the record; `{ pairs: [] }`,
+ * with no other key, when the item has no shot list; null outside a gate run. A cell may be written
+ * in backticks, as a file name often is: they are taken off before its shape is checked.
+ */
+export async function pairShots(page) {
+  const dir = uiDir();
+  if (!dir) return null;
+  removePairs(dir);
+  const item = itemFolder(dir);
+  const list = item ? readShotList(item) : null;
+  if (!item || !list) return { pairs: [] };
+  const seen = new Set();
+  const pairs = list.rows.map((cells) => checkRow(cells, item, dir, seen));
+  if (pairs.some((entry) => entry.reason === null)) {
+    const blank = await blankPage(page);
+    try {
+      for (const [i, entry] of pairs.entries()) {
+        if (entry.reason === null) pairs[i] = await composeRow(blank, item, dir, entry);
+      }
+    } finally {
+      // A close that fails must not take the place of an error already on its way.
+      await blank.close().catch(() => {});
+    }
+  }
+  const record = { by: "fixture", at: new Date().toISOString(), reason: list.reason, pairs };
+  mkdirSync(dir, { recursive: true });
+  writeNew(join(dir, SHOTS_RECORD), `${JSON.stringify(record, null, 1)}\n`);
+  return record;
 }

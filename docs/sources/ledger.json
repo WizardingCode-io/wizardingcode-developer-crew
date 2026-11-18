@@ -2502,6 +2502,15 @@
    "text": "the person's open feedback first, else the weakest dimension of the weakest shot",
    "proof": "design-references.test.ts",
    "note": "read at b23cac6 (SKILL.md, the first step of a round); that it orders findings of one kind inside the rubric's order is the crew's; shown only by the site eval cases site-bakery, site-law and site-synth, each built with and without references, not yet run"
+  },
+  {
+   "source": "cook",
+   "rule": "the pair of a reference and its capture",
+   "status": "in",
+   "file": "plugins/core/e2e/playwright.mjs",
+   "text": "the reference on the left and the capture on the right",
+   "proof": "e2e-pairs.test.ts",
+   "note": "read at b23cac6 (references/target-and-bar.md and scripts/side-by-side.mjs); the script was read and neither run nor copied; the fit to width, the ground, the cut and the record are the crew's own, where the source fits both into one box through ffmpeg; the source's measured comparison by region is not taken"
   }
  ]
 }
