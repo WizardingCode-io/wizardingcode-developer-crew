@@ -813,6 +813,10 @@ const PAIR_MAX_HEIGHT = 2880;
 const PAIR_MAX_SIDE = 16384;
 const PAIR_MAX_PIXELS = 50_000_000;
 const PAIR_GROUND = "#808080";
+const PAIR_PREFIX = "data:image/png;base64,";
+const PAIR_MAX_TEXT = 64 * 1024 * 1024;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const PAIR_CUTS = [null, "reference", "capture", "both"];
 
 /** What a path is, without following a link: `file`, `dir`, `link`, `other`, or null when nothing is there. */
 function kindOf(path) {
@@ -888,7 +892,7 @@ function bare(cell) {
 }
 
 /** One row's entry before any picture is read: the cells that passed their shape, and the first reason the row has no pair, or null. */
-function checkRow(cells, item, dir, seen) {
+function checkRow(cells, item, dir) {
   const shotCell = bare(cells[0]);
   const refCell = bare(cells[1]);
   const widthCell = bare(cells[6]);
@@ -901,7 +905,6 @@ function checkRow(cells, item, dir, seen) {
   if (shot === null) return fail("shot name");
   if (width === null) return fail("width");
   if (ref === null) return fail("ref name");
-  const key = `${shot}@${width}`;
   const refs = join(item, "design", "refs");
   const refPath = join(refs, ref);
   const refKind = kindOf(refPath);
@@ -914,12 +917,16 @@ function checkRow(cells, item, dir, seen) {
     inside = false;
   }
   if (!inside) return fail("reference outside the folder");
-  if (lstatSync(refPath).size > REF_MAX_BYTES) return fail("reference too large");
-  const capture = `${key}.png`;
+  let size;
+  try {
+    size = lstatSync(refPath).size;
+  } catch {
+    // Gone since it was found: a missing reference, and no error out of the call.
+    return fail("reference missing");
+  }
+  if (size > REF_MAX_BYTES) return fail("reference too large");
+  const capture = `${shot}@${width}.png`;
   if (kindOf(join(dir, capture)) !== "file") return fail("capture missing");
-  // The first row that passed its checks keeps the pair's name; a later one with the same Shot and Width has none.
-  if (seen.has(key)) return fail("duplicate");
-  seen.add(key);
   return { ...entry, capture };
 }
 
@@ -974,20 +981,40 @@ function crewPair(input) {
 }
 
 /**
- * A blank page of the helper's own, never the page under test: in a context of its own, so that
- * nothing set on the project's context (an init script, a route, a cookie) reaches it; in the page's
- * context only where the browser cannot be reached from it.
+ * A blank page of the helper's own, never the page under test, and where it stands: `own`, a context
+ * of its own, so that nothing set on the project's context (an init script, a route, a cookie) reaches
+ * it; `shared`, the page's context, only where the browser cannot be reached from the page.
  */
 async function blankPage(page) {
   const browser = page.context().browser();
-  return browser ? browser.newPage() : page.context().newPage();
+  if (browser) return { blank: await browser.newPage(), context: "own" };
+  return { blank: await page.context().newPage(), context: "shared" };
+}
+
+/**
+ * What the blank page answered, read on this side and never written as it came: a reason is one of
+ * the helper's two, a cut one of its four values, a picture a PNG by its label, its size and its first
+ * bytes. Anything else is `not composed`, so no word of a page reaches the record or a file's name.
+ */
+function readPairReturn(made) {
+  const failed = (reason) => ({ reason, cut: null, bytes: null });
+  if (!made || typeof made !== "object") return failed("not composed");
+  if (made.reason === "too many pixels") return failed("too many pixels");
+  if (made.reason !== null || !PAIR_CUTS.includes(made.cut)) return failed("not composed");
+  const url = made.dataUrl;
+  if (typeof url !== "string" || !url.startsWith(PAIR_PREFIX) || url.length > PAIR_MAX_TEXT) {
+    return failed("not composed");
+  }
+  const bytes = Buffer.from(url.slice(PAIR_PREFIX.length), "base64");
+  if (!bytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return failed("not composed");
+  return { reason: null, cut: made.cut, bytes };
 }
 
 /** One row composed on the blank page and written: its entry with the pair, or with the reason there is none. */
 async function composeRow(blank, item, dir, entry) {
-  let made;
+  let answered;
   try {
-    made = await blank.evaluate(crewPair, {
+    answered = await blank.evaluate(crewPair, {
       reference: dataUrlOf(join(item, "design", "refs", entry.ref)),
       capture: dataUrlOf(join(dir, entry.capture)),
       cell: PAIR_CELL,
@@ -999,12 +1026,12 @@ async function composeRow(blank, item, dir, entry) {
     });
   } catch {
     // A file gone since it was checked, or a page that failed: one reason for both, and no text of either.
-    made = { reason: "not composed" };
+    answered = null;
   }
-  const comma = made.reason === null ? String(made.dataUrl).indexOf(",") : -1;
-  if (comma < 0) return { ...entry, reason: made.reason ?? "not composed" };
+  const made = readPairReturn(answered);
+  if (made.reason !== null) return { ...entry, reason: made.reason };
   const pair = `${entry.shot}@${entry.width}.pair.png`;
-  writeNew(join(dir, pair), Buffer.from(String(made.dataUrl).slice(comma + 1), "base64"));
+  writeNew(join(dir, pair), made.bytes);
   return { ...entry, pair, cut: made.cut };
 }
 
@@ -1012,9 +1039,12 @@ async function composeRow(blank, item, dir, entry) {
  * The pairs of the item's shot list (`design/shots.md`): for each row whose reference and capture both
  * exist, `<Shot>@<Width>.pair.png` in the evidence folder, the reference on the left and the capture on
  * the right, each 720 px wide with its proportions kept, and `shots.json`, the record of every row with
- * the reason a row has no pair. Called once, after the captures. Returns the record; `{ pairs: [] }`,
- * with no other key, when the item has no shot list; null outside a gate run. A cell may be written
- * in backticks, as a file name often is: they are taken off before its shape is checked.
+ * the reason a row has no pair and the context the run composed in (null where no row reached
+ * composing, so no blank page was opened). Called once, after the captures.
+ * Returns the record; `{ pairs: [] }`, with no other key, when the item has no shot list; null outside
+ * a gate run. It rejects where no blank page can be opened or a file cannot be written, as every
+ * helper here writes its files or throws. A cell may be written in backticks, as a file name often
+ * is: they are taken off before its shape is checked.
  */
 export async function pairShots(page) {
   const dir = uiDir();
@@ -1023,20 +1053,37 @@ export async function pairShots(page) {
   const item = itemFolder(dir);
   const list = item ? readShotList(item) : null;
   if (!item || !list) return { pairs: [] };
-  const seen = new Set();
-  const pairs = list.rows.map((cells) => checkRow(cells, item, dir, seen));
-  if (pairs.some((entry) => entry.reason === null)) {
-    const blank = await blankPage(page);
-    try {
-      for (const [i, entry] of pairs.entries()) {
-        if (entry.reason === null) pairs[i] = await composeRow(blank, item, dir, entry);
+  // The rows one at a time, in the table's order: only a row whose pair was written takes its name.
+  const taken = new Set();
+  const pairs = [];
+  let opened = null;
+  try {
+    for (const cells of list.rows) {
+      let entry = checkRow(cells, item, dir);
+      if (entry.reason === null) {
+        const key = `${entry.shot}@${entry.width}`;
+        if (taken.has(key)) {
+          entry = { ...entry, capture: null, reason: "duplicate" };
+        } else {
+          // One blank page for the call, opened when the first row reaches composing.
+          opened ??= await blankPage(page);
+          entry = await composeRow(opened.blank, item, dir, entry);
+          if (entry.pair !== null) taken.add(key);
+        }
       }
-    } finally {
-      // A close that fails must not take the place of an error already on its way.
-      await blank.close().catch(() => {});
+      pairs.push(entry);
     }
+  } finally {
+    // On every way out; and a close that fails must not take the place of an error already on its way.
+    if (opened) await opened.blank.close().catch(() => {});
   }
-  const record = { by: "fixture", at: new Date().toISOString(), reason: list.reason, pairs };
+  const record = {
+    by: "fixture",
+    at: new Date().toISOString(),
+    reason: list.reason,
+    context: opened ? opened.context : null,
+    pairs,
+  };
   mkdirSync(dir, { recursive: true });
   writeNew(join(dir, SHOTS_RECORD), `${JSON.stringify(record, null, 1)}\n`);
   return record;

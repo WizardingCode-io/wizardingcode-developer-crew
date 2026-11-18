@@ -22,7 +22,7 @@ const RED = [200, 30, 30];
 const BLUE = [30, 30, 200];
 const GREEN = [30, 160, 30];
 const GROUND = [128, 128, 128];
-const RECORD_KEYS = ["at", "by", "pairs", "reason"];
+const RECORD_KEYS = ["at", "by", "context", "pairs", "reason"];
 const ENTRY_KEYS = ["capture", "cut", "pair", "reason", "ref", "shot", "width"];
 
 type Context = {
@@ -51,15 +51,28 @@ type Entry = {
   cut: string | null;
   reason: string | null;
 };
-type Shots = { by?: string; at?: string; reason?: string | null; pairs: Entry[] };
+type Shots = {
+  by?: string;
+  at?: string;
+  reason?: string | null;
+  context?: string | null;
+  pairs: Entry[];
+};
 type Fixture = {
   pairShots: (page: unknown) => Promise<Shots | null>;
   capture: (page: unknown, p: string, s: string) => Promise<Record<string, unknown> | null>;
 };
 
 /** The browser the test can launch, or the reason it cannot: Chrome by channel first, then the registry's shell. */
-async function launch(): Promise<{ browser: Browser } | { skip: string }> {
-  let chromium: { launch(options: Record<string, unknown>): Promise<Browser> };
+type Persistent = { pages(): Page[]; newPage(): Promise<Page>; close(): Promise<void> };
+type Chromium = {
+  launch(options: Record<string, unknown>): Promise<Browser>;
+  launchPersistentContext(folder: string, options: Record<string, unknown>): Promise<Persistent>;
+};
+async function launch(): Promise<
+  { browser: Browser; chromium: Chromium; options: Record<string, unknown> } | { skip: string }
+> {
+  let chromium: Chromium;
   try {
     chromium = ((await import("@playwright/test")) as { chromium: typeof chromium }).chromium;
   } catch (error) {
@@ -68,7 +81,7 @@ async function launch(): Promise<{ browser: Browser } | { skip: string }> {
   const reasons: string[] = [];
   for (const options of [{ channel: "chrome", headless: true }, { headless: true }]) {
     try {
-      return { browser: await chromium.launch(options) };
+      return { browser: await chromium.launch(options), chromium, options };
     } catch (error) {
       reasons.push(String((error as Error).message).split("\n")[0] ?? "");
     }
@@ -249,6 +262,7 @@ browserTest(
       };
       expect(record?.by).toBe("fixture");
       expect(record?.reason).toBeNull();
+      expect(record?.context).toBe("own");
       expect(record?.pairs).toEqual([entry]);
       expect(typeof record?.at).toBe("string");
       // The record holds these keys and no other: a `page`, a `state` or `viewports` in it would make
@@ -323,7 +337,7 @@ browserTest(
       const pages = underTest.context().pages().length;
       // The helper's blank page lives in a context of its own, which the count of the project's pages
       // cannot see: the browser's count of contexts is what shows it closed on every path.
-      if ("skip" in found) return;
+      if ("skip" in found) throw new Error(found.skip);
       const contexts = found.browser.contexts().length;
       // Every page the project's context opens during the calls: the helper's blank page must not be
       // one of them, or an init script, a route or a cookie of that context would reach the reference.
@@ -362,6 +376,7 @@ browserTest(
       } finally {
         await alone.close();
       }
+      expect(found.browser.contexts().length).toBe(contexts);
     });
   },
   60_000,
@@ -689,4 +704,206 @@ browserTest(
     expect(lights(withThem.meta)).toEqual(lights(without.meta));
   },
   120_000,
+);
+
+browserTest(
+  "pairs2 AC-1: a row that is not composed leaves the pair's name to a later row, and a row with its pair makes a later one a duplicate",
+  async () => {
+    const at = item();
+    await withPages(at.ui, async (fixture, underTest, own) => {
+      writeFileSync(join(at.refs, "broken.png"), "this is no picture");
+      writeFileSync(join(at.refs, "home.png"), await picture(own, 400, 200, RED));
+      writeFileSync(join(at.refs, "second.png"), await picture(own, 400, 200, GREEN));
+      const capture = await picture(own, 800, 1200, BLUE);
+      writeFileSync(join(at.ui, "free-default@1280.png"), capture);
+      writeFileSync(join(at.ui, "home-default@1280.png"), capture);
+      writeFileSync(
+        join(at.design, "shots.md"),
+        table(
+          row("free-default", "broken.png", 1280),
+          row("free-default", "home.png", 1280),
+          row("home-default", "home.png", 1280),
+          row("home-default", "second.png", 1280),
+        ),
+      );
+      const record = await fixture.pairShots(underTest);
+      expect(record?.pairs.map((entry) => `${entry.shot} | ${entry.ref}: ${entry.reason}`)).toEqual(
+        [
+          "free-default | broken.png: not composed",
+          "free-default | home.png: null",
+          "home-default | home.png: null",
+          "home-default | second.png: duplicate",
+        ],
+      );
+      expect(record?.pairs.map((entry) => entry.pair)).toEqual([
+        null,
+        "free-default@1280.pair.png",
+        "home-default@1280.pair.png",
+        null,
+      ]);
+      // The pair under the freed name is the second row's: its reference is red, and the broken one drew nothing.
+      const read = await colours(own, readFileSync(join(at.ui, "free-default@1280.pair.png")), [
+        [360, 180],
+      ]);
+      expect(near(read[0], RED), `the freed name's pair: ${read[0]}`).toBe(true);
+      // The duplicate drew nothing over the first row's pair: it is still red, where the duplicate's reference is green.
+      const kept = await colours(own, readFileSync(join(at.ui, "home-default@1280.pair.png")), [
+        [360, 180],
+      ]);
+      expect(near(kept[0], RED), `the pair a duplicate must leave: ${kept[0]}`).toBe(true);
+    });
+  },
+  60_000,
+);
+
+/** A page of a persistent context, and the way to close it. */
+async function persistentPage(): Promise<{ page: Page; close(): Promise<void> }> {
+  if ("skip" in found) throw new Error(found.skip);
+  const context = await found.chromium.launchPersistentContext(tempDir(), found.options);
+  const close = (): Promise<void> => context.close().catch(() => {});
+  try {
+    return { page: context.pages()[0] ?? (await context.newPage()), close };
+  } catch (error) {
+    // No page to hand back: the context is closed here, since the caller never gets the way to close it.
+    await close();
+    throw error;
+  }
+}
+
+browserTest(
+  "pairs2 AC-15: the record holds five keys and says in which context the run composed: own, shared or none",
+  async () => {
+    const at = item();
+    await withPages(at.ui, async (fixture, underTest, own) => {
+      writeFileSync(join(at.refs, "home.png"), await picture(own, 400, 200, RED));
+      writeFileSync(join(at.ui, "home-default@1280.png"), await picture(own, 800, 1200, BLUE));
+      const list = join(at.design, "shots.md");
+
+      writeFileSync(list, table(row("home-default", "home.png", 1280)));
+      const composed = await fixture.pairShots(underTest);
+      expect(Object.keys(composed ?? {}).sort()).toEqual(RECORD_KEYS);
+      expect(composed?.context).toBe("own");
+
+      writeFileSync(list, table(row("home-default", "absent.png", 1280)));
+      const none = await fixture.pairShots(underTest);
+      expect(Object.keys(none ?? {}).sort()).toEqual(RECORD_KEYS);
+      expect(none?.context).toBeNull();
+      expect(none?.pairs[0]?.reason).toBe("reference missing");
+
+      writeFileSync(list, table(row("home-default", "home.png", 1280)));
+      const persistent = await persistentPage();
+      try {
+        // On this Playwright a page of a persistent context reaches its browser: a context of the helper's own.
+        const fromPersistent = await fixture.pairShots(persistent.page);
+        expect(fromPersistent?.context).toBe("own");
+        expect(fromPersistent?.pairs[0]?.pair).toBe("home-default@1280.pair.png");
+      } finally {
+        await persistent.close();
+      }
+
+      // A page whose context gives no browser: the helper's page is one of that context, and the record says so.
+      const answer = `data:image/png;base64,${(await picture(own, 8, 8, RED)).toString("base64")}`;
+      const standIn = {
+        context: () => ({
+          browser: () => null,
+          newPage: async () => ({
+            evaluate: async () => ({ reason: null, cut: null, dataUrl: answer }),
+            close: async () => {},
+          }),
+        }),
+      };
+      const shared = await fixture.pairShots(standIn);
+      expect(Object.keys(shared ?? {}).sort()).toEqual(RECORD_KEYS);
+      expect(shared?.context).toBe("shared");
+      expect(shared?.pairs[0]?.pair).toBe("home-default@1280.pair.png");
+      expect(JSON.parse(readFileSync(join(at.ui, "shots.json"), "utf8"))).toEqual(shared);
+    });
+  },
+  120_000,
+);
+
+browserTest(
+  "pairs2 AC-10: from a page of a persistent context the pair is made, away from that page, and the helper's page is closed",
+  async () => {
+    const at = item();
+    await withPages(at.ui, async (fixture, _underTest, own) => {
+      writeFileSync(join(at.refs, "home.png"), await picture(own, 400, 200, RED, GREEN));
+      writeFileSync(join(at.ui, "home-default@1280.png"), await picture(own, 800, 1200, BLUE));
+      writeFileSync(join(at.design, "shots.md"), table(row("home-default", "home.png", 1280)));
+      const persistent = await persistentPage();
+      try {
+        await persistent.page.setContent(WATCHED);
+        const pages = persistent.page.context().pages().length;
+        const record = await fixture.pairShots(persistent.page);
+        expect(record?.pairs[0]?.pair).toBe("home-default@1280.pair.png");
+        expect(record?.pairs[0]?.reason).toBeNull();
+        expect(await persistent.page.evaluate<string[]>("window.__seen")).toEqual([]);
+        expect(persistent.page.context().pages().length).toBe(pages);
+        const pair = readFileSync(join(at.ui, "home-default@1280.pair.png"));
+        expect(pngSize(pair)).toEqual({ width: 1464, height: 1080 });
+        const read = await colours(own, pair, [
+          [360, 90],
+          [360, 270],
+          [1104, 540],
+        ]);
+        expect(near(read[0], RED)).toBe(true);
+        expect(near(read[1], GREEN)).toBe(true);
+        expect(near(read[2], BLUE)).toBe(true);
+      } finally {
+        await persistent.close();
+      }
+    });
+  },
+  120_000,
+);
+
+browserTest(
+  "pairs2 AC-11: a write that fails rejects the call, with no page of the project's context opened and no context left open",
+  async () => {
+    const at = item();
+    await withPages(at.ui, async (fixture, underTest, own) => {
+      if ("skip" in found) throw new Error(found.skip);
+      writeFileSync(join(at.refs, "home.png"), await picture(own, 400, 200, RED));
+      writeFileSync(join(at.ui, "home-default@1280.png"), await picture(own, 800, 1200, BLUE));
+      writeFileSync(join(at.design, "shots.md"), table(row("home-default", "home.png", 1280)));
+      // A folder under the pair's name: the removal cannot unlink it and the exclusive write refuses it.
+      mkdirSync(join(at.ui, "home-default@1280.pair.png"));
+      const opened: string[] = [];
+      underTest.context().on("page", () => opened.push("a page of the project's context"));
+      const contexts = found.browser.contexts().length;
+      let rejected = "the call did not reject";
+      try {
+        await fixture.pairShots(underTest);
+      } catch (error) {
+        rejected = String((error as { code?: string }).code ?? "rejected");
+      }
+      expect(rejected).toBe("EEXIST");
+      expect(opened).toEqual([]);
+      expect(found.browser.contexts().length).toBe(contexts);
+      expect(existsSync(join(at.ui, "shots.json"))).toBe(false);
+    });
+  },
+  60_000,
+);
+
+browserTest(
+  "pairs2 AC-12: a row whose cells are written in backticks has its pair, and its entry holds the values without them",
+  async () => {
+    const at = item();
+    await withPages(at.ui, async (fixture, underTest, own) => {
+      writeFileSync(join(at.refs, "home.png"), await picture(own, 400, 200, RED));
+      writeFileSync(join(at.ui, "home-default@1280.png"), await picture(own, 800, 1200, BLUE));
+      writeFileSync(
+        join(at.design, "shots.md"),
+        table(row("`home-default`", "`home.png`", "`1280`")),
+      );
+      const record = await fixture.pairShots(underTest);
+      const entry = record?.pairs[0];
+      expect(entry?.reason).toBeNull();
+      expect([entry?.shot, entry?.ref, entry?.width]).toEqual(["home-default", "home.png", 1280]);
+      expect(entry?.pair).toBe("home-default@1280.pair.png");
+      expect(existsSync(join(at.ui, "home-default@1280.pair.png"))).toBe(true);
+    });
+  },
+  60_000,
 );
