@@ -32,7 +32,7 @@ import {
   readBar,
 } from "../src/design-bar.ts";
 import { PROTECTED_WORK_FILES } from "../src/paths.ts";
-import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import { filedReading, makeRepo, newRound, repoPaths, testEnv } from "./helpers.ts";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const repoFile = (path: string): string => readFileSync(join(ROOT, path), "utf8");
@@ -178,8 +178,11 @@ async function site() {
         ...over,
       }),
     );
-  const review = (...lines: string[]) =>
-    writeFileSync(join(folder, "review", "ui-ux.findings.md"), findings(...lines));
+  /** The review of one state of the code: three readers of three agent ids, each filing the same findings through the hook's own filing (item 2026-11-18-011). */
+  const review = (...lines: string[]) => {
+    newRound(env, root, id);
+    for (let reader = 0; reader < 3; reader += 1) filedReading(env, root, id, findings(...lines));
+  };
   /** The score recorded from the findings: the command's answer, the record, and why the site is not at the bar. */
   const score = async () => {
     const answer = await run("design", id, "score");
@@ -603,7 +606,7 @@ test("bar AC-12: the command and the report say which bar, with each dimension b
     expect(text).toContain("design 8.2 (references 8)");
     expect(text).toContain("creativity 7.6 (references 7.5)");
   }
-  expect(designScoreLines(at.saved as ScoreRecord).join("\n")).toContain("one reader");
+  expect(designScoreLines(at.saved as ScoreRecord).join("\n")).toContain("three readers");
   expect(designScoreLines(at.saved as ScoreRecord).join("\n")).toContain("a model's reading");
 
   a.review(SCORE, DIMS, "reference: 3 shots", LEVEL);

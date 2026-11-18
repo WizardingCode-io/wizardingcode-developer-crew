@@ -96,6 +96,7 @@ import {
   searchPictures,
 } from "./design-pictures.ts";
 import { addChoice, type Choice, declareKind, readChoices, relabelChoice } from "./design-proof.ts";
+import { medianFindings, READERS_REFUSALS, roundReadings } from "./design-readers.ts";
 import {
   ENVIRONMENT_COMMANDS,
   ENVIRONMENT_TIMEOUT_MS,
@@ -4288,8 +4289,15 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
       const text = readTextQuietly(
         join(workDir(env.paths, work.id), "review", "ui-ux.findings.md"),
       );
-      if (text === null) return refuse("no ui-ux findings yet: run the review first");
-      const parsedScore = parseScore(text);
+      // Three readers and their median (2026-11-18-011): with more than one reading of this code on
+      // record, the first three stand whole or no score is recorded; with one or none, the plain file.
+      const readings = roundReadings(env.paths, work.id);
+      if (readings.filed === 2) return refuse(READERS_REFUSALS.third);
+      if (readings.filed >= 3 && !readings.three) return refuse(READERS_REFUSALS.broken);
+      const medians = readings.three ? medianFindings(readings.three) : null;
+      const read = medians?.text ?? text;
+      if (read === null) return refuse("no ui-ux findings yet: run the review first");
+      const parsedScore = parseScore(read);
       if (!parsedScore)
         return refuse(
           "the ui-ux findings hold no score line (score: n · caps: … · disposition: …)",
@@ -4305,7 +4313,10 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
       // Which bar the score is held to is decided here, once, and kept with the figures read (2026-11-18-008).
       const record: ScoreRecord = {
         ...parsedScore,
-        ...decideBar(env.paths, work, text, parsedScore),
+        ...decideBar(env.paths, work, read, parsedScore, medians ? 3 : 1),
+        readers: medians ? 3 : 1,
+        ...(medians ? { filed: readings.filed } : {}),
+        ...(medians?.capsUnapplied ? { capsUnapplied: medians.capsUnapplied } : {}),
         fingerprint,
         at: nowIso(),
         round,

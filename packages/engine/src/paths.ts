@@ -195,3 +195,7 @@ export function knowledgeDir(userDir: string): string {
 export function knowledgePath(userDir: string): string {
   return join(knowledgeDir(userDir), "base.json");
 }
+
+/** The first reader's file of a site's design review, and the shape of every reader's (item 2026-11-18-011), relative to the work folder. */
+export const PLAIN_READING = "review/ui-ux.findings.md";
+export const READING_FILE = /^review\/ui-ux(?:\.reading-[1-9]\d*)?\.findings\.md$/;

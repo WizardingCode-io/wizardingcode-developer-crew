@@ -41,6 +41,7 @@ export const BAR_SENTENCES = {
   noDigest: "a pair's record does not carry the approved reference's digest",
   noPair: "an approved shot has no pair on the fixture's record",
   older: "the fixture's record is older than a capture it pairs",
+  readers: "fewer than three readers read the references",
   count: "the review read another number of shots than were approved",
   unread: "the review's lines for the dimensions and the level were not read",
   low: `the references read under ${LEVEL_FLOOR} on`,
@@ -313,6 +314,8 @@ export function decideBar(
   work: WorkItem,
   findings: string,
   parsed: Pick<ScoreRecord, "caps" | "disposition">,
+  /** How many readers the figures rest on: the references set the bar on three, never on fewer (item 2026-11-18-011). */
+  readers = 1,
 ): BarOutcome {
   const overall = (why?: string): BarOutcome => ({
     bar: "overall",
@@ -335,6 +338,7 @@ export function decideBar(
   }
   const lacking = evidenceSentence(join(folder, "review", "ui"), bar.shots);
   if (lacking) return overall(lacking);
+  if (readers < 3) return overall(BAR_SENTENCES.readers);
   const { word, lines } = parseBarLines(findings);
   const counted = Number(/^reference:[ \t]*(\d+)[ \t]+shots\b/m.exec(findings)?.[1] ?? Number.NaN);
   // A count that differs is said only where the findings hold a count: with none, the lines are unread.

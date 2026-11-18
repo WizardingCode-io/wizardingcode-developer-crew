@@ -636,6 +636,12 @@ export interface ScoreRecord {
   /** The site's figure on each dimension and the references', kept where the references set the bar. */
   dimensions?: BarFigures;
   level?: BarFigures;
+  /** How many readers the figures rest on (item 2026-11-18-011): 3, the median of each, or 1; absent on an older record, one reader's. */
+  readers?: number;
+  /** How many readers the hook filed on that code, where three were read. */
+  filed?: number;
+  /** How many readers named a cap that was not applied, being alone in naming one. */
+  capsUnapplied?: number;
 }
 /** The rubric's four dimensions, in the order the reviewer files them. */
 export const DIMENSIONS_OF_THE_BAR = ["design", "usability", "creativity", "content"] as const;
@@ -708,12 +714,22 @@ export function designReasons(
   return out;
 }
 
+/** Who read: three readers and the median of each figure, or one reader; never a jury. */
+function readersPhrase(score: ScoreRecord, what: string): string {
+  if (score.readers !== 3) return `one reader ${what}`;
+  const filed = score.filed && score.filed > 3 ? ` (the first three of ${score.filed} filed)` : "";
+  const unapplied = score.capsUnapplied
+    ? `; ${score.capsUnapplied} reader named a cap that was not applied, being alone in it`
+    : "";
+  return `three readers ${what}, the median of each figure${filed}${unapplied}`;
+}
+
 /** Which bar a score was held to, in the engine's words and the record's figures: the command and the report say it alike. */
 export function barLine(score: ScoreRecord): string {
   const held = referenceFigures(score);
   if (held)
-    return `Held to the references' level, which the user approved for the bar: ${DIMENSIONS_OF_THE_BAR.map((d) => `${d} ${held.site[d]} (references ${held.level[d]})`).join(", ")}; one reader read both the references and the site`;
-  return `Held to the bar of ${SCORE_BAR} overall${score.why ? `: ${score.why}` : ""}`;
+    return `Held to the references' level, which the user approved for the bar: ${DIMENSIONS_OF_THE_BAR.map((d) => `${d} ${held.site[d]} (references ${held.level[d]})`).join(", ")}; ${readersPhrase(score, "read both the references and the site")}`;
+  return `Held to the bar of ${SCORE_BAR} overall${score.why ? `: ${score.why}` : ""}; ${readersPhrase(score, "read the site")}`;
 }
 
 /** What the report says of the score. */

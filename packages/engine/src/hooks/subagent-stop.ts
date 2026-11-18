@@ -1,12 +1,13 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WORK_ID } from "../analysis.ts";
+import { readSurface } from "../design.ts";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
 import { errorText, nowIso, readText, readTextQuietly, writeText } from "../fs.ts";
 import { sleep, withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { mailStatus } from "../mail-status.ts";
-import { workDir } from "../paths.ts";
+import { PLAIN_READING, READING_FILE, workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName, WorkItem, WorkKind } from "../types.ts";
@@ -298,6 +299,35 @@ export function answerFile(agent: string, answer: string, kind?: WorkKind): stri
   return `conclave/${agent}.md`;
 }
 
+/**
+ * Where a fresh `review-ui-ux` files its reading: the plain file while no other reader of this
+ * round has it, else the lowest free `review/ui-ux.reading-<n>.findings.md`, so no reading is
+ * written over. A round is the readings filed on one fingerprint of the item's evidence.
+ */
+function readingFile(
+  dir: string,
+  roles: readonly RoleRecord[],
+  agentId: string,
+  fingerprint: string | null,
+): string {
+  const taken = new Set(
+    roles
+      .filter(
+        (r) =>
+          r.agent === "review-ui-ux" &&
+          r.agentId !== undefined &&
+          r.agentId !== agentId &&
+          (r.code ?? null) === fingerprint,
+      )
+      .map((r) => r.file),
+  );
+  if (!taken.has(PLAIN_READING)) return PLAIN_READING;
+  for (let n = 2; ; n += 1) {
+    const name = `review/ui-ux.reading-${n}.findings.md`;
+    if (!taken.has(name) && !existsSync(join(dir, name))) return name;
+  }
+}
+
 /** The name a role's record carries: the role itself, except an expert, which takes the next number after the experts already recorded (`expert-<n>`). */
 export function agentName(role: string, roles: RoleRecord[]): string {
   if (role !== "expert") return role;
@@ -575,6 +605,9 @@ export function fileAnswer(
   if (input.as && !earlier)
     throw new Error(`no record ${input.as} to resume (crew evidence ${id})`);
   const agent = earlier?.agent ?? agentName(role, roles);
+  // A new site: an item whose recorded design surface invents one (item 2026-11-18-011).
+  const invention = readSurface(ctx.paths, id)?.invention;
+  const newSite = invention === "surface" || invention === "world";
   let saved: { file: string | null; agent: string };
   let note: string | null = null;
   // The archive an earlier answer went to, named even when the record cannot be made; one note
@@ -614,9 +647,16 @@ export function fileAnswer(
     // The first answer: the role's own, or a resumed role's whose earlier stop left no file. An
     // answer already on disk under conclave/ (a role launched anew, not resumed) is archived first
     // and never written over (finding 125); the review files keep their rounds at the record.
-    const file = headless
+    const plain = headless
       ? `conclave/${headlessLeadStem(dir, roles)}.md`
       : answerFile(agent, answer, kindOfItem(work));
+    // A second and a third reader of a new site's design file beside the first, never over it. On
+    // any other item a later reviewer's findings take the plain file, as before: the ui-ux gate
+    // reads that one file, and a reviewer launched again after a cut-off one must reach it.
+    const file =
+      plain === PLAIN_READING && input.filedBy === "hook" && input.agentId && newSite
+        ? readingFile(dir, roles, input.agentId, evidence.fingerprint)
+        : plain;
     const kept =
       file.startsWith("conclave/") || file.startsWith("spec-review/") || resumedRuling
         ? archiveExisting(dir, file)
@@ -688,6 +728,13 @@ export function fileAnswer(
       ...(team ? { team } : {}),
       ...(input.filedBy === "session" ? { filedBy: "session" as const } : {}),
       ...(filedText !== null ? { fileHash: fileHash(filedText) } : {}),
+      // The code a design reading was read of: the round it belongs to (2026-11-18-011).
+      ...(saved.agent === "review-ui-ux" &&
+      input.filedBy === "hook" &&
+      newSite &&
+      evidence.fingerprint
+        ? { code: evidence.fingerprint }
+        : {}),
       ...(witnessed ? { witnessed: true as const } : {}),
     },
   ];
@@ -742,7 +789,8 @@ function joinEarlierFile(
   roles: readonly RoleRecord[],
 ): { file: string; archived: string | null } | { failed: string; error: string } {
   if (agent.startsWith("review-")) {
-    const file = answerFile(agent, answer, kind);
+    // A reader of a site's design resumed joins its own reading, whichever file that was (2026-11-18-011).
+    const file = READING_FILE.test(earlierFile) ? earlierFile : answerFile(agent, answer, kind);
     const current = (readText(join(dir, file)) ?? "").trimEnd();
     const heading = "\n## Clarifications";
     const body = current.includes(heading) ? current : `${current}\n${heading}`;

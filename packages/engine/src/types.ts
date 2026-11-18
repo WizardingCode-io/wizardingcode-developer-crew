@@ -473,6 +473,11 @@ export interface RoleRecord {
   model?: string;
   /** Relative to the work folder, or null when the answer matched no known shape. */
   file: string | null;
+  /**
+   * On a `review-ui-ux` the hook filed (item 2026-11-18-011): the fingerprint the item's evidence
+   * held at the filing, the code of the last gate run. The readings of one fingerprint are one round.
+   */
+  code?: string;
   /** The lens the role was given (SP7 §6.3), read from its answer's `personality:` line; `unknown` for a name the registry does not have. */
   personality?: Personality | "unknown";
   /** The team the role sits in, from the registry; absent for the judge and the debate's critics. */

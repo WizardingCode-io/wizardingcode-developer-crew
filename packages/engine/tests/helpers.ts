@@ -12,6 +12,7 @@ import {
   rmSync,
   type Stats,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -685,4 +686,67 @@ export function within<T>(
     }, ms);
   });
   return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
+let readers = 0;
+let rounds = 0;
+
+/**
+ * A design reading filed as the SubagentStop hook files a `review-ui-ux`'s answer (item
+ * 2026-11-18-011): the hook's own filing, with an agent id of the runtime's shape, a new one unless
+ * `agentId` names a reviewer to resume. Returns the file it went to, relative to the work folder,
+ * and the agent id.
+ */
+export function filedReading(
+  env: NodeJS.ProcessEnv,
+  root: string,
+  id: string,
+  text: string,
+  agentId = `crew-test-reader-${++readers}`,
+): { file: string; agentId: string } {
+  const ctx = buildContext({ session_id: "crew-test-reader", cwd: root }, env);
+  if (!ctx) throw new Error(`crew is inactive in ${root}`);
+  const progress: Progress = { saved: null, recorded: false, pending: null, reply: null };
+  const note = withLock(
+    workDir(ctx.paths, id),
+    () =>
+      fileAnswer(
+        ctx,
+        id,
+        "review-ui-ux",
+        {
+          answer: text.replace(/\n$/, ""),
+          agentId,
+          filedBy: "hook",
+          tokens: { tokens: 0, from: "none" },
+        },
+        "",
+        progress,
+      ),
+    { what: "work folder" },
+  );
+  if (!progress.saved?.file) throw new Error(note ?? "the reading was not filed");
+  return { file: progress.saved.file, agentId };
+}
+
+/**
+ * A new round of readings, as a gate run on changed code leaves an item: the evidence's fingerprint
+ * set to a new value through the engine's own writer, and every reading file of the review folder
+ * removed. `fingerprint` names one to return to an earlier code. Returns the fingerprint.
+ */
+export function newRound(
+  env: NodeJS.ProcessEnv,
+  root: string,
+  id: string,
+  fingerprint = `sha256:crew-test-round-${++rounds}`,
+): string {
+  const paths = repoPaths(root, env);
+  const evidence = loadEvidence(paths, id).evidence;
+  evidence.fingerprint = fingerprint;
+  saveEvidence(paths, id, evidence);
+  const dir = join(workDir(paths, id), "review");
+  mkdirSync(dir, { recursive: true });
+  for (const name of readdirSync(dir))
+    if (name.endsWith(".findings.md")) unlinkSync(join(dir, name));
+  return fingerprint;
 }
