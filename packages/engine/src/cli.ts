@@ -4226,7 +4226,7 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
       const invention = flag("invention") as Invention;
       if (!SURFACES.includes(surface) || !INVENTIONS.includes(invention)) return refuse(usage);
       if (invention === "extend") {
-        const why = extendRefusal(env.paths, work);
+        const why = extendRefusal(env.paths, work, surface);
         if (why) return refuse(why);
       }
       const record = recordSurface(env.paths, work.id, surface, invention, nowIso());

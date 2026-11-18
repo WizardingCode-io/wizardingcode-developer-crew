@@ -9,6 +9,7 @@ import { type CliIo, main } from "../src/cli.ts";
 import {
   designReasons,
   designScoreLines,
+  LOOK_QUESTION,
   readScore,
   readSurface,
   type ScoreRecord,
@@ -79,6 +80,11 @@ async function site(invention: "world" | "surface" | "extend" | null = "world") 
   mkdirSync(join(folder, "design", "refs"), { recursive: true });
   mkdirSync(ui, { recursive: true });
   if (invention) {
+    if (invention === "extend") {
+      // No page of this project was scored: the user says its look stands (item 2026-11-18-019).
+      const asked = (await run("decision", id, "add", LOOK_QUESTION)).text;
+      await run("decide", id, /(D-\d+)/.exec(asked)?.[1] ?? "", "yes");
+    }
     const recorded = await run("design", id, "surface", "persuade", "--invention", invention);
     if (recorded.code !== 0) throw new Error(recorded.text);
   }

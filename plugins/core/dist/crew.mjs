@@ -5033,7 +5033,7 @@ import { join as join51 } from "node:path";
 // packages/engine/src/design.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
 import { createHash as createHash2, randomInt } from "node:crypto";
-import { readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
+import { readdirSync as readdirSync4, readFileSync as readFileSync6, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname5, join as join12 } from "node:path";
 var SURFACES = ["persuade", "operate", "read", "experience"];
 var INVENTIONS = ["extend", "surface", "world"];
@@ -5079,13 +5079,41 @@ function baseHas(root, base, path) {
     return false;
   }
 }
-function extendRefusal(paths, work) {
+var LOOK_QUESTION = "This project's look was never held to the bar. Does it stand as it is for this item?";
+function projectAtTheBar(paths) {
+  let ids;
+  try {
+    ids = readdirSync4(join12(paths.crewDir, "work"));
+  } catch {
+    return false;
+  }
+  return ids.some((id) => {
+    const item = readProtectedJson(paths, join12(workDir(paths, id), "work.json"));
+    if (!item.data || item.tampered || item.data.abandoned)
+      return false;
+    const surface = readProtectedJson(paths, surfaceFile(paths, id));
+    if (surface.tampered || !isNewSite(surface.data))
+      return false;
+    const score = readScore(paths, id);
+    return !!score && designReasons(surface.data, score, score.fingerprint).length === 0;
+  });
+}
+function lookStands(work) {
+  return (work.decisions ?? []).some((d) => d.question === LOOK_QUESTION && d.answer === "yes" && d.by === "user");
+}
+function extendRefusal(paths, work, surface) {
   if (work.type === "new-product")
     return "a new product cannot record extend: it has no world to inherit (surface or world)";
-  if (exists(join12(paths.root, "DESIGN.md")) || exists(join12(paths.root, "docs", "DESIGN.md")))
+  if (!exists(join12(paths.root, "DESIGN.md")) && !exists(join12(paths.root, "docs", "DESIGN.md"))) {
+    const pages = addedPages(paths.root, work.baseCommit ?? undefined);
+    if (pages.length)
+      return `the change adds ${pages[0]} and the project has no DESIGN.md: it cannot record extend (surface or world)`;
+  }
+  if (surface !== "persuade" && surface !== "experience")
     return null;
-  const pages = addedPages(paths.root, work.baseCommit ?? undefined);
-  return pages.length ? `the change adds ${pages[0]} and the project has no DESIGN.md: it cannot record extend (surface or world)` : null;
+  if (projectAtTheBar(paths) || lookStands(work))
+    return null;
+  return `no page of this project was ever held to the bar: record surface for a change to how a page looks; for a fix that keeps the page's look the user accepts the look as it stands (crew decision ${work.id} add "${LOOK_QUESTION}", then their answer)`;
 }
 function recordSurface(paths, id, surface, invention, at) {
   const record = { surface, invention, at };
@@ -5618,7 +5646,7 @@ function gradeLogs(text) {
 }
 
 // packages/engine/src/design-grade.ts
-import { existsSync as existsSync7, readdirSync as readdirSync4 } from "node:fs";
+import { existsSync as existsSync7, readdirSync as readdirSync5 } from "node:fs";
 import { join as join14 } from "node:path";
 var LIMITS = {
   displayMaxPx: DISPLAY_MAX_PX,
@@ -5766,7 +5794,7 @@ function gradeDesign(paths, work) {
   const answered = new Set((work.decisions ?? []).filter((d) => d.answer).map((d) => d.id));
   const limits = readLimits(contract, answered);
   const dir = join14(workDir(paths, work.id), "review", "ui");
-  const names = existsSync7(dir) ? readdirSync4(dir).filter((n) => /^[a-z0-9-]+-default\.json$/.test(n)) : [];
+  const names = existsSync7(dir) ? readdirSync5(dir).filter((n) => /^[a-z0-9-]+-default\.json$/.test(n)) : [];
   const offences = [];
   const unjudged = [];
   let widest = null;
@@ -5853,7 +5881,7 @@ import {
   existsSync as existsSync12,
   lstatSync as lstatSync5,
   mkdirSync as mkdirSync5,
-  readdirSync as readdirSync9,
+  readdirSync as readdirSync10,
   renameSync as renameSync3,
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync4
@@ -6124,7 +6152,7 @@ import {
   existsSync as existsSync11,
   lstatSync as lstatSync4,
   openSync as openSync2,
-  readdirSync as readdirSync8,
+  readdirSync as readdirSync9,
   readFileSync as readFileSync8,
   readSync as readSync2,
   rmSync as rmSync4,
@@ -6133,7 +6161,7 @@ import {
 import { basename as basename6, dirname as dirname7, join as join24, resolve as resolve5, sep as sep3 } from "node:path";
 
 // packages/engine/src/judgement.ts
-import { copyFileSync as copyFileSync2, existsSync as existsSync10, readdirSync as readdirSync7, unlinkSync } from "node:fs";
+import { copyFileSync as copyFileSync2, existsSync as existsSync10, readdirSync as readdirSync8, unlinkSync } from "node:fs";
 import { join as join23 } from "node:path";
 
 // packages/engine/src/review-signals.ts
@@ -6527,7 +6555,7 @@ function isPhraseInput(value) {
 }
 
 // packages/engine/src/work.ts
-import { existsSync as existsSync9, readdirSync as readdirSync6 } from "node:fs";
+import { existsSync as existsSync9, readdirSync as readdirSync7 } from "node:fs";
 import { join as join22 } from "node:path";
 
 // packages/engine/src/criteria.ts
@@ -6550,7 +6578,7 @@ import { join as join20 } from "node:path";
 import { join as join19 } from "node:path";
 
 // packages/engine/src/journey-record.ts
-import { readdirSync as readdirSync5 } from "node:fs";
+import { readdirSync as readdirSync6 } from "node:fs";
 import { join as join18 } from "node:path";
 var journeysDir = (userDir) => join18(userDir, "journeys");
 var journeyDir = (userDir, id) => join18(journeysDir(userDir), id);
@@ -6561,7 +6589,7 @@ function readJourney(userDir, id) {
 function listJourneys(userDir) {
   let names = [];
   try {
-    names = readdirSync5(journeysDir(userDir));
+    names = readdirSync6(journeysDir(userDir));
   } catch {
     return [];
   }
@@ -7907,7 +7935,7 @@ function newWorkId(paths, title) {
   const date = nowIso().slice(0, 10);
   let existing = 0;
   try {
-    existing = readdirSync6(join22(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
+    existing = readdirSync7(join22(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
   } catch {
     existing = 0;
   }
@@ -8016,7 +8044,7 @@ function activeWork(paths) {
 function openItems(paths, except) {
   let ids = [];
   try {
-    ids = readdirSync6(join22(paths.crewDir, "work")).sort();
+    ids = readdirSync7(join22(paths.crewDir, "work")).sort();
   } catch {
     return [];
   }
@@ -8037,7 +8065,7 @@ function openItems(paths, except) {
 function lastLearned(paths) {
   let ids = [];
   try {
-    ids = readdirSync6(join22(paths.crewDir, "work"));
+    ids = readdirSync7(join22(paths.crewDir, "work"));
   } catch {
     return null;
   }
@@ -8575,7 +8603,7 @@ function listCaptures(paths, id, task) {
   const dir = join23(reviewDir(paths, id, task), "ui");
   let names;
   try {
-    names = readdirSync7(dir);
+    names = readdirSync8(dir);
   } catch {
     return [];
   }
@@ -8664,7 +8692,7 @@ function writeReviewInputs(paths, work, changed, fingerprint, options = {}) {
   if (previous && previous.fingerprint !== fingerprint) {
     let names = [];
     try {
-      names = readdirSync7(dir);
+      names = readdirSync8(dir);
     } catch {
       names = [];
     }
@@ -9001,7 +9029,7 @@ function darkScheme(root, profile) {
   const walk = (dir, rel) => {
     let entries;
     try {
-      entries = readdirSync8(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+      entries = readdirSync9(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
     } catch {
       return false;
     }
@@ -9082,7 +9110,7 @@ function removeFrames(target) {
     const stat = lstatSync4(target);
     if (!stat.isDirectory())
       return false;
-    const entries = readdirSync8(target, { withFileTypes: true });
+    const entries = readdirSync9(target, { withFileTypes: true });
     if (!entries.every((e) => e.isFile() && FRAME_NAME.test(e.name)))
       return false;
     rmSync4(target, { recursive: true, force: false });
@@ -9126,7 +9154,7 @@ function sweepStaleFixtureFiles(ui) {
     else if (existsSync11(target) || isLink(target))
       skipped.push(String(name));
   };
-  for (const name of readdirSync8(ui).sort()) {
+  for (const name of readdirSync9(ui).sort()) {
     if (!name.endsWith(".json"))
       continue;
     const body = readJsonFile(join24(ui, name));
@@ -9583,7 +9611,7 @@ function pageOffences(m, page, label) {
     m.hiddenOffences.push(`ui: text hidden under reduced motion: ${target} (${label})`);
 }
 function measureSamples(m, dir) {
-  const names = existsSync11(dir) ? readdirSync8(dir).sort() : [];
+  const names = existsSync11(dir) ? readdirSync9(dir).sort() : [];
   for (const name of names) {
     if (!name.endsWith(".motion.json"))
       continue;
@@ -9898,7 +9926,7 @@ function takeReport(dir, before, stdout, n) {
   const target = join25(dir, `lighthouse-${n}.json`);
   let names = [];
   try {
-    names = readdirSync9(dir).filter((name) => name.endsWith(".json") && !before.has(name)).sort();
+    names = readdirSync10(dir).filter((name) => name.endsWith(".json") && !before.has(name)).sort();
   } catch {
     names = [];
   }
@@ -10096,7 +10124,7 @@ async function auditPage(ctx, page, raw, n, overBudget) {
     step = DEVTOOLS.lighthouse[0];
     let before;
     try {
-      before = new Set(readdirSync9(ctx.dir));
+      before = new Set(readdirSync10(ctx.dir));
     } catch {
       before = new Set;
     }
@@ -10173,7 +10201,7 @@ function gradeAudit(pages, offencesOfPage, fixtureMeasuredCls) {
 function sweepEngineFiles(dir) {
   let names;
   try {
-    names = readdirSync9(dir);
+    names = readdirSync10(dir);
   } catch {
     return;
   }
@@ -11341,7 +11369,7 @@ function readOpenSessions(ctx) {
 import { join as join36 } from "node:path";
 
 // packages/engine/src/detect/index.ts
-import { existsSync as existsSync17, readdirSync as readdirSync11, statSync as statSync6 } from "node:fs";
+import { existsSync as existsSync17, readdirSync as readdirSync12, statSync as statSync6 } from "node:fs";
 import { join as join34, relative as relative5 } from "node:path";
 
 // packages/engine/src/pdf.ts
@@ -11542,7 +11570,7 @@ function environmentChanges(previous, next) {
 import { join as join31 } from "node:path";
 
 // packages/engine/src/detect/scripts.ts
-import { readdirSync as readdirSync10, statSync as statSync5 } from "node:fs";
+import { readdirSync as readdirSync11, statSync as statSync5 } from "node:fs";
 import { join as join30 } from "node:path";
 var NEVER_A_GATE = /^test:(watch|ui|dev|debug|e2e|browser|visual)(?:[:-]|$)/;
 function testScripts(scripts) {
@@ -11556,7 +11584,7 @@ var TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 function hasTestFiles(dir, depth = 0) {
   let names;
   try {
-    names = readdirSync10(dir);
+    names = readdirSync11(dir);
   } catch {
     return false;
   }
@@ -11765,7 +11793,7 @@ function* folders(root, depth = 0) {
     return;
   let names;
   try {
-    names = readdirSync11(root).sort();
+    names = readdirSync12(root).sort();
   } catch {
     return;
   }
@@ -11979,7 +12007,7 @@ function missingTestCommands(profile) {
 }
 
 // packages/engine/src/packs.ts
-import { existsSync as existsSync18, readdirSync as readdirSync12, readFileSync as readFileSync9, realpathSync as realpathSync4, rmSync as rmSync6 } from "node:fs";
+import { existsSync as existsSync18, readdirSync as readdirSync13, readFileSync as readFileSync9, realpathSync as realpathSync4, rmSync as rmSync6 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { basename as basename8, isAbsolute as isAbsolute5, join as join35, sep as sep4 } from "node:path";
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
@@ -12236,7 +12264,7 @@ function registerPack(userDir, root, by, key = null) {
   ensureDir(dir);
   return withLock(dir, () => {
     const earlier = readJson(packPath(userDir, manifest.name));
-    const latest = readdirSync12(dir).filter((n) => n.endsWith(".json")).map((n) => readJson(join35(dir, n))?.registeredAt ?? "").sort().at(-1);
+    const latest = readdirSync13(dir).filter((n) => n.endsWith(".json")).map((n) => readJson(join35(dir, n))?.registeredAt ?? "").sort().at(-1);
     const now = nowIso();
     const registeredAt = earlier?.registeredAt ?? (latest && latest >= now ? new Date(Date.parse(latest) + 1).toISOString() : now);
     const registration = {
@@ -12295,7 +12323,7 @@ function listPacks(userDir, options = {}) {
   const dir = packsDir(userDir);
   let names;
   try {
-    names = readdirSync12(dir).filter((n) => n.endsWith(".json"));
+    names = readdirSync13(dir).filter((n) => n.endsWith(".json"));
   } catch {
     return [];
   }
@@ -12406,7 +12434,7 @@ function knowledgeFilesFor(userDir, profile, changed, policy) {
 }
 function coreChecklistKinds(pluginRoot) {
   try {
-    return readdirSync12(join35(pluginRoot, "skills", "crew", "checklists")).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
+    return readdirSync13(join35(pluginRoot, "skills", "crew", "checklists")).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
   } catch {
     return [];
   }
@@ -19499,7 +19527,7 @@ function powershellAsPosix(command) {
 }
 
 // packages/engine/src/hooks/subagent-stop.ts
-import { existsSync as existsSync25, readdirSync as readdirSync13, statSync as statSync13 } from "node:fs";
+import { existsSync as existsSync25, readdirSync as readdirSync14, statSync as statSync13 } from "node:fs";
 import { join as join60 } from "node:path";
 var PLUGIN_PREFIX2 = "wizardingcode-developer-crew:";
 var BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
@@ -19749,7 +19777,7 @@ function answerItem(ctx, answer, active) {
   if (active?.awaiting !== "role") {
     let ids = [];
     try {
-      ids = readdirSync13(join60(ctx.paths.crewDir, "work"));
+      ids = readdirSync14(join60(ctx.paths.crewDir, "work"));
     } catch {}
     const waiting = ids.filter((id) => open(id)?.awaiting === "role");
     if (waiting.length === 1)
@@ -22394,7 +22422,7 @@ function onSessionStart(ctx, payload = {}) {
 }
 
 // packages/engine/src/running.ts
-import { mkdirSync as mkdirSync11, readdirSync as readdirSync14, rmSync as rmSync10 } from "node:fs";
+import { mkdirSync as mkdirSync11, readdirSync as readdirSync15, rmSync as rmSync10 } from "node:fs";
 import { join as join64 } from "node:path";
 function releaseDir(paths) {
   return join64(paths.localDir, "running");
@@ -22441,7 +22469,7 @@ function parseMarker(text) {
 function permitIn(dir, session, spent, options = {}) {
   let names;
   try {
-    names = readdirSync14(dir).filter((n) => n.endsWith(".json")).sort();
+    names = readdirSync15(dir).filter((n) => n.endsWith(".json")).sort();
   } catch {
     return null;
   }
@@ -23127,7 +23155,7 @@ function realJourneyDeps(processEnv) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync28, lstatSync as lstatSync11, readdirSync as readdirSync15, realpathSync as realpathSync12 } from "node:fs";
+import { existsSync as existsSync28, lstatSync as lstatSync11, readdirSync as readdirSync16, realpathSync as realpathSync12 } from "node:fs";
 import { basename as basename11, dirname as dirname15, isAbsolute as isAbsolute14, join as join66, relative as relative14, resolve as resolve9 } from "node:path";
 var PROJECT_KINDS = [
   "stack-preference",
@@ -23433,7 +23461,7 @@ function latestPlan(userDir, workspace) {
   const dir = ctoDir(userDir, workspace);
   let names;
   try {
-    names = readdirSync15(dir);
+    names = readdirSync16(dir);
   } catch {
     return null;
   }
@@ -23946,7 +23974,7 @@ function tellWorkspace(paths, work, mail, scope, written) {
 }
 
 // packages/engine/src/metrics.ts
-import { readdirSync as readdirSync16 } from "node:fs";
+import { readdirSync as readdirSync17 } from "node:fs";
 import { join as join68 } from "node:path";
 function emptyKnowledge() {
   const entries = {};
@@ -23981,7 +24009,7 @@ function knowledgeFigures(base, scope, projects) {
 }
 function workIds(paths) {
   try {
-    return readdirSync16(join68(paths.crewDir, "work"));
+    return readdirSync17(join68(paths.crewDir, "work"));
   } catch {
     return [];
   }
@@ -24018,7 +24046,7 @@ function computeMetrics(projects, knowledge = emptyKnowledge()) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
     try {
-      ids = readdirSync16(join68(paths.crewDir, "work"));
+      ids = readdirSync17(join68(paths.crewDir, "work"));
     } catch {
       continue;
     }
@@ -26837,7 +26865,7 @@ async function designCommand(env, args, parsed) {
       if (!SURFACES.includes(surface) || !INVENTIONS.includes(invention))
         return refuse(usage);
       if (invention === "extend") {
-        const why = extendRefusal(env.paths, work);
+        const why = extendRefusal(env.paths, work, surface);
         if (why)
           return refuse(why);
       }

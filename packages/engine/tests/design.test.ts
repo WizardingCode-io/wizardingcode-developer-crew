@@ -19,6 +19,7 @@ import {
   historyPrint,
   type Invention,
   type LibraryRow,
+  LOOK_QUESTION,
   libraryDir,
   loadLibrary,
   parseScore,
@@ -155,6 +156,9 @@ test("AC-3: extend is refused when the change adds a page and the project has no
     (await a.run("design", a.id, "surface", "persuade", "--invention", "extend")).code,
   ).not.toBe(0);
   write(a.root, "DESIGN.md", "---\ncolors:\n  ink: '#111'\n---\n# Design\n");
+  // No page of this project was scored: the user says its look stands (item 2026-11-18-019).
+  const asked = (await a.run("decision", a.id, "add", LOOK_QUESTION)).text;
+  await a.run("decide", a.id, /(D-\d+)/.exec(asked)?.[1] ?? "", "yes");
   expect((await a.run("design", a.id, "surface", "persuade", "--invention", "extend")).code).toBe(
     0,
   );

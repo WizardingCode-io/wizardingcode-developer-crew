@@ -19,7 +19,7 @@ The request, the repository (`DESIGN.md`, stylesheets, components, assets), `PRO
 2. **Record the surface and the amount of invention**: `crew design <id> surface <mode> --invention <amount>`.
    - The mode comes from the surface, not the product: `persuade` (someone must act), `operate` (a task done often), `read` (a reader's question), `experience` (the work itself leads).
    - The amount: `extend` is only for a control, a state or a fix inside a page whose look stays as it is, and needs nothing more; a change to how a page or a section of it looks, a new section, a hero or a new opening, is `surface`, on an established site too, as a whole page in an established world is; `world` creates or replaces the look. A new product cannot be `extend`.
-   - Where the project holds no design score on record, say in one line that the site was never held to the bar, and propose `surface` for the page the item touches.
+   - Where no page of the project was scored at the bar (the engine refuses `extend` there and says so), say in one line that the site was never held to the bar, and for a change to how the page looks propose `surface`. For a fix that keeps its look, put the engine's question to the user: their yes, on the item, lets it record `extend`.
 3. **Ask what changes the work**, two or three questions at most, skipping what is settled, never CSS values or a style lane.
    - Persuade: who must act, what they should believe, what real proof exists.
    - Operate: the task, the information, the states, how often, the constraints.

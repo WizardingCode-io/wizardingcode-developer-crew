@@ -7,7 +7,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash, randomInt } from "node:crypto";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { gitChangedPaths, gitChangedSince } from "./fingerprint.ts";
 import { ensureDir, exists, readRegular, sha256 } from "./fs.ts";
@@ -91,16 +91,59 @@ function baseHas(root: string, base: string, path: string): boolean {
   }
 }
 
-/** Why `extend` cannot be the amount of invention, or null when it can. */
-export function extendRefusal(paths: CrewPaths, work: WorkItem): string | null {
+/** The one question whose yes, the user's, lets an item inherit a look nobody judged (item 2026-11-18-019). */
+export const LOOK_QUESTION =
+  "This project's look was never held to the bar. Does it stand as it is for this item?";
+
+/**
+ * Whether a page of this project was judged and passed (item 2026-11-18-019): some item of this
+ * checkout, not abandoned, whose own surface is a new site's, holds a design score, and has no
+ * reason against it on that score's own code, so a page at the bar once still counts after its
+ * code changed. The surface is asked first because `designReasons` is empty, before any score is
+ * read, for an item the gate does not apply to: a score there is one nobody held to the bar. A
+ * record that reads as changed counts for nothing.
+ */
+export function projectAtTheBar(paths: CrewPaths): boolean {
+  let ids: string[];
+  try {
+    ids = readdirSync(join(paths.crewDir, "work"));
+  } catch {
+    return false;
+  }
+  return ids.some((id) => {
+    const item = readProtectedJson<WorkItem>(paths, join(workDir(paths, id), "work.json"));
+    if (!item.data || item.tampered || item.data.abandoned) return false;
+    const surface = readProtectedJson<SurfaceRecord>(paths, surfaceFile(paths, id));
+    if (surface.tampered || !isNewSite(surface.data)) return false;
+    const score = readScore(paths, id);
+    return !!score && designReasons(surface.data, score, score.fingerprint).length === 0;
+  });
+}
+
+/** The user's yes, on the item, to the engine's own question: read as the bar's approval is. */
+function lookStands(work: WorkItem): boolean {
+  return (work.decisions ?? []).some(
+    (d) => d.question === LOOK_QUESTION && d.answer === "yes" && d.by === "user",
+  );
+}
+
+/**
+ * Why `extend` cannot be the amount of invention, or null when it can. With the `surface` the
+ * command is about to record, a Persuade or an Experience page of a project nobody held to the
+ * bar is refused too, until a page is scored or the user says the look stands for the item. The
+ * gate's lint gives no surface, so an item recorded before is judged as it was.
+ */
+export function extendRefusal(paths: CrewPaths, work: WorkItem, surface?: Surface): string | null {
   if (work.type === "new-product")
     return "a new product cannot record extend: it has no world to inherit (surface or world)";
-  if (exists(join(paths.root, "DESIGN.md")) || exists(join(paths.root, "docs", "DESIGN.md")))
-    return null;
-  const pages = addedPages(paths.root, work.baseCommit ?? undefined);
-  return pages.length
-    ? `the change adds ${pages[0]} and the project has no DESIGN.md: it cannot record extend (surface or world)`
-    : null;
+  if (!exists(join(paths.root, "DESIGN.md")) && !exists(join(paths.root, "docs", "DESIGN.md"))) {
+    const pages = addedPages(paths.root, work.baseCommit ?? undefined);
+    if (pages.length)
+      return `the change adds ${pages[0]} and the project has no DESIGN.md: it cannot record extend (surface or world)`;
+  }
+  if (surface !== "persuade" && surface !== "experience") return null;
+  if (projectAtTheBar(paths) || lookStands(work)) return null;
+  return `no page of this project was ever held to the bar: record surface for a change to how a page looks; for a fix that keeps the page's look the user accepts the look as it stands (crew decision ${work.id} add "${LOOK_QUESTION}", then their answer)`;
 }
 
 export function recordSurface(
