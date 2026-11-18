@@ -2010,3 +2010,12 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: a second stop that carries the answer already filed adds no record, or its record is not named as an answer with no witness.
 - Evidence: `.crew/work/2026-11-14-005-close-finding-244-with-the-record-of-a-l/evidence.json` (the four role records) and the two files under its `conclave/`.
 - Outcome: open. The line names a filing that is the first one's copy, so no proof is wrong and a reader is told of a gap that is not one. Recorded under the user's rule of 2026-11-14, with no item opened.
+
+### 248. A row of the release's tests failed once under the whole suite and passed every other time
+
+- Date: 2026-11-18. Project: this repository, the build of item `2026-11-18-008`. Category: `defect`. Severity: low.
+- What happened: `bun run check` failed once on the row "2026-11-13-004 AC-57" of `packages/engine/tests/release.test.ts` (a command file naming this process's own group kills nothing and is removed). The release's log held one line more than the row expects, before the expected one: "dist/release-in-progress.command is not a release's: removed, nothing killed". Run alone three times the row passed, and it passed in the four gate runs of items `2026-11-18-008` and `2026-11-18-009` that followed.
+- Cause: not found. The row writes its command file from what `ps` answers for this process's group and its start time. A guess, not proven: under the whole suite's load one of those answers came back empty, which makes the file off its shape, and the release then removes it and says so.
+- Expected: the row passes or fails by the release's behaviour, whatever the machine's load.
+- Evidence: the check's output was kept in the session's scratch folder and is gone with it; the line above is copied from it.
+- Outcome: open. Nothing is proven wrong in the release. A red that passes on a second run is a cause not yet found. Recorded under the user's rule of 2026-11-14, with no item opened.
