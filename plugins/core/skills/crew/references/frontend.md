@@ -40,7 +40,7 @@ Read `wizardingcode-frontend-strategy` before the first interface file, on every
 
 ## A new site
 
-A site is creative work, so the process comes before the values: `wizardingcode-design-brief`, `wizardingcode-design-direction`, `wizardingcode-design-system`, `wizardingcode-design-copy`, `wizardingcode-design-build`, `wizardingcode-design-review`, each read at its own step: the brief when the item starts, the direction and the system before the first interface file, the copy before any markup, the build through the build phase, the review after the e2e gate passes. A section inside an established site is `extend` and takes none of them. On a Persuade or Experience page at `surface` or `world`, `references/frontend-site.md` adds its motion regime and the measured proportion limits to this page.
+A site is creative work, so the process comes before the values: `wizardingcode-design-brief`, `wizardingcode-design-direction`, `wizardingcode-design-system`, `wizardingcode-design-copy`, `wizardingcode-design-build`, `wizardingcode-design-review`, each read at its own step: the brief when the item starts, the direction and the system before the first interface file, the copy before any markup, the build through the build phase, the review after the e2e gate passes. `extend`, a fix that keeps its page's look, takes none of them. On a Persuade or Experience page at `surface` or `world`, `references/frontend-site.md` adds its motion regime and the measured proportion limits to this page.
 
 ## Interface floor
 

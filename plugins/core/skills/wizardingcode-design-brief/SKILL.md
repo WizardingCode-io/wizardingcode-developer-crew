@@ -7,7 +7,7 @@ description: "Before a new site, page or frontend: decides the surface and how m
 
 ## When
 
-An item that builds a new site, a new page or a replacement look, before the spec's page lines. Not for a section inside an established site: that is `extend`, and this skill ends at step 2.
+An item that builds a new site, a new page or a replacement look, or that changes how a page of an established site looks, before the spec's page lines. `extend` is only for a control, a state or a fix inside a page whose look stays as it is, and for it this skill ends at step 2; a change to how a page or a section of it looks, a new section, a hero or a new opening, is `surface`, on an established site too.
 
 ## Inputs
 
@@ -18,7 +18,8 @@ The request, the repository (`DESIGN.md`, stylesheets, components, assets), `PRO
 1. **Decide what is already true.** A coherent look already in the code is inherited, with or without a `DESIGN.md`. A redesign keeps the product's truth, content, function and constraints and replaces the look. An incomplete brand keeps what is confirmed. Only with no visual authority is a new world created.
 2. **Record the surface and the amount of invention**: `crew design <id> surface <mode> --invention <amount>`.
    - The mode comes from the surface, not the product: `persuade` (someone must act), `operate` (a task done often), `read` (a reader's question), `experience` (the work itself leads).
-   - The amount: `extend` inherits and needs nothing more; `surface` is a whole page in an established world; `world` creates or replaces the look. A new product cannot be `extend`.
+   - The amount: `extend` is only for a control, a state or a fix inside a page whose look stays as it is, and needs nothing more; a change to how a page or a section of it looks, a new section, a hero or a new opening, is `surface`, on an established site too, as a whole page in an established world is; `world` creates or replaces the look. A new product cannot be `extend`.
+   - Where the project holds no design score on record, say in one line that the site was never held to the bar, and propose `surface` for the page the item touches.
 3. **Ask what changes the work**, two or three questions at most, skipping what is settled, never CSS values or a style lane.
    - Persuade: who must act, what they should believe, what real proof exists.
    - Operate: the task, the information, the states, how often, the constraints.

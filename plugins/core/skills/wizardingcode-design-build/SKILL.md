@@ -1,6 +1,6 @@
 ---
 name: wizardingcode-design-build
-description: "Builds a new site from its contract: still first, then pictures, the live thing and the motion layer, with captures that prove it. Not for a small change inside an established site."
+description: "Builds a new site from its contract: still first, then pictures, the live thing and the motion layer, with captures that prove it. Not for a control, a state or a fix whose page keeps its look."
 ---
 
 # Design build
