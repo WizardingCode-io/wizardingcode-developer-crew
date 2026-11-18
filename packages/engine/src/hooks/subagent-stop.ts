@@ -309,6 +309,8 @@ function readingFile(
   roles: readonly RoleRecord[],
   agentId: string,
   fingerprint: string | null,
+  /** A resumed reader's new reading takes no file that stands on disk, the plain one included (2026-11-18-015). */
+  resumed = false,
 ): string {
   const taken = new Set(
     roles
@@ -321,7 +323,8 @@ function readingFile(
       )
       .map((r) => r.file),
   );
-  if (!taken.has(PLAIN_READING)) return PLAIN_READING;
+  if (!taken.has(PLAIN_READING) && !(resumed && existsSync(join(dir, PLAIN_READING))))
+    return PLAIN_READING;
   for (let n = 2; ; n += 1) {
     const name = `review/ui-ux.reading-${n}.findings.md`;
     if (!taken.has(name) && !existsSync(join(dir, name))) return name;
@@ -608,6 +611,24 @@ export function fileAnswer(
   // A new site, by the engine's one test of it, read only where a design reader is being filed
   // (items 2026-11-18-011 and 012): no other role's filing depends on the surface's record.
   const newSite = agent === "review-ui-ux" && isNewSite(readSurface(ctx.paths, id));
+  // A reader of a new site's design resumed (item 2026-11-18-015): what decides is whether this
+  // agent id already has a reading of the present round, a record that carries the evidence's
+  // fingerprint and holds a file. It has one: the answer joins that record's file. It has none
+  // (a reader of an earlier round, one filed before any gate run, one cut off with no answer): the
+  // answer is a first answer of this round. Asked of the protected records and never of the disk,
+  // so a reading removed by hand is not replaced by its reader's next answer.
+  const resumedReader =
+    !!earlier && newSite && input.filedBy === "hook" && !!input.agentId && !!evidence.fingerprint;
+  const ofRound = resumedReader
+    ? roles.find(
+        (r) =>
+          r.agentId === input.agentId &&
+          r.code === evidence.fingerprint &&
+          typeof r.file === "string",
+      )
+    : undefined;
+  const newReading = resumedReader && !ofRound;
+  const joinTo = ofRound?.file ?? earlier?.file;
   let saved: { file: string | null; agent: string };
   let note: string | null = null;
   // The archive an earlier answer went to, named even when the record cannot be made; one note
@@ -626,10 +647,10 @@ export function fileAnswer(
     // written, and the session is told, so an earlier round's file is not read as this answer.
     saved = { file: null, agent };
     note = `Crew: ${agent} stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
-  } else if (earlier?.file && !resumedRuling) {
+  } else if (joinTo && !resumedRuling && !newReading) {
     // A resumed role's answer: its reply file holds this answer alone, the earlier reply archived
     // first; a failed archive leaves the plain file, records nothing and is said.
-    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work), earlier.file, roles);
+    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work), joinTo, roles);
     if ("failed" in joined)
       return `Crew: ${agent}'s earlier reply could not be archived at ${joined.failed} (${joined.error}): the plain reply file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     saved = { file: joined.file, agent };
@@ -655,7 +676,7 @@ export function fileAnswer(
     // reads that one file, and a reviewer launched again after a cut-off one must reach it.
     const file =
       plain === PLAIN_READING && input.filedBy === "hook" && input.agentId && newSite
-        ? readingFile(dir, roles, input.agentId, evidence.fingerprint)
+        ? readingFile(dir, roles, input.agentId, evidence.fingerprint, newReading)
         : plain;
     const kept =
       file.startsWith("conclave/") || file.startsWith("spec-review/") || resumedRuling

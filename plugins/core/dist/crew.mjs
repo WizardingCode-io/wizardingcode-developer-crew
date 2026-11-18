@@ -19707,9 +19707,9 @@ function answerFile(agent, answer, kind) {
   }
   return `conclave/${agent}.md`;
 }
-function readingFile(dir, roles, agentId, fingerprint) {
+function readingFile(dir, roles, agentId, fingerprint, resumed = false) {
   const taken = new Set(roles.filter((r) => r.agent === "review-ui-ux" && r.agentId !== undefined && r.agentId !== agentId && (r.code ?? null) === fingerprint).map((r) => r.file));
-  if (!taken.has(PLAIN_READING))
+  if (!taken.has(PLAIN_READING) && !(resumed && existsSync25(join60(dir, PLAIN_READING))))
     return PLAIN_READING;
   for (let n = 2;; n += 1) {
     const name = `review/ui-ux.reading-${n}.findings.md`;
@@ -19859,6 +19859,10 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
     throw new Error(`no record ${input.as} to resume (crew evidence ${id})`);
   const agent = earlier?.agent ?? agentName(role, roles);
   const newSite = agent === "review-ui-ux" && isNewSite(readSurface(ctx.paths, id));
+  const resumedReader = !!earlier && newSite && input.filedBy === "hook" && !!input.agentId && !!evidence.fingerprint;
+  const ofRound = resumedReader ? roles.find((r) => r.agentId === input.agentId && r.code === evidence.fingerprint && typeof r.file === "string") : undefined;
+  const newReading = resumedReader && !ofRound;
+  const joinTo = ofRound?.file ?? earlier?.file;
   let saved;
   let note = null;
   let keptAs = null;
@@ -19868,8 +19872,8 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   if (!answer) {
     saved = { file: null, agent };
     note = `Crew: ${agent} stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
-  } else if (earlier?.file && !resumedRuling) {
-    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work), earlier.file, roles);
+  } else if (joinTo && !resumedRuling && !newReading) {
+    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work), joinTo, roles);
     if ("failed" in joined)
       return `Crew: ${agent}'s earlier reply could not be archived at ${joined.failed} (${joined.error}): the plain reply file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     saved = { file: joined.file, agent };
@@ -19881,7 +19885,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
     }
   } else {
     const plain = headless ? `conclave/${headlessLeadStem(dir, roles)}.md` : answerFile(agent, answer, kindOfItem(work));
-    const file = plain === PLAIN_READING && input.filedBy === "hook" && input.agentId && newSite ? readingFile(dir, roles, input.agentId, evidence.fingerprint) : plain;
+    const file = plain === PLAIN_READING && input.filedBy === "hook" && input.agentId && newSite ? readingFile(dir, roles, input.agentId, evidence.fingerprint, newReading) : plain;
     const kept = file.startsWith("conclave/") || file.startsWith("spec-review/") || resumedRuling ? archiveExisting(dir, file) : { archived: null };
     if ("failed" in kept)
       return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
