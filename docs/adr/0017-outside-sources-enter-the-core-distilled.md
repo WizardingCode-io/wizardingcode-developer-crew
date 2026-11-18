@@ -30,3 +30,10 @@ Item 2026-10-29-001 (no AI slop) measured P-4 (the writing standard) and P-6 (th
 ## Note of 2026-10-30 (item 2026-10-30-005)
 
 The art-direction dealer, the Awwwards-weighted score and the image search that item 2026-10-29-001 listed as "not taken" enter by the user's decisions D-1 to D-5, and ADR 0018 says how. What a source holds now leaves it only by a decision on record in `docs/sources/ledger.json`.
+
+## Note of 2026-11-18 (item 2026-11-18-001, the user's decision D-1)
+
+Decision 5 lets in only sources under MIT or Apache-2.0. The user gave two files on 2026-11-18, a skill for a site that opens on a film driven by the scroll and its one-page checklist, a third party's material that carries no licence, and decided as D-1 of item 2026-11-18-001 that it enters distilled as an exception: ideas and techniques restated in the crew's own words and code, no sentence, code, prompt or form copied, and its numbers kept as starting points said to be the material's. The skill `wizardingcode-design-film` is what entered, and its `sources.md` says what was read. The exception is to decision 5, for this one source with no licence. Whether the material is one its maker sells was not established, so this is no ruling that a paid source's numbers may enter. The ledger's list of sources stays held to the two licences, so the material is named by its rows there and by this note.
+
+The same decision's other side: on 2026-10-30 the user's D-6 refused scroll-craft's engine, its attributes and `ffmpeg` as "code and tools no project asked for". The user's word of 2026-11-18 is that a film driven by the scroll is what a site of the crew lacks. The film skill gives a session an engine and the encode's commands as text to adapt; the engine still ships no code of its own for it.
+

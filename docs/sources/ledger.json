@@ -2334,6 +2334,78 @@
    "status": "refused",
    "decision": "D-3",
    "reason": "item 2026-11-14-004: refused for now, until the rule taken here (the outcome, its judge, the smallest change) is measured by the eval case outcome-before-scope, the user's D-3 of 2026-11-14"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "the scrub encode with a short keyframe interval",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/references/encode.md",
+   "text": "a keyframe every 8 frames",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "the clip held whole so that every host can seek",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/references/scrub.md",
+   "text": "A clip held whole in memory seeks everywhere",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "one seek in flight at a time",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/references/scrub.md",
+   "text": "One at a time, the newest kept",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "text paced in scroll distance and tested by stepping the scroll",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/references/scrub.md",
+   "text": "paced in distance and not in time",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "the still hero under five conditions",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/references/scrub.md",
+   "text": "The same five strings stand in the script and in the CSS",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "the ending written first",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/references/shots.md",
+   "text": "The ending is written first",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "the page designed before the film",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/SKILL.md",
+   "text": "The film exists to carry those beats",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "10k-websites",
+   "rule": "each paid asset approved before the page is built on it",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-film/SKILL.md",
+   "text": "No page is built on a clip the user has not approved",
+   "proof": "design-film.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
   }
  ]
 }
