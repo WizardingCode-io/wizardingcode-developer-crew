@@ -268,7 +268,7 @@ Each line owns a window of progress, written on its element. A visitor reads a s
 - Leave a gap between two windows of at least one edge, as the sample does, or give the two lines different places: where windows touch, both lines are half visible at once, and at one place their words print over each other.
 - A line outside its window is hidden from the keyboard, the pointer and assistive technology, so the one action cannot be reached before its line arrives, and a reader who does not scroll meets only the line on screen. So the film's words and its one action also stand in the page proper below it, in the normal flow: nobody depends on the film to read them or to act.
 - `--k` runs from 0 to 1 as a line arrives. An entrance is drawn from it in CSS, with `transform` and `opacity` alone, so that scrolling back undoes it. Let each entrance echo what the film does at that moment: words that sink into place while the subject descends, a word that lands as something lands.
-- Test the windows by stepping the scroll: 120 px at a time, then 240, then 360, with a pause between steps, and read each line's opacity after each step. A line that is fully visible for fewer than five steps of 120 px is too short to read. A line that is never fully visible at steps of 360 px can be skipped past. Join such a line to its neighbour; do not shorten the edges.
+- Test the windows by stepping the scroll: 120 px at a time, then 240, then 360, with a pause between steps, and read each line's opacity after each step. A line that is fully visible for fewer than five steps of 120 px gives a reader too little time. A line that is never fully visible at steps of 360 px can be skipped past. Join such a line to its neighbour; do not shorten the edges.
 
 ## Words over moving footage
 
@@ -288,11 +288,11 @@ The footage behind the words changes with every frame, and the session does not 
 - A scrim behind each line, which deepens as the line arrives and fades toward the corners, so the footage dims under the words and nowhere else. Where the subject stands in the centre with words on both sides, give each side its own and leave the centre alone.
 - A shadow on the text, and none on a button's label.
 
-The measure is the crew's standard: each line's text against the worst frame of its window holds 4.5:1, or 3:1 for large text. Take the frames of a line's window (its window times the clip's length gives the seconds), find the lightest pixel under the text with the scrims applied, for light text, and compute the ratio against it. Deepen that line's scrim until the worst frame holds, and never tune against an average frame. With a browser the session can drive, make the glyphs transparent and take their shadow off, capture the page at that scroll position and read the pixels of the text's box: that measures every layer as the visitor sees it. Do not hide the line itself: its scrim is drawn by the line and would go with it.
+The measure is the crew's standard: each line's text against the worst frame of its window holds 4.5:1, or 3:1 for large text. Take the frames of a line's window (its window times the clip's length gives the seconds), find, for light text, the lightest pixel behind the words once the scrims are laid over it, and compute the ratio against it. Deepen that line's scrim until the worst frame holds, and never tune against an average frame. With a browser the session can drive, make the glyphs transparent and take their shadow off, take a capture with the scroll at that point and read the pixels of the text's box: that measures every layer as the visitor sees it. Do not hide the line itself: its scrim is drawn by the line and would go with it.
 
 ## The still hero
 
-Some visitors get a composed still in place of the film: the poster or the ending frame, with every line visible. It is a layout of its own and not an apology, and it is the page's default: the engine arms the film only when none of the five conditions holds, and hears them change while the page is open. The same five strings stand in the script and in the CSS, where they keep the clip hidden whatever class is set.
+For some visitors the opening is a composed still and not the film: the poster or the ending frame, with every line visible. It is a layout of its own and not an apology, and it is the page's default: the engine arms the film only when none of the five conditions holds, and hears them change while the page is open. The same five strings stand in the script and in the CSS, where they keep the clip hidden whatever class is set.
 
 ```css
 @media (max-width: 720px),
@@ -308,11 +308,11 @@ Under any of the five the clip is never asked for: the request lives inside the 
 
 ## Complete without the clip
 
-The page is whole when the clip never arrives: the poster behind every line, every section and the one action working. `film-failed` hides the video element over the poster, and the lines still follow the scroll. With no script at all the page is the still.
+The page is whole when the clip never arrives: the poster behind every line, every section and the one action working. `film-failed` takes the video away and leaves the poster, and the lines still follow the scroll. With no script at all the page is the still.
 
 ## The motion of the page below
 
-- Everything eases. Two easing curves, as tokens, used everywhere.
+- Everything eases. The tokens name two easing curves, and nothing eases by any other.
 - A section's parts arrive in sequence, 60 to 150 ms apart, once. The delays are removed when the entrance is over, or every later hover lags by them.
 - One living element in a section, at a whisper, with a cycle of four seconds or longer, paused off screen and on a hidden tab.
 - One thing the visitor does, taken from what the subject is: an action held, with progress that builds while it is held and eases back when it is let go. Under reduced motion the finished state is there at once.
@@ -336,5 +336,5 @@ Run by the session, before the user sees the page. Prove each; assume none.
 9. Load with the clip blocked: the page whole over the poster.
 10. Turn a tablet's width from portrait to landscape and back: the film and the still each take over.
 11. Read the console at desktop and at phone width: no error.
-12. Last, look at the page as a visitor who knows nothing: does each thing have its place, is any of a set of parallel things unlike its siblings, does any stretch read as filler.
+12. Last, come to the page as someone who has never seen it: does each thing have its place, is one of a set of like things unlike the rest, is any part only filling space.
 13. Read the page as it stands with the film's section taken out: the film's words and its one action are also there, in the normal flow.

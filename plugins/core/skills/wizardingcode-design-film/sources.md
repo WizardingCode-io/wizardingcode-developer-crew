@@ -9,6 +9,8 @@ The addresses are provenance: they are recorded with a choice and never opened b
 
 - It carries no licence. ADR 0017 lets in only sources under MIT or Apache-2.0, so it entered by the user's decision D-1 of item 2026-11-18-001, given on 2026-11-18, as an exception recorded in that ADR.
 - Ideas and techniques are restated in the crew's own words and code: no sentence, no code, no prompt and no form is copied.
+- How that was tested, on 2026-11-18: the prose of the skill against all seven files of the material by runs of five words, each shared stretch with a shape of its own reworded; short plain stretches of the material remain, as any two texts on one subject share; the two forms of `references/shots.md` against the material's two templates slot by slot.
+- What follows the material in its order and is said here and not hidden: the ten rules of `references/shots.md` are ten of the material's twelve laws on the shot, restated, in the material's order; its other two, on text over footage and on pacing, are restated in `references/scrub.md`. The steps of the skill follow the order such work has.
 - What the session read: the skill's main file, its references on the scrub's engineering, on the shots and on the encode, and the checklist, each whole; its references on deploy, on the design package and on troubleshooting by their headings alone. Nothing of it was run.
 - Whether its maker sells it or gives it away is not known to the session.
 - What is not carried: its maker's links to two vendors, its deploy to a host, its installs, and its claim to govern over other skills.

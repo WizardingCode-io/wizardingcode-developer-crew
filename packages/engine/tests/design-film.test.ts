@@ -176,6 +176,40 @@ test("film AC-6: at least eight shot rules and two forms, each of which refuses 
   for (const form of forms) expect(form).toContain("No text");
 });
 
+test("forms AC-5 (item 2026-11-18-002): every line of a form names a rule that stands among the rules, or says it is the brand's own, and the film's form carries rule 7 and rule 2's exception", () => {
+  const text = part("references/shots.md");
+  const rules = (section(text, "The rules").match(/^\d+(?=\. )/gm) ?? []).map(Number);
+  // The rules as the section numbers them: at least eight, counted from one with none missing.
+  expect(rules.length).toBeGreaterThanOrEqual(8);
+  expect(rules).toEqual(rules.map((_, i) => i + 1));
+  const forms = fences(text).map((f) => f.body.trim().split("\n"));
+  for (const form of forms) {
+    expect(form.length).toBeGreaterThanOrEqual(6);
+    for (const line of form) {
+      const named = /\((?:rule|rules) ([\d, and]+)\)/.exec(line);
+      const numbers = (named?.[1]?.match(/\d+/g) ?? []).map(Number);
+      const own = line.includes("(the brand's own, no rule)");
+      expect(own || numbers.length > 0, line).toBe(true);
+      for (const n of numbers) expect(rules, line).toContain(n);
+    }
+  }
+  const film = forms[1] ?? [];
+  // The line that names rule 7 asks what rule 7 asks of the arrival.
+  expect(film.find((l) => /\(rules? [^)]*\b7\b/.test(l)) ?? "").toContain(
+    "the calm part of the scene",
+  );
+  expect(
+    film.some((l) => /\(rules? [^)]*\b2\b/.test(l) && l.includes("unless the brief insists")),
+  ).toBe(true);
+});
+
+test("forms AC-4 (item 2026-11-18-002): the self-test has the step that reads the page with the film's section taken out", () => {
+  const numbered = section(part("references/scrub.md"), "The self-test")
+    .split("\n")
+    .filter((l) => /^\d+\. /.test(l));
+  expect(numbered.some((l) => l.includes("with the film's section taken out"))).toBe(true);
+});
+
 test("film AC-13: nothing of the material's maker stands outside the sources file, and the sources, the ADR and the ledger say how it entered", () => {
   for (const name of PARTS) {
     const text = part(name);

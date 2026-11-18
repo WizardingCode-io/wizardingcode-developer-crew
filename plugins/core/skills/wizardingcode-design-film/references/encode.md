@@ -37,7 +37,7 @@ ffmpeg -i assets/film.mp4 -frames:v 1 -q:v 2 assets/film-poster.jpg
 ffmpeg -sseof -0.1 -i assets/film.mp4 -update 1 -frames:v 1 -q:v 2 assets/film-ending.jpg
 ```
 
-The poster is what a visitor sees before the clip arrives and what the still hero shows. The ending frame is a picture of the page's own world, free to use in a section below.
+The poster is what a visitor sees before the clip arrives and what the still hero shows. The ending frame, a picture from the page's own world, is free to use in a section below.
 
 ## Three frames to look at
 
@@ -81,7 +81,7 @@ Join the raw clips and encode once, so that nothing differs at a join:
 ffmpeg -i raw/part-1.mp4 -i raw/part-2.mp4 -i raw/part-3.mp4 -filter_complex "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]" -map "[v]" -c:v libx264 -crf 18 -preset slow -g 8 -keyint_min 8 -pix_fmt yuv420p -movflags +faststart -an assets/film.mp4
 ```
 
-Where a join still shows as a cut, cross-fade over a quarter of a second. The offset is the first clip's length less the fade:
+Where a join still shows as a cut, cross-fade over a quarter of a second. Set the offset to the length of the first clip less the fade:
 
 ```
 ffmpeg -i raw/part-1.mp4 -i raw/part-2.mp4 -filter_complex "[0:v][1:v]xfade=transition=fade:duration=0.25:offset=5.75[v]" -map "[v]" -c:v libx264 -crf 18 -preset slow -g 8 -keyint_min 8 -pix_fmt yuv420p -movflags +faststart -an assets/film.mp4
