@@ -126,6 +126,8 @@ export const PROTECTED_WORK_FILES: readonly string[] = [
   "design/deal.json",
   "design/fingerprint.json",
   "design/score.json",
+  // The references the user was asked to approve for the bar, with their digests (item 2026-11-18-008).
+  "design/bar.json",
   "design/comp.json",
   "design/pictures.json",
   // The design choices with their proof labels (item 2026-11-16-008).

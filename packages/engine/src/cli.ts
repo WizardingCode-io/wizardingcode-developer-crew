@@ -56,6 +56,7 @@ import {
   registerTampered,
 } from "./decisions.ts";
 import {
+  barLine,
   compDir,
   DESIGN_FILE_MAX,
   type DealRecord,
@@ -77,6 +78,7 @@ import {
   recentDealt,
   recordSurface,
   redrawSlot,
+  type ScoreRecord,
   SURFACES,
   type Surface,
   saveComp,
@@ -86,6 +88,7 @@ import {
   validRegions,
   validSlot,
 } from "./design.ts";
+import { decideBar, requestBar } from "./design-bar.ts";
 import {
   readPictures,
   savePicture,
@@ -601,6 +604,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
     "source",
     "replication",
     "evidence",
+    "shots",
   ],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
@@ -4151,7 +4155,7 @@ function choiceCommand(
 /** `crew design <id> surface|check|deal|choose`: what a new site is built from (item 2026-10-30-005). */
 async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<Outcome> {
   const usage =
-    'usage: crew design <id> surface <persuade|operate|read|experience> --invention <extend|surface|world> | kind <kind> --metric "<text>" [--name "<kind>"] [--reason "<why>"] | choice add "<choice>" --label <label> [--source "<where>"] [--replication "<note>"] [--evidence <path>] | choice relabel DC-n --label <hypothesis|measured-here> [--reason "<why>"] [--evidence <path>] | choice list | check | deal [--seed n] [--redraw <slot> --reason "<why>"] | choose <n> | pictures "<query>" | picture <n> | score | comp generate "<prompt>" | comp approve <n> --regions <file>';
+    'usage: crew design <id> surface <persuade|operate|read|experience> --invention <extend|surface|world> | kind <kind> --metric "<text>" [--name "<kind>"] [--reason "<why>"] | choice add "<choice>" --label <label> [--source "<where>"] [--replication "<note>"] [--evidence <path>] | choice relabel DC-n --label <hypothesis|measured-here> [--reason "<why>"] [--evidence <path>] | choice list | check | deal [--seed n] [--redraw <slot> --reason "<why>"] | choose <n> | pictures "<query>" | picture <n> | score | bar --shots <shot@width>,… | comp generate "<prompt>" | comp approve <n> --regions <file>';
   const id = args[0] ?? "";
   if (!validItemId(id)) return refuse(usage);
   const opened = openForChange(env, id);
@@ -4298,14 +4302,31 @@ async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<
         env.tampered,
       ).currentFingerprint;
       const round = (readScore(env.paths, work.id)?.round ?? 0) + 1;
-      saveScore(env.paths, work.id, { ...parsedScore, fingerprint, at: nowIso(), round });
+      // Which bar the score is held to is decided here, once, and kept with the figures read (2026-11-18-008).
+      const record: ScoreRecord = {
+        ...parsedScore,
+        ...decideBar(env.paths, work, text, parsedScore),
+        fingerprint,
+        at: nowIso(),
+        round,
+      };
+      saveScore(env.paths, work.id, record);
       const next =
-        parsedScore.disposition === "ship"
+        record.disposition === "ship"
           ? "at the bar"
           : `not at the bar: apply the material fixes in the rubric's order, recapture and review again; two rounds at least with nobody present`;
       return ok(
-        `${work.id}: design score ${parsedScore.score}, round ${round}, ${parsedScore.disposition}${parsedScore.caps.length ? `, caps: ${parsedScore.caps.join(", ")}` : ""}; ${next}`,
-        { ...parsedScore, round },
+        `${work.id}: design score ${record.score}, round ${round}, ${record.disposition}${record.caps.length ? `, caps: ${record.caps.join(", ")}` : ""}; ${barLine(record)}; ${next}`,
+        { ...record },
+      );
+    }
+    case "bar": {
+      const asked = requestBar(env.paths, work, flag("shots"), nowIso());
+      if (!asked.ok) return refuse(asked.why);
+      saveWork(env.paths, work);
+      return ok(
+        `${work.id}: ${asked.decision.id} asks the user whether these references set the bar: ${asked.record.shots.map((s) => `${s.shot}@${s.width}`).join(", ")}; only the user's yes approves them (crew decide ${work.id} ${asked.decision.id} yes), and any other answer leaves the bar at 8.5`,
+        { decision: asked.decision.id, shots: asked.record.shots },
       );
     }
     case "comp": {

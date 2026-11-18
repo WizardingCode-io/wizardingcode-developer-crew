@@ -55,7 +55,7 @@ The three tools' defaults are not comparable, and no page read recommends a valu
 | The copy is the whole page as plain text, written before any markup | `hypothesis` | `plugins/core/skills/wizardingcode-design-copy/SKILL.md` | The crew's own file |
 | The system turns the direction into tokens | `hypothesis` | `plugins/core/skills/wizardingcode-design-system/SKILL.md` | The crew's own file |
 | The build is made from the contract, with captures that prove it | `hypothesis` | `plugins/core/skills/wizardingcode-design-build/SKILL.md` | The crew's own file |
-| The review reads the captures with no inherited context, in fourteen passes and a score, and under 8.5 the site is not proven | `hypothesis` | `plugins/core/skills/wizardingcode-design-review/SKILL.md` | The crew's own file |
+| The review reads the captures with no inherited context, in fourteen passes and a score, and a site under its bar is not proven: the references' level on each dimension where the user approved references for it, 8.5 overall where there are none | `hypothesis` | `plugins/core/skills/wizardingcode-design-review/SKILL.md` | The crew's own file |
 | The finish review of a new site judges only the captures and holds the change to its contract, promise by promise | `hypothesis` | `plugins/core/skills/crew/rubrics/design-finish.md` | The crew's own file, the finish rubric |
 | One model's verdict counts as one juror's | `hypothesis` | `docs/specs/2026-11-16-frontend-team-design.md` | The crew's own file, the team's definition, section 5, rule 9, where it is the session's reading from the research |
 | A single evaluator found about 35 percent of the usability problems, over six projects, and three to five evaluators are recommended | `published-study` | https://www.nngroup.com/articles/how-to-conduct-a-heuristic-evaluation/theory-heuristic-evaluations/ | Jakob Nielsen's "Theory behind heuristic evaluations"; that the figures are the author's own measurements is this page's reading of the row, and replication is unknown, the research naming none |
@@ -86,7 +86,7 @@ The session opens no gallery and drives no browser against one: the study of a g
 ## What the team never claims
 
 - One model's verdict counts as one juror's and is never called a jury's.
-- The review's 8.5 is one model's reading of the captures and no proof that a person prefers the page.
+- The review's 8.5 is one model's reading of the captures and no proof that a person prefers the page. The figures set against references are the same one reader's, of the references and of the site.
 - The defaults of Playwright, pixelmatch and Chromatic are never compared as one scale, and no page read recommends a value.
 - A figure on how often a skill is invoked is a vendor's eval or one person's measurement and is never quoted as the crew's rate.
 - The chain of the six design skills is not proven on a whole site until the run on a real project with a blind jury: no site of three reached 8.5.

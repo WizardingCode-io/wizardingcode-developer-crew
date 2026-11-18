@@ -23,3 +23,13 @@ SP9 and item 2026-10-29-001 took the policing of the user's outside sources and 
 - Six skill descriptions cost every session a little (finding 60), and the user asked for them.
 - No machine proves taste. The engine proves the process ran and the measurable signs are absent; the direction's choice and the score remain judgements.
 - A forged reading in `review/ui/` can pass the measures, since the session owns that folder; the captures stand before the reviewer, as ADR 0016 says of the rest of the evidence.
+
+## Note of 2026-11-18
+
+The user's decision D-1 of item 2026-11-18-008, option C, changes point 6 for a site with references: the bar is the level of the site's references, dimension by dimension, and 8.5 overall where there are none.
+
+- References set the bar only where the user approved them for it, by answering `yes` to a question the engine words (`crew design <id> bar`). A reference the session took by itself is read beside its capture and sets no bar.
+- The reviewer files its reading of the references on the rubric's four dimensions (`level:`). The site is under the bar on each dimension whose figure is under the references'.
+- The references set no bar when one changed since the approval, when an approved shot has no pair on the fixture's record, when that record is older than a capture, when the review counted other shots, when its lines were not read, or when the references read under 7.5 on a dimension. The bar is then 8.5 overall and the record says which of these applied.
+- A cap, a disposition other than `ship`, a stale score and no score keep the item not proven under either bar.
+- Taken by the session and refusable: the floor of 7.5 on the references' level, and one reader for both readings. The report says the bar rests on one reader's two readings; more than one reader is a later item.

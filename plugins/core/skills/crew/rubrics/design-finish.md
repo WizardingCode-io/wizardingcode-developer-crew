@@ -46,6 +46,14 @@ dimensions: design <n> · usability <n> · creativity <n> · content <n>
 reference: <n> shots
 ```
 
+With shots, a fourth line follows the three, on a line of its own:
+
+```
+level: design <n> · usability <n> · creativity <n> · content <n>
+```
+
+It is the reviewer's reading of the references themselves, on this rubric's scale and its four dimensions, read from the left half of the pairs before the right half is scored. Where the user approved the references for the bar (`crew design <id> bar`), the engine holds each dimension of the site to that figure, and to 8.5 overall where it did not. With `reference: none` it is not filed.
+
 The third line is `reference: <n> shots`, or `reference: none` where the brief says `no references`. The three stand together, before the fixes. Each of the four figures is out of 10, after its own caps; the overall figure is their weighted sum after the overall caps.
 
 With shots (`design/shots.md`, `design/refs/`), the reviewer names for each shot the three largest gaps between the capture and its reference, each with where, what is wrong and what to change, each filed with its shot and its dimension, and only on what the shot's row says to take. The gaps are findings: they enter the material fixes, which stay eight at most, in the order above. A score filed with `reference: none` was read against nothing but the rubric, and the session's report says so. The weakest dimension is named in words in the first sentence the reviewer files after the three lines: the overall figure does not hide it.

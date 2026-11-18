@@ -28,6 +28,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
@@ -900,7 +901,7 @@ function checkRow(cells, item, dir) {
   const number = WIDTH_CELL.test(widthCell) ? Number(widthCell) : null;
   const width = number !== null && number >= SIZE_MIN && number <= SIZE_MAX ? number : null;
   const ref = REF_NAME.test(refCell) ? refCell : null;
-  const entry = { shot, width, ref, capture: null, pair: null, cut: null, reason: null };
+  const entry = { shot, width, ref, capture: null, pair: null, cut: null, digest: null, reason: null };
   const fail = (reason) => ({ ...entry, reason });
   if (shot === null) return fail("shot name");
   if (width === null) return fail("width");
@@ -931,10 +932,10 @@ function checkRow(cells, item, dir) {
 }
 
 /** A picture's bytes as a `data:` URL of its kind. */
-function dataUrlOf(path) {
+function dataUrlOf(path, bytes = readFileSync(path)) {
   const lower = path.toLowerCase();
   const kind = lower.endsWith(".png") ? "png" : lower.endsWith(".webp") ? "webp" : "jpeg";
-  return `data:image/${kind};base64,${readFileSync(path).toString("base64")}`;
+  return `data:image/${kind};base64,${bytes.toString("base64")}`;
 }
 
 /** In the blank page: both pictures at one width on one canvas, or the reason there is none. */
@@ -1013,9 +1014,15 @@ function readPairReturn(made) {
 /** One row composed on the blank page and written: its entry with the pair, or with the reason there is none. */
 async function composeRow(blank, item, dir, entry) {
   let answered;
+  // The digest of the reference as it was composed: of the one read whose bytes the page is handed,
+  // so the engine can hold a pair to the bytes the user approved (item 2026-11-18-008).
+  let digest = null;
   try {
+    const refPath = join(item, "design", "refs", entry.ref);
+    const refBytes = readFileSync(refPath);
+    digest = createHash("sha256").update(refBytes).digest("hex");
     answered = await blank.evaluate(crewPair, {
-      reference: dataUrlOf(join(item, "design", "refs", entry.ref)),
+      reference: dataUrlOf(refPath, refBytes),
       capture: dataUrlOf(join(dir, entry.capture)),
       cell: PAIR_CELL,
       gap: PAIR_GAP,
@@ -1032,7 +1039,7 @@ async function composeRow(blank, item, dir, entry) {
   if (made.reason !== null) return { ...entry, reason: made.reason };
   const pair = `${entry.shot}@${entry.width}.pair.png`;
   writeNew(join(dir, pair), made.bytes);
-  return { ...entry, pair, cut: made.cut };
+  return { ...entry, pair, cut: made.cut, digest };
 }
 
 /**

@@ -2,6 +2,7 @@
 // the helper writes is read back by its pixels, and every way a row has no pair is planted. The
 // browser is the one `e2e-browser.test.ts` uses; without one every row here skips and says why.
 import { afterAll, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -23,7 +24,7 @@ const BLUE = [30, 30, 200];
 const GREEN = [30, 160, 30];
 const GROUND = [128, 128, 128];
 const RECORD_KEYS = ["at", "by", "context", "pairs", "reason"];
-const ENTRY_KEYS = ["capture", "cut", "pair", "reason", "ref", "shot", "width"];
+const ENTRY_KEYS = ["capture", "cut", "digest", "pair", "reason", "ref", "shot", "width"];
 
 type Context = {
   pages(): unknown[];
@@ -49,6 +50,7 @@ type Entry = {
   capture: string | null;
   pair: string | null;
   cut: string | null;
+  digest: string | null;
   reason: string | null;
 };
 type Shots = {
@@ -258,6 +260,9 @@ browserTest(
         capture: "home-default@1280.png",
         pair: "home-default@1280.pair.png",
         cut: null,
+        digest: createHash("sha256")
+          .update(readFileSync(join(at.refs, "home.png")))
+          .digest("hex"),
         reason: null,
       };
       expect(record?.by).toBe("fixture");

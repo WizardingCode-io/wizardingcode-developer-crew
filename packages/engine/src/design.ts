@@ -629,6 +629,26 @@ export interface ScoreRecord {
   at: string;
   /** How many times the review has been recorded on this item. */
   round?: number;
+  /** Which bar the score was held to (2026-11-18-008); absent on an older record, which is held to 8.5 overall. */
+  bar?: "references" | "overall";
+  /** Why the references did not set the bar: one fixed sentence of the engine's, never the findings' text. */
+  why?: string;
+  /** The site's figure on each dimension and the references', kept where the references set the bar. */
+  dimensions?: BarFigures;
+  level?: BarFigures;
+}
+/** The rubric's four dimensions, in the order the reviewer files them. */
+export const DIMENSIONS_OF_THE_BAR = ["design", "usability", "creativity", "content"] as const;
+export type BarFigures = Record<(typeof DIMENSIONS_OF_THE_BAR)[number], number>;
+
+/** The figures of a record held to the references' level, or null: a record with no figures is held to 8.5 overall. */
+function referenceFigures(score: ScoreRecord): { site: BarFigures; level: BarFigures } | null {
+  if (score.bar !== "references" || !score.dimensions || !score.level) return null;
+  const whole = (f: BarFigures) =>
+    DIMENSIONS_OF_THE_BAR.every((d) => typeof f[d] === "number" && Number.isFinite(f[d]));
+  return whole(score.dimensions) && whole(score.level)
+    ? { site: score.dimensions, level: score.level }
+    : null;
 }
 const scoreFile = (paths: CrewPaths, id: string) => join(designDir(paths, id), "score.json");
 
@@ -671,17 +691,33 @@ export function designReasons(
   if (!score) return ["design score not recorded (crew design <id> score, after the review)"];
   const out: string[] = [];
   if (score.fingerprint !== currentFingerprint) out.push("design score not on the current code");
-  if (score.score < SCORE_BAR)
-    out.push(`design score ${score.score} under the bar of ${SCORE_BAR}`);
+  const held = referenceFigures(score);
+  if (held) {
+    for (const d of DIMENSIONS_OF_THE_BAR)
+      if (held.site[d] < held.level[d])
+        out.push(`design score: ${d} ${held.site[d]} under the references' ${held.level[d]}`);
+  } else if (score.score < SCORE_BAR) {
+    const why = score.why ? ` (the references did not set the bar: ${score.why})` : "";
+    out.push(`design score ${score.score} under the bar of ${SCORE_BAR}${why}`);
+  }
   for (const cap of score.caps) out.push(`design score capped: ${cap}`);
   if (score.disposition !== "ship") out.push(`design review says ${score.disposition}`);
   return out;
+}
+
+/** Which bar a score was held to, in the engine's words and the record's figures: the command and the report say it alike. */
+export function barLine(score: ScoreRecord): string {
+  const held = referenceFigures(score);
+  if (held)
+    return `Held to the references' level, which the user approved for the bar: ${DIMENSIONS_OF_THE_BAR.map((d) => `${d} ${held.site[d]} (references ${held.level[d]})`).join(", ")}; one reader read both the references and the site`;
+  return `Held to the bar of ${SCORE_BAR} overall${score.why ? `: ${score.why}` : ""}`;
 }
 
 /** What the report says of the score. */
 export function designScoreLines(score: ScoreRecord): string[] {
   return [
     `Design score: ${score.score} of 10, ${score.disposition}${score.caps.length ? `, caps: ${score.caps.join(", ")}` : ""}.`,
+    ...(score.bar === undefined ? [] : [`${barLine(score)}.`]),
     "The score is a model's reading of the captures, not a measurement: the engine proves the process ran and the measurable signs are absent.",
   ];
 }
