@@ -2406,6 +2406,42 @@
    "text": "No page is built on a clip the user has not approved",
    "proof": "design-film.test.ts",
    "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-001"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "what fills the eight moving elements, in order",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend-site.md",
+   "text": "in this order, each kind before the next: feedback on every control",
+   "proof": "motion-floor.test.ts",
+   "note": "read at 64eb3de (skills animate, remove-animations, find-animation-opportunities); feedback, an opening from its control and one entrance have their ground in the source; the signature's place, the moving picture and the last kind are the crew's, and the order is the crew's own, drawn from the source's two questions"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "a repeated reveal adds nothing",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend-site.md",
+   "text": "A second reveal of a shape the page has already used adds nothing",
+   "proof": "motion-floor.test.ts",
+   "note": "read at 64eb3de (skills animate, remove-animations, find-animation-opportunities); the source deletes a reveal repeated on every section, and the step to a second reveal is the crew's own"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "a move names its purpose or is not built",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend-site.md",
+   "text": "A move with none is not built",
+   "proof": "motion-floor.test.ts",
+   "note": "read at 64eb3de (skills animate, remove-animations, find-animation-opportunities); the five purposes and the rare, first-time moment are the source's, and the signature move's allowance is the crew's own"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "no animation on an action started from the keyboard",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend-site.md",
+   "text": "none animates, whatever it opens",
+   "proof": "motion-floor.test.ts",
+   "note": "read at 64eb3de (skills animate, remove-animations, find-animation-opportunities); the arrows are the crew's reading of the same rule; the line on a control's own key is an exception of the crew's, against the source's letter, resting on the source's reason (an action repeated all day) and on the crew's (one interface for the keyboard and the pointer)"
   }
  ]
 }
