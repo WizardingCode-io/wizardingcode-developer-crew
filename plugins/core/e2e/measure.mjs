@@ -265,11 +265,15 @@ export function pageProbe(doc, win) {
   // does not repeat it paints the box only when it lies over all of it: a layer of exactly the box's size
   // at any percentage (a percentage moves a layer by a share of the difference between the box and the
   // layer, which is then nothing) or at no offset; a layer larger than the box at a percentage from nought
-  // to a hundred, or at no offset. Where its size falls short it is a mark. Where its size reaches the
-  // box and its position may move it off, nobody can say from here: the ground is not known.
+  // to a hundred, or at no offset. Where its size reaches the box and its position may move it off,
+  // nobody can say from here: the ground is not known. Where its size falls short it is a mark only
+  // where it is thin, a length of 4 CSS px or less: an underline, a rule, one pixel. A layer that falls
+  // short and is thicker, a percentage under a hundred, a calculation, and tiles laid with `space`
+  // may or may not stand behind the text: not known. The answer for a mark is its thickness along
+  // each axis it is thin on, since an element's marks are thin together and not one by one.
   const PAINTS = "paints";
-  const MARK = "mark";
   const UNSURE = "unsure";
+  const THIN = 4;
   const layerOnBox = (size, repeat, x, y, box) => {
     const fills = size === "cover" || size === "contain";
     const sizes = size.split(/\s+/);
@@ -282,11 +286,14 @@ export function pageProbe(doc, win) {
       if (repeatToken === "repeat" || repeatToken === "round") return PAINTS;
       if (exact(sizeToken)) return none(offset) || !Number.isNaN(share(offset)) ? PAINTS : UNSURE;
       if (larger(sizeToken, length)) return none(offset) || (share(offset) >= 0 && share(offset) <= 100) ? PAINTS : UNSURE;
-      return MARK;
+      // Tiles that fall short of the box and are laid with gaps may or may not stand behind the text.
+      if (repeatToken === "space") return UNSURE;
+      return /^[\d.]+px$/.test(sizeToken) && Number.parseFloat(sizeToken) <= THIN ? Number.parseFloat(sizeToken) : UNSURE;
     };
     const across = axis(sizes[0] || "auto", repeats[0] || "repeat", x, box.width);
     const down = axis(sizes[1] || "auto", repeats[1] || repeats[0] || "repeat", y, box.height);
-    return across === MARK || down === MARK ? MARK : across === UNSURE || down === UNSURE ? UNSURE : PAINTS;
+    if (typeof across === "number" || typeof down === "number") return { across: typeof across === "number" ? across : 0, down: typeof down === "number" ? down : 0 };
+    return across === UNSURE || down === UNSURE ? UNSURE : PAINTS;
   };
   const groundsOf = (el) => {
     for (let e = el; e; e = e.parentElement) {
@@ -313,14 +320,21 @@ export function pageProbe(doc, win) {
       const ys = layersOf(s.backgroundPositionY || "0%");
       const box = e.getBoundingClientRect ? e.getBoundingClientRect() : { width: 0, height: 0 };
       const washes = [];
+      const marks = { across: 0, down: 0 };
       let ground = null;
       for (let i = 0; i < images.length && !ground; i++) {
         const image = images[i];
         if (image === "none") continue;
         if (/url\(/.test(image) || !/gradient\(/.test(image)) return null;
         const does = layerOnBox(sizes[i % sizes.length] || "auto", repeats[i % repeats.length] || "repeat", xs[i % xs.length] || "0%", ys[i % ys.length] || "0%", box);
-        if (does === MARK) continue;
         if (does === UNSURE) return null;
+        if (does !== PAINTS) {
+          // A mark is passed over while the element's marks, added up along each axis, are still thin.
+          marks.across += does.across;
+          marks.down += does.down;
+          if (marks.across > THIN || marks.down > THIN) return null;
+          continue;
+        }
         const stops = (image.match(GRADIENT_COLOURS) || []).map(rgb);
         if (!stops.length || stops.some((c) => !c)) return null;
         if (stops.every((c) => c.a >= 0.99)) ground = { colours: stops, by: e };
@@ -428,15 +442,24 @@ export function pageProbe(doc, win) {
   const pictureBehind = (t, by) => media.some((m) => overlaps(t, m) && (!by || (by.contains && by.contains(m.el))));
   let lowContrast = 0;
   let contrastUnknown = 0;
+  let contrastDisabled = 0;
   for (const t of texts) {
+    if (t.nav) continue;
+    // A disabled control's text is left out of the offence, as the norm leaves it, and counted apart.
+    if (inDisabledControl(t.el)) { contrastDisabled += t.chars; continue; }
+    // A colour the probe cannot read, or one under half opacity: the page does not show the colour
+    // the probe would judge.
     const c = rgb(t.s.color);
-    if (!c || c.a < 0.5 || t.nav || inDisabledControl(t.el)) continue;
+    if (!c || c.a < 0.5) { contrastUnknown += 1; continue; }
     const ground = groundsOf(t.el);
     if (!ground || pictureBehind(t, ground.by)) { contrastUnknown += 1; continue; }
     const floor = isLarge(t) ? 3 : 4.5;
     const under = ground.colours.filter((g) => contrast(c, g) < floor).length;
     if (under === ground.colours.length) lowContrast += 1;
     else if (under > 0) contrastUnknown += 1;
+    // Glyphs filled with another colour than the text's own: a text that holds by its colour is not
+    // shown in that colour, so the pass is not known. A text that fails by its colour keeps its offence.
+    else if (String(t.s.webkitTextFillColor || t.s.color) !== String(t.s.color)) contrastUnknown += 1;
   }
 
   let eyebrows = 0;
@@ -601,6 +624,7 @@ export function pageProbe(doc, win) {
     sizes: sizes.size,
     lowContrast,
     contrastUnknown,
+    contrastDisabled,
     eyebrows,
     microLabels,
     covered,

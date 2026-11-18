@@ -239,18 +239,18 @@ live(
       0, 0,
     ]);
     // The same rule from the sides the rows above leave: its natural size and no repeat is the ground;
-    // `contain` is the ground; one percent short of the box is a mark; the vertical axis alone is a
-    // mark; `space`, which leaves gaps, is a mark.
+    // `contain` is the ground; one percent short of the box is not known (item 2026-11-17-009: a mark
+    // is thin); the vertical axis alone is a mark; `space`, which leaves gaps, is not known.
     expect(await counts(fill("linear-gradient(#000,#000) no-repeat"))).toEqual([0, 0]);
     expect(await counts(fill("linear-gradient(#000,#000) no-repeat 0 0/contain"))).toEqual([0, 0]);
-    expect(await counts(fill("linear-gradient(#000,#000) no-repeat 0 0/99% 100%"))).toEqual([1, 0]);
+    expect(await counts(fill("linear-gradient(#000,#000) no-repeat 0 0/99% 100%"))).toEqual([0, 1]);
     expect(await counts(fill("linear-gradient(#000,#000) repeat-y 0 0/1px 1px"))).toEqual([1, 0]);
-    expect(await counts(fill("linear-gradient(#000,#000) space 0 0/7px 7px"))).toEqual([1, 0]);
-    // A length that reaches the box is the ground, and one pixel short of it is a mark.
+    expect(await counts(fill("linear-gradient(#000,#000) space 0 0/7px 7px"))).toEqual([0, 1]);
+    // A length that reaches the box is the ground, and one pixel short of it is not known.
     const sized = (width: number) =>
       `<div style="background:#fff;padding:8px"><div style="width:300px;height:100px;background:linear-gradient(#000,#000) no-repeat 0 0/${width}px 100px">${P("color:#999")}</div></div>`;
     expect(await counts(sized(300))).toEqual([0, 0]);
-    expect(await counts(sized(299))).toEqual([1, 0]);
+    expect(await counts(sized(299))).toEqual([0, 1]);
     // Two layers that both paint the box: the top one alone is the ground.
     expect(await counts(fill("linear-gradient(#fff,#fff), linear-gradient(#000,#000)"))).toEqual([
       1, 0,
@@ -371,32 +371,31 @@ const recorded = (extra: Partial<PageProbe>): PageProbe => ({
   ...extra,
 });
 
+/** A page of a new site graded from one recorded probe, or from two at two widths. */
+const graded = (probe: PageProbe, narrow?: PageProbe) => {
+  const root = makeRepo({ "package.json": '{"name":"t"}\n' });
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "a site");
+  recordSurface(paths, work.id, "persuade", "world", "2026-11-17");
+  write(
+    root,
+    `.crew/work/${work.id}/review/ui/home-default.json`,
+    JSON.stringify({
+      page: "home",
+      state: "default",
+      viewports: [{ width: 1280, page: probe }, ...(narrow ? [{ width: 360, page: narrow }] : [])],
+    }),
+  );
+  return gradeDesign(paths, work);
+};
+
 test("contrast AC-11: the count of text not judged is a line of the grade's result and no verdict, and a probe recorded before the count reads as before", () => {
-  const graded = (probe: PageProbe, narrow?: PageProbe) => {
-    const root = makeRepo({ "package.json": '{"name":"t"}\n' });
-    const paths = repoPaths(root, testEnv());
-    const work = createWork(paths, "a site");
-    recordSurface(paths, work.id, "persuade", "world", "2026-11-17");
-    write(
-      root,
-      `.crew/work/${work.id}/review/ui/home-default.json`,
-      JSON.stringify({
-        page: "home",
-        state: "default",
-        viewports: [
-          { width: 1280, page: probe },
-          ...(narrow ? [{ width: 360, page: narrow }] : []),
-        ],
-      }),
-    );
-    return gradeDesign(paths, work);
-  };
   const unjudged = recorded({ contrastUnknown: 3 });
   expect(contrastOffences(unjudged)).toEqual([]);
   const result = graded(unjudged);
   expect(result.offences.filter((o) => o.includes("colour/contrast"))).toEqual([]);
   expect(result.lines).toContain(
-    "contrast: 3 text blocks not judged, a picture or a gradient of mixed contrast behind them (home)",
+    "contrast: 3 text blocks not judged, a ground or a text colour the probe could not know (home)",
   );
   // A page read at two widths says its largest count once.
   const two = graded(
@@ -404,7 +403,7 @@ test("contrast AC-11: the count of text not judged is a line of the grade's resu
     recorded({ width: 360, contrastUnknown: 4 }),
   );
   expect(two.lines.filter((l) => l.startsWith("contrast:"))).toEqual([
-    "contrast: 4 text blocks not judged, a picture or a gradient of mixed contrast behind them (home)",
+    "contrast: 4 text blocks not judged, a ground or a text colour the probe could not know (home)",
   ]);
   // A probe recorded before this item has no such count: it grades on lowContrast and adds no line.
   const older = recorded({ lowContrast: 2 });
@@ -434,6 +433,196 @@ test("contrast AC-12: no page of the crew gives the probe's old floor, and the V
   expect(files.length).toBeGreaterThan(20);
   for (const file of files)
     expect(readFileSync(join(ROOT, file), "utf8"), file).not.toMatch(/(?<![\d.])2\.6(?![\d.])/);
+});
+
+// Item 2026-11-17-009: what the count leaves out or cannot see. A mark is thin, the text of disabled
+// controls is counted apart, a text whose colour the probe cannot judge is not judged, and the
+// grade's sentence says what its count holds.
+
+/** A box of 300 by 100 px on a white wrapper, with one paragraph in it. */
+const boxed = (style: string, colour = "#999") =>
+  `<div style="background:#fff;padding:8px"><div style="width:300px;height:100px;${style}">${P(`color:${colour}`)}</div></div>`;
+const layered = (background: string, colour = "#999") => boxed(`background:${background}`, colour);
+const BLACK = "linear-gradient(#000,#000)";
+
+live(
+  "count AC-8: a layer that falls short of the box is a mark only where it is thin, alone and with the element's other marks, and is otherwise not known",
+  async () => {
+    // Ninety percent of the box, dark text on it: today's silent pass against the white beneath.
+    expect(await counts(layered(`${BLACK} no-repeat 0 0/90% 90%`, "#333"))).toEqual([0, 1]);
+    expect(await counts(layered(`${BLACK} no-repeat 0 0/99% 99%`))).toEqual([0, 1]);
+    expect(await counts(layered(`${BLACK} no-repeat 0 0/299px 299px`))).toEqual([0, 1]);
+    expect(await counts(layered(`${BLACK} space 0 0/1px 1px`))).toEqual([0, 1]);
+    // `space` on a layer that reaches the box lays one whole tile and no gap: the ground, as before.
+    expect(await counts(layered(`${BLACK} space`))).toEqual([0, 0]);
+    expect(await counts(layered(`${BLACK} space 0 0/200% 200%`))).toEqual([0, 0]);
+    // Four pixels is a mark, and the text is judged against the white beneath; five is not known.
+    expect(await counts(layered(`${BLACK} no-repeat 0 100%/100% 4px`))).toEqual([1, 0]);
+    expect(await counts(layered(`${BLACK} no-repeat 0 100%/100% 5px`))).toEqual([0, 1]);
+    // One pixel, and one pixel repeated along one axis alone, stay marks.
+    expect(await counts(layered(`${BLACK} no-repeat 0 0/1px 1px`))).toEqual([1, 0]);
+    expect(await counts(layered(`${BLACK} repeat-x 0 0/1px 1px`))).toEqual([1, 0]);
+    // Marks are thin together: five rules of 4 px laid into a band of 20 px are not known.
+    const band = [0, 4, 8, 12, 16].map((y) => `${BLACK} no-repeat 0 ${y}px/100% 4px`).join(",");
+    expect(await counts(layered(`${band} #fff`, "#333"))).toEqual([0, 1]);
+    // An underline and an overline of 2 px each add up to 4: still marks.
+    expect(
+      await counts(layered(`${BLACK} no-repeat 0 0/100% 2px,${BLACK} no-repeat 0 100%/100% 2px`)),
+    ).toEqual([1, 0]);
+    // The sum along the horizontal axis: two rules of 2 px side by side stay marks, 3 px and 2 px do not.
+    expect(
+      await counts(layered(`${BLACK} no-repeat 0 0/2px 100%,${BLACK} no-repeat 100% 0/2px 100%`)),
+    ).toEqual([1, 0]);
+    expect(
+      await counts(layered(`${BLACK} no-repeat 0 0/3px 100%,${BLACK} no-repeat 100% 0/2px 100%`)),
+    ).toEqual([0, 1]);
+    // 3 px and 2 px add up to 5: each alone is thin, together they are not.
+    expect(
+      await counts(layered(`${BLACK} no-repeat 0 0/100% 3px,${BLACK} no-repeat 0 100%/100% 2px`)),
+    ).toEqual([0, 1]);
+  },
+);
+
+live(
+  "count AC-9: a text whose colour the probe cannot judge is counted as not judged: under half opacity, or filled with another colour than its own",
+  async () => {
+    expect(
+      await counts(
+        `<h2 style="color:transparent;background:linear-gradient(#000,#fff);-webkit-background-clip:text;background-clip:text">${WORDS}</h2>`,
+      ),
+    ).toEqual([0, 1]);
+    expect(await counts(P("color:rgba(153,153,153,0.4)"))).toEqual([0, 1]);
+    // Exactly half opacity is judged, by its red, green and blue.
+    expect(await counts(P("color:rgba(153,153,153,0.5)"))).toEqual([1, 0]);
+    // Glyphs filled with a colour that is not the text's own: the page shows grey, the colour says black.
+    expect(await counts(P("color:#000;-webkit-text-fill-color:#999"))).toEqual([0, 1]);
+    expect(await counts(P("color:#999"))).toEqual([1, 0]);
+    // A text that fails by its colour keeps its offence whatever it is filled with: a fill moves no
+    // offence into the count.
+    expect(await counts(P("color:#999;-webkit-text-fill-color:#000"))).toEqual([1, 0]);
+    // The usual gradient heading: an opaque colour, glyphs filled with nothing.
+    expect(await counts(P("color:#000;-webkit-text-fill-color:transparent"))).toEqual([0, 1]);
+    // A fill set to the text's own colour is no other colour: judged.
+    expect(await counts(P("color:#999;-webkit-text-fill-color:#999"))).toEqual([1, 0]);
+  },
+);
+
+live(
+  "count AC-11: the sides of the ground's rule that the reviews of item 2026-11-17-008 named and no row held",
+  async () => {
+    // A blend mode on one layer of two.
+    expect(
+      await counts(layered(`${BLACK},${BLACK};background-blend-mode:normal,multiply`)),
+    ).toEqual([0, 1]);
+    // Both clips `text`: no ground, the text is judged against the white beneath.
+    expect(
+      await counts(
+        boxed(
+          `background-image:${BLACK},${BLACK};-webkit-background-clip:text,text;background-clip:text,text`,
+        ),
+      ),
+    ).toEqual([1, 0]);
+    // `text` as the last entry of a mixed list.
+    expect(
+      await counts(
+        boxed(
+          `background-color:#222;background-image:none,${BLACK};-webkit-background-clip:border-box,text;background-clip:border-box,text`,
+          "#555",
+        ),
+      ),
+    ).toEqual([0, 1]);
+    // The vertical offset alone.
+    expect(await counts(layered(`${BLACK} no-repeat 0 400px/100% 100%`))).toEqual([0, 1]);
+    // Repeated along the horizontal axis alone, on a size that is not symmetric: the ground.
+    expect(await counts(layered(`${BLACK} repeat-x 0 0/1px 100%`))).toEqual([0, 0]);
+    // Thin along one axis and not known along the other: a mark comes first.
+    expect(await counts(layered(`${BLACK} no-repeat 0 40px/2px 100%`))).toEqual([1, 0]);
+    // An offset on the thin axis changes nothing.
+    expect(await counts(layered(`${BLACK} no-repeat 40px 0/2px 100%`))).toEqual([1, 0]);
+    // An offset of exactly nought, in pixels.
+    expect(await counts(layered(`${BLACK} no-repeat 0px 0px/cover`))).toEqual([0, 0]);
+    // The element's own colour at exactly half opacity is no ground.
+    expect(await counts(layered("rgba(0,0,0,0.5)"))).toEqual([1, 0]);
+  },
+);
+
+/** The characters of text the probe left out as a disabled control's. */
+const left = async (body: string) => (await read(body)).contrastDisabled;
+const LABEL = "a".repeat(57);
+
+live(
+  "count AC-2: the text of a disabled control is counted apart, in characters, and stays out of the two other counts",
+  async () => {
+    const link = (attr: string) => `<a role="button" ${attr} style="color:#999">${LABEL}</a>`;
+    expect(await counts(link('aria-disabled="true"'))).toEqual([0, 0]);
+    expect(await left(link('aria-disabled="true"'))).toBe(57);
+    expect(await counts(link(""))).toEqual([1, 0]);
+    expect(await left(link(""))).toBe(0);
+    // A page cut into short disabled controls: every character is counted.
+    const tab = `<span role="tab" aria-disabled="true" style="color:#999">${LABEL}</span> `;
+    expect(await left(tab.repeat(3))).toBe(171);
+    expect(await left(P("color:#999"))).toBe(0);
+    // A form control's text is counted too.
+    expect(
+      await left(
+        `<textarea disabled style="color:#999;background:#fff;width:400px;height:60px">${LABEL}</textarea>`,
+      ),
+    ).toBe(57);
+    // The order of the exclusions. The navigation comes first: a disabled control in a `nav` is in no count.
+    const off = (style: string) =>
+      `<span role="tab" aria-disabled="true" style="${style}">${LABEL}</span>`;
+    expect(await left(`<nav>${off("color:#999")}</nav>`)).toBe(0);
+    // The disabled control comes before the colour: its transparent text is counted as disabled, not as not judged.
+    expect(await counts(off("color:transparent"))).toEqual([0, 0]);
+    expect(await left(off("color:transparent"))).toBe(57);
+    // A disabled button's text is left out by the older exclusion, before any count.
+    expect(await left(`<button disabled style="color:#999">${LABEL}</button>`)).toBe(0);
+  },
+);
+
+const DISABLED_LINE = (l: string) => l.includes("disabled controls");
+
+test("count AC-3: the grade says how many characters disabled controls hold on a page where they are more than a hundred, as a line and no verdict", () => {
+  const probe = (n: number, extra: Partial<PageProbe> = {}) =>
+    recorded({ ...extra, contrastDisabled: n });
+  const over = graded(probe(101));
+  expect(over.lines).toContain(
+    "contrast: 101 characters of text inside disabled controls not judged (home)",
+  );
+  expect(over.offences.filter((o) => o.includes("colour/contrast"))).toEqual([]);
+  expect(graded(probe(100)).lines.filter(DISABLED_LINE)).toEqual([]);
+  // A page read at two widths says its largest count once.
+  expect(graded(probe(40), probe(300, { width: 360 })).lines.filter(DISABLED_LINE)).toEqual([
+    "contrast: 300 characters of text inside disabled controls not judged (home)",
+  ]);
+  // The largest, whichever width it stands at.
+  expect(graded(probe(300), probe(40, { width: 360 })).lines.filter(DISABLED_LINE)).toEqual([
+    "contrast: 300 characters of text inside disabled controls not judged (home)",
+  ]);
+  // Both lines of one page, each with its own count.
+  expect(
+    graded(probe(150, { contrastUnknown: 3 })).lines.filter((l) => l.startsWith("contrast:")),
+  ).toEqual([
+    "contrast: 3 text blocks not judged, a ground or a text colour the probe could not know (home)",
+    "contrast: 150 characters of text inside disabled controls not judged (home)",
+  ]);
+  // A count that is no finite number adds no line, and a fraction is floored.
+  expect(graded(probe(Number.POSITIVE_INFINITY)).lines.filter(DISABLED_LINE)).toEqual([]);
+  expect(graded(probe(100.9)).lines.filter(DISABLED_LINE)).toEqual([]);
+  // A probe recorded without the count adds no line.
+  expect(graded(recorded({})).lines.filter(DISABLED_LINE)).toEqual([]);
+});
+
+test("count AC-5: the grade's sentence for text not judged says what its count holds, and the old sentence is in no source file", () => {
+  expect(graded(recorded({ contrastUnknown: 3 })).lines).toContain(
+    "contrast: 3 text blocks not judged, a ground or a text colour the probe could not know (home)",
+  );
+  const files = ["plugins/core/e2e/measure.mjs", ...walk("packages/engine/src")];
+  expect(files.length).toBeGreaterThan(20);
+  for (const file of files)
+    expect(readFileSync(join(ROOT, file), "utf8"), file).not.toContain(
+      "a picture or a gradient of mixed contrast",
+    );
 });
 
 /** Every file under a folder of the repository, by its path from the root. */

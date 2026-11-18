@@ -48,8 +48,10 @@ export interface PageProbe {
   families: number;
   sizes: number;
   lowContrast: number;
-  /** Text blocks the probe did not judge for contrast: a picture or a gradient of mixed contrast behind them. Absent on a probe recorded before the count. */
+  /** Text blocks the probe did not judge for contrast: a ground or a text colour it could not know. Absent on a probe recorded before the count. */
   contrastUnknown?: number;
+  /** Characters of text the probe left out of the contrast count as a disabled control's. Absent on a probe recorded before the count. */
+  contrastDisabled?: number;
   eyebrows: number;
   microLabels: number;
   covered: number;
@@ -261,6 +263,9 @@ export interface DesignGrade {
   fingerprint: Fingerprint | null;
 }
 
+/** The most characters of disabled controls' text a page holds with no line: one label's worth, as the probe bounds a label. */
+const DISABLED_SHOWN_OVER = 100;
+
 /**
  * The third look at a new site after the UI grade: each default capture's readings against the
  * limits, then the fingerprint against the history. Nothing for an `extend` item or a page with no
@@ -284,17 +289,25 @@ export function gradeDesign(paths: CrewPaths, work: WorkItem): DesignGrade {
     const meta = readJsonQuiet(join(dir, name));
     const page = name.replace(/-default\.json$/, "");
     let notJudged = 0;
+    let disabled = 0;
     for (const probe of probesOf(meta)) {
       for (const o of gradeProbe(probe, record.surface, limits))
         offences.push(`${o.text} (${page})`);
       if (typeof probe.contrastUnknown === "number" && Number.isFinite(probe.contrastUnknown))
         notJudged = Math.max(notJudged, Math.floor(probe.contrastUnknown));
+      if (typeof probe.contrastDisabled === "number" && Number.isFinite(probe.contrastDisabled))
+        disabled = Math.max(disabled, Math.floor(probe.contrastDisabled));
       if (!widest || probe.width > widest.width) widest = probe;
     }
     // Shown, and no verdict: the reviewer and a scanner judge what the probe could not.
     if (notJudged > 0)
       unjudged.push(
-        `contrast: ${notJudged} text blocks not judged, a picture or a gradient of mixed contrast behind them (${page})`,
+        `contrast: ${notJudged} text blocks not judged, a ground or a text colour the probe could not know (${page})`,
+      );
+    // A disabled control's text is the norm's to leave out; more of it than a label holds is said.
+    if (disabled > DISABLED_SHOWN_OVER)
+      unjudged.push(
+        `contrast: ${disabled} characters of text inside disabled controls not judged (${page})`,
       );
   }
   // The comp path (D-4): the approved comp's regions against the page's marked elements at the widest width.

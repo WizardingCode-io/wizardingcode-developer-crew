@@ -5692,6 +5692,7 @@ function validProbe(p) {
   const text = (v) => typeof v === "string";
   return number(r.width) && number(r.height) && !!r.title && number(r.title.count) && number(r.title.sizePx) && number(r.title.lines) && number(r.title.boxShare) && number(r.displayPx) && number(r.bodyPx) && numbers(r.controls) && numbers(r.icons) && numbers(r.sectionGaps) && numbers(r.blankGaps) && !!r.margins && number(r.margins.left) && number(r.margins.right) && (r.motion === undefined || r.motion === null || number(r.motion.count) && Array.isArray(r.motion.kinds) && r.motion.kinds.every(text)) && (r.fingerprint === undefined || !!r.fingerprint && Object.values(r.fingerprint).length === 5 && Object.values(r.fingerprint).every(text)) && (r.compRegions === undefined || Array.isArray(r.compRegions));
 }
+var DISABLED_SHOWN_OVER = 100;
 function gradeDesign(paths, work) {
   const record = readSurface(paths, work.id);
   const none = { offences: [], lines: [], fingerprint: null };
@@ -5709,16 +5710,21 @@ function gradeDesign(paths, work) {
     const meta = readJsonQuiet(join14(dir, name));
     const page = name.replace(/-default\.json$/, "");
     let notJudged = 0;
+    let disabled = 0;
     for (const probe of probesOf(meta)) {
       for (const o of gradeProbe(probe, record.surface, limits))
         offences.push(`${o.text} (${page})`);
       if (typeof probe.contrastUnknown === "number" && Number.isFinite(probe.contrastUnknown))
         notJudged = Math.max(notJudged, Math.floor(probe.contrastUnknown));
+      if (typeof probe.contrastDisabled === "number" && Number.isFinite(probe.contrastDisabled))
+        disabled = Math.max(disabled, Math.floor(probe.contrastDisabled));
       if (!widest || probe.width > widest.width)
         widest = probe;
     }
     if (notJudged > 0)
-      unjudged.push(`contrast: ${notJudged} text blocks not judged, a picture or a gradient of mixed contrast behind them (${page})`);
+      unjudged.push(`contrast: ${notJudged} text blocks not judged, a ground or a text colour the probe could not know (${page})`);
+    if (disabled > DISABLED_SHOWN_OVER)
+      unjudged.push(`contrast: ${disabled} characters of text inside disabled controls not judged (${page})`);
   }
   const comp = readComp(paths, work.id);
   if (comp && widest)
