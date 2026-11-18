@@ -95,6 +95,11 @@
    "name": "be-ambitious",
    "licence": "MIT",
    "commit": "dc116a3"
+  },
+  {
+   "name": "cook",
+   "licence": "MIT",
+   "commit": "b23cac6"
   }
  ],
  "unread": [
@@ -108,7 +113,8 @@
   "diagram-design: SKILL.md outside :170-239, animation.md, every ADR but 0003",
   "taste-skill: palettes, photos, sites and app JSON unopened by the reader; rows enter through the build script, scanned",
   "impeccable: live.md past :90, live-setup.md past :50, manual-edit-applier past :25, the native references",
-  "ui-ux-pro-max: brand and design-system references by heading, design, slides, banner-design, ui-styling"
+  "ui-ux-pro-max: brand and design-system references by heading, design, slides, banner-design, ui-styling",
+  "cook: scripts/side-by-side.mjs read and not run; .gitignore not read"
  ],
  "rows": [
   {
@@ -2442,6 +2448,60 @@
    "text": "none animates, whatever it opens",
    "proof": "motion-floor.test.ts",
    "note": "read at 64eb3de (skills animate, remove-animations, find-animation-opportunities); the arrows are the crew's reading of the same rule; the line on a control's own key is an exception of the crew's, against the source's letter, resting on the source's reason (an action repeated all day) and on the crew's (one interface for the keyboard and the pointer)"
+  },
+  {
+   "source": "cook",
+   "rule": "the shot list: one row per reference",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "`design/shots.md` holds one row per reference and width",
+   "proof": "design-references.test.ts",
+   "note": "read at b23cac6 (references/target-and-bar.md, the table of shots and the line on a shot as one screen state at a fixed size); the source's columns are Shot, Ref, Shows, Camera, Take from it, Watch for, and Whose and from where, Leave and Width are the crew's own; shown only by the site eval cases site-bakery, site-law and site-synth, each built with and without references, not yet run"
+  },
+  {
+   "source": "cook",
+   "rule": "what to take from each reference",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "any other is matched in quality, in this client's own look",
+   "proof": "design-references.test.ts",
+   "note": "read at b23cac6 (references/target-and-bar.md: write down what to take from each reference); that only the client's own is recreated is the crew's; shown only by the site eval cases site-bakery, site-law and site-synth, each built with and without references, not yet run"
+  },
+  {
+   "source": "cook",
+   "rule": "the default of no references",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "with the default `no references`",
+   "proof": "design-references.test.ts",
+   "note": "read at b23cac6 (references/intake.md: a start without references is written as such); shown only by the site eval cases site-bakery, site-law and site-synth, each built with and without references, not yet run"
+  },
+  {
+   "source": "cook",
+   "rule": "a figure per dimension",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/design-finish.md",
+   "text": "dimensions: design <n> · usability <n> · creativity <n> · content <n>",
+   "proof": "design-references.test.ts",
+   "note": "read at b23cac6 (references/target-and-bar.md: one number per dimension and no overall number, over the source's six dimensions); the overall figure kept beside them, which the engine reads, and the rubric's four dimensions are the crew's own; shown only by the site eval cases site-bakery, site-law and site-synth, each built with and without references, not yet run"
+  },
+  {
+   "source": "cook",
+   "rule": "the three largest gaps of each shot",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/design-finish.md",
+   "text": "the three largest gaps between the capture and its reference",
+   "proof": "design-references.test.ts",
+   "note": "read at b23cac6 (references/loop-and-critics.md: the gaps per image, each with where, what is wrong and what to change); shown only by the site eval cases site-bakery, site-law and site-synth, each built with and without references, not yet run"
+  },
+  {
+   "source": "cook",
+   "rule": "the focus of a round",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "the person's open feedback first, else the weakest dimension of the weakest shot",
+   "proof": "design-references.test.ts",
+   "note": "read at b23cac6 (SKILL.md, the first step of a round); that it orders findings of one kind inside the rubric's order is the crew's; shown only by the site eval cases site-bakery, site-law and site-synth, each built with and without references, not yet run"
   }
  ]
 }
