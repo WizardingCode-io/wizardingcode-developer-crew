@@ -25295,6 +25295,19 @@ async function awaitCommand(env, parsed, args, io) {
     awaitingMessage: opened.work.awaitingMessage ?? null
   });
 }
+function takeActiveSlot(paths, work) {
+  if (work.learned)
+    return "";
+  const held = activeWork(paths)?.work ?? null;
+  const before = updateState(paths, (state) => {
+    const id = state.active;
+    state.active = work.id;
+    return id;
+  });
+  if (before === work.id)
+    return "";
+  return held && held.id === before && !held.learned ? `; now the active item, in place of ${held.id}` : "; now the active item";
+}
 function resumeCommand(env, parsed, args) {
   const opened = openForChange(env, args[0]);
   if (isOutcome(opened))
@@ -25318,9 +25331,10 @@ function resumeCommand(env, parsed, args) {
   opened.work.awaiting = null;
   delete opened.work.awaitingMessage;
   saveWork(env.paths, opened.work);
+  const slot = takeActiveSlot(env.paths, opened.work);
   const notes = [];
   moveOriginMail(env, opened.work, "in-progress", notes);
-  return ok(withNotes(`${opened.work.id}: resumed${cleared}`, notes), {
+  return ok(withNotes(`${opened.work.id}: resumed${cleared}${slot}`, notes), {
     awaiting: null,
     awaitingMessage: null
   });
@@ -29598,7 +29612,7 @@ var HELP = `crew ${VERSION}
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   await <id> role --here [--seconds <n>]   where nobody watches: wait inside the turn for the roles this session launched (540 s, 590 at most); sets no wait
-  resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)
+  resume <id>                           clear the wait and make the item the active one (asks the user while a jev dispute is held on it)
   question <id> add "<text>" [--mode m] | posted Q-n --channel <c> --ref <r> | answer Q-n "<answer>" | list   a doubt on record, posted where it can; answered by a person (asks the user)
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
       [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]

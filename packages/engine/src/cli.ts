@@ -2111,6 +2111,28 @@ async function awaitCommand(env: Env, parsed: Parsed, args: string[], io: CliIo)
 }
 
 /**
+ * The checkout's active item given to a resumed one (item 2026-11-18-020): `crew start` was the
+ * slot's only writer, so an open item that lost it to a later start stayed nobody's once the later
+ * one was learned. A learned item is closed and never takes it. The words say what changed: nothing
+ * for the item that already held the slot, and the item displaced where one still open held it,
+ * which takes it back the same way.
+ */
+function takeActiveSlot(paths: CrewPaths, work: WorkItem): string {
+  if (work.learned) return "";
+  // Read before the slot changes hands: an abandoned or a missing holder reads as no item.
+  const held = activeWork(paths)?.work ?? null;
+  const before = updateState(paths, (state) => {
+    const id = state.active;
+    state.active = work.id;
+    return id;
+  });
+  if (before === work.id) return "";
+  return held && held.id === before && !held.learned
+    ? `; now the active item, in place of ${held.id}`
+    : "; now the active item";
+}
+
+/**
  * `crew resume <id>`: the wait cleared, the origin in progress again. A jev dispute held on the
  * item is a person's to clear (finding 94): the hook asks for this resume, and with nobody present
  * it is refused.
@@ -2138,9 +2160,10 @@ function resumeCommand(env: Env, parsed: Parsed, args: string[]): Outcome {
   opened.work.awaiting = null;
   delete opened.work.awaitingMessage;
   saveWork(env.paths, opened.work);
+  const slot = takeActiveSlot(env.paths, opened.work);
   const notes: string[] = [];
   moveOriginMail(env, opened.work, "in-progress", notes);
-  return ok(withNotes(`${opened.work.id}: resumed${cleared}`, notes), {
+  return ok(withNotes(`${opened.work.id}: resumed${cleared}${slot}`, notes), {
     awaiting: null,
     awaitingMessage: null,
   });
@@ -7661,7 +7684,7 @@ const HELP = `crew ${VERSION}
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   await <id> role --here [--seconds <n>]   where nobody watches: wait inside the turn for the roles this session launched (540 s, 590 at most); sets no wait
-  resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)
+  resume <id>                           clear the wait and make the item the active one (asks the user while a jev dispute is held on it)
   question <id> add "<text>" [--mode m] | posted Q-n --channel <c> --ref <r> | answer Q-n "<answer>" | list   a doubt on record, posted where it can; answered by a person (asks the user)
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
       [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
