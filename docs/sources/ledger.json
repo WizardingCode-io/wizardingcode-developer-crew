@@ -100,6 +100,11 @@
    "name": "cook",
    "licence": "MIT",
    "commit": "b23cac6"
+  },
+  {
+   "name": "gsap-skills",
+   "licence": "MIT",
+   "commit": "aed9cfd"
   }
  ],
  "unread": [
@@ -1091,10 +1096,26 @@
   },
   {
    "source": "emilkowalski",
-   "rule": "springs for native gestures and mobile-native",
+   "rule": "springs on the web",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A spring follows a gesture, or a thing that may be moved again before it rests",
+   "proof": "frontend-motion.test.ts",
+   "note": "D-1 of item 2026-11-19-001, the user's words of 2026-11-18, reverses D-6 for the web; read at 64eb3de"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "React Native and Swift springs and gestures",
    "status": "refused",
    "decision": "D-6",
-   "reason": "native; web springs stay the reviewer's judgement"
+   "reason": "native; the user's decision of 2026-11-18 names springs on the web and no native code"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "the web-on-phone fixes of mobile-native",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "the user's decision of 2026-11-18 names springs and a motion skill and says nothing of this set; no row of the motion skill cites it"
   },
   {
    "source": "jakubkrehel",
@@ -2655,6 +2676,537 @@
    "text": "a poster looks exactly like a scene that is not moving",
    "proof": "design-stage.test.ts",
    "note": "read at 75d81f7; restated for a camera where the source writes of a film"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: Feedback on a control takes 120 ms",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Feedback on a control takes 120 ms",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: Tens of uses a day: 200 ms at most",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Tens of uses a day: 200 ms at most",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: An occasional move takes 300 ms at most",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "An occasional move takes 300 ms at most",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: The signature takes 800 ms at most, once, named in the thesis",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The signature takes 800 ms at most, once, named in the thesis",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: A press is `scale(0.97)`",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A press is `scale(0.97)`",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: The enter and exit curve is `cubic-bezier(0.16, 1, 0.3, 1)`",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The enter and exit curve is `cubic-bezier(0.16, 1, 0.3, 1)`",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: A stagger inside an entrance ends within 240 ms",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A stagger inside an entrance ends within 240 ms",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: An entrance rises 16 to 24 px with opacity, over up to 700 ms",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "An entrance rises 16 to 24 px with opacity, over up to 700 ms",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: The floor of a new site is at least eight moving elements",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The floor of a new site is at least eight moving elements",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: A literal's limit is 900 ms on a site and 500 ms elsewhere",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A literal's limit is 900 ms on a site and 500 ms elsewhere",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: A frame takes 16.7 ms in the sample",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A frame takes 16.7 ms in the sample",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: How often a move is met decides first what it may be",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "How often a move is met decides first what it may be",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, animate/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: An action started from the keyboard takes no animation",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "An action started from the keyboard takes no animation",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, remove-animations/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A move names its purpose from a closed list, or it is not built",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A move names its purpose from a closed list, or it is not built",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, find-animation-opportunities/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Data a person reads or acts on does not move for style",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Data a person reads or acts on does not move for style",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, remove-animations/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The gate may answer with no move, and says what stands in its place",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The gate may answer with no move, and says what stands in its place",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, animate/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The cheapest tool that works: the browser before a library",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The cheapest tool that works: the browser before a library",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, pick-ui-library/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A project's tokens are extended, and no curve is typed from memory",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A project's tokens are extended, and no curve is typed from memory",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, improve-animations/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The timeline is written before the code, one line a moving element",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The timeline is written before the code, one line a moving element",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: What was left still on purpose is listed with the moves",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "What was left still on purpose is listed with the moves",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Each part of an entrance is cast in a role before any timing is set",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Each part of an entrance is cast in a role before any timing is set",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A thing leaves by the path it came",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A thing leaves by the path it came",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, animate/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A menu, a popover or a tooltip grows from its control, and a modal sta",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A menu, a popover or a tooltip grows from its control, and a modal stays centred",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, emil-design-eng/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Nothing appears from nothing: an entrance starts near full size, never",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Nothing appears from nothing: an entrance starts near full size, never at none",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, review-animations/STANDARDS.md; restated"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: An exit is shorter than its entrance",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "An exit is shorter than its entrance",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A deliberate hold is slow and its release is quick",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A deliberate hold is slow and its release is quick",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, emil-design-eng/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Forward brings the new from one side and back from the other",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Forward brings the new from one side and back from the other",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A reveal on entering view is made once, and never on every section",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A reveal on entering view is made once, and never on every section",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, remove-animations/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: One entrance a container: a container that enters does not also stagge",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "One entrance a container: a container that enters does not also stagger its children",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: No stagger on a thing a person opens many times in a day, or opens from the keyboard",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "No stagger on a thing a person opens many times in a day, or opens from the keyboard",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A stagger's gaps are unequal and get shorter towards the end of the group",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A stagger's gaps are unequal and get shorter towards the end of the group",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Order follows importance and not the order of the markup",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Order follows importance and not the order of the markup",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Things that leave, leave together",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Things that leave, leave together",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A choreography never blocks a control: what is visible can be pressed",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A choreography never blocks a control: what is visible can be pressed",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: What a person can trigger twice within a second is a transition, never",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "What a person can trigger twice within a second is a transition, never a keyframe animation",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, emil-design-eng/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A new move starts from what is on screen, and input is never locked wh",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A new move starts from what is on screen, and input is never locked while one runs",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, apple-design/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A spring is stated as a duration and a bounce, never as a copied tripl",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A spring is stated as a duration and a bounce, never as a copied triple of physics",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, apple-design/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Bounce only where the gesture carried momentum",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Bounce only where the gesture carried momentum",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, apple-design/SKILL.md; restated"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: In CSS a spring is a `linear()` easing, whose values may pass their ta",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "In CSS a spring is a `linear()` easing, whose values may pass their target",
+   "proof": "frontend-motion.test.ts",
+   "note": "a fact or guidance of the platform cited at its page; no text taken"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: A spring in CSS stands behind a curve inside a feature test",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A spring in CSS stands behind a curve inside a feature test",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A move that runs while the page is loading or working is CSS or the We",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A move that runs while the page is loading or working is CSS or the Web Animations API",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, animation-performance/SKILL.md; restated"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: Each element carried by a view transition has a name no other rendered",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Each element carried by a view transition has a name no other rendered element has",
+   "proof": "frontend-motion.test.ts",
+   "note": "a fact or guidance of the platform cited at its page; no text taken"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: A view transition is not the answer to a gesture: its old state takes",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A view transition is not the answer to a gesture: its old state takes no input",
+   "proof": "frontend-motion.test.ts",
+   "note": "a fact or guidance of the platform cited at its page; no text taken"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: The scroll's timeline is declared after the animation shorthand, which",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The scroll's timeline is declared after the animation shorthand, which resets it",
+   "proof": "frontend-motion.test.ts",
+   "note": "a fact or guidance of the platform cited at its page; no text taken"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: What the scroll drives is linear",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "What the scroll drives is linear",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: No route or tab transition inside a surface a person works in, unless",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "No route or tab transition inside a surface a person works in, unless the thesis names its purpose",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, remove-animations/SKILL.md; restated"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: A move changes transform and opacity, and avoids what triggers layout",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A move changes transform and opacity, and avoids what triggers layout or paint",
+   "proof": "frontend-motion.test.ts",
+   "note": "a fact or guidance of the platform cited at its page; no text taken"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: `will-change` is added last, on evidence, on the element that moves",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "`will-change` is added last, on evidence, on the element that moves",
+   "proof": "frontend-motion.test.ts",
+   "note": "a fact or guidance of the platform cited at its page; no text taken"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A custom property written on a parent every frame restyles every desce",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A custom property written on a parent every frame restyles every descendant",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, animation-performance/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A script sets no component state on every frame",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A script sets no component state on every frame",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, animation-performance/SKILL.md; restated"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: A loop stops off screen and on a hidden tab",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A loop stops off screen and on a hidden tab",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Reduced motion is gentler, not empty: opacity and colour stay, travel",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Reduced motion is gentler, not empty: opacity and colour stay, travel goes",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, emil-design-eng/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A choreography collapses under reduced motion: no delays, no travel",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A choreography collapses under reduced motion: no delays, no travel",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, choreograph/SKILL.md; restated"
+  },
+  {
+   "source": "crew",
+   "rule": "motion: The setting is honoured while the page is open, in both directions",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The setting is honoured while the page is open, in both directions",
+   "proof": "frontend-motion.test.ts",
+   "note": "the crew's own standard, repeated as it stands"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: A page honours the person's setting for reduced motion",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A page honours the person's setting for reduced motion",
+   "proof": "frontend-motion.test.ts",
+   "note": "a fact or guidance of the platform cited at its page; no text taken"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The first remedy is to delete the move, and the second to reduce it",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The first remedy is to delete the move, and the second to reduce it",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, review-animations/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A review says what code cannot judge, and names the moment to look at",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A review says what code cannot judge, and names the moment to look at",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, improve-animations/SKILL.md; restated"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A move is looked at slowed down and frame by frame before it is judged",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A move is looked at slowed down and frame by frame before it is judged",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, review-animations/SKILL.md; restated"
+  },
+  {
+   "source": "gsap-skills",
+   "rule": "will-change on every element that will animate",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "one set of skills asks for it on every moving element",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at aed9cfd, gsap-performance/SKILL.md; a party to the disagreement, its rule is not taken"
   }
  ]
 }

@@ -99,6 +99,8 @@ The research names no norm for this subject. Text is rasterised differently by o
 
 ## Motion
 
+These rows bind a page's motion. How a move is chosen and made is `wizardingcode-frontend-motion`.
+
 | Rule | Label | Source | What the source is |
 | :- | :- | :- | :- |
 | Content that moves, blinks or updates by itself can be paused, stopped or hidden (2.2.2) | `norm` | https://www.w3.org/WAI/WCAG22/Understanding/pause-stop-hide.html | WCAG 2.2, Pause, Stop, Hide, through its Understanding document |
