@@ -2511,6 +2511,150 @@
    "text": "the reference on the left and the capture on the right",
    "proof": "e2e-pairs.test.ts",
    "note": "read at b23cac6 (references/target-and-bar.md and scripts/side-by-side.mjs); the script was read and neither run nor copied; the fit to width, the ground, the cut and the record are the crew's own, where the source fits both into one box through ffmpeg; the source's measured comparison by region is not taken"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "a stage only for an object that is solid, opaque and compact",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/model.md",
+   "text": "It suits a thing that is solid, opaque and compact",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the picture a model is generated from",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/model.md",
+   "text": "A tool copies what it is shown, so this picture decides the model",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the model looked at from four sides before a page is built on it",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/review.md",
+   "text": "from the front, from the right, from the back, and from above at an angle",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the six tests a model passes",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/review.md",
+   "text": "Six points, and a model that misses one is not used",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the turn that puts the best side forward is the stage's, not the file's",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/review.md",
+   "text": "The model's file is left as it came",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the model put in a known space",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "two units on its longest side, centred, standing on the floor",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "a beat as camera position, look-at point and turn",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "where the camera stands, the point it looks at, and how far the object has turned",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the object turned, the camera moved little",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "Turn the object and move the camera little",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "reflections from the library's own room, with no file",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "Reflections come from three.js's room environment",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the scene reads the page's tokens",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "The scene reads `--bg` and `--accent` from the page",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "10k-website-instructions",
+   "rule": "the poster stays when anything fails",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "the poster, a plain image that is there at once and stays if anything fails",
+   "proof": "design-stage.test.ts",
+   "note": "no licence; entered by the user's decision D-1 of item 2026-11-18-017"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "a real 3D renderer only where it shows more",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/model.md",
+   "text": "Take the heavier tool only where it shows more",
+   "proof": "design-stage.test.ts",
+   "note": "read at 75d81f7; restated for a camera where the source writes of a film"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "a fixed stage reports what it paints",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "a test cannot see",
+   "proof": "design-stage.test.ts",
+   "note": "read at 75d81f7; restated for a camera where the source writes of a film"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "a scrim beside the words, never drawn by them",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "a sibling of the words and not drawn by them",
+   "proof": "design-stage.test.ts",
+   "note": "read at 75d81f7; restated for a camera where the source writes of a film"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "posters rendered from the final scene",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "The posters are captures of the finished scene, never another picture",
+   "proof": "design-stage.test.ts",
+   "note": "read at 75d81f7; restated for a camera where the source writes of a film"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "a poster looks like a scene that is not moving",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-stage/references/stage.md",
+   "text": "a poster looks exactly like a scene that is not moving",
+   "proof": "design-stage.test.ts",
+   "note": "read at 75d81f7; restated for a camera where the source writes of a film"
   }
  ]
 }

@@ -25,7 +25,7 @@ Anything out of proportion is a defect, measured or not: a word as wide as the s
 
 ## The score
 
-Design 40, usability 30, creativity 20, content 10, out of 10 overall.
+Design 40, usability 30, creativity 20, content 10, out of 10 overall. Creativity is the idea and how well it is carried out in the medium the project's context asked for: a page with no film and no 3D scene loses nothing for having none.
 
 The caps, each named in the line:
 - Overall: a failed measure 6.0; a three-line headline, an eyebrow, mono labels, 01/02/03, a decorative gradient, a resting shadow or hairline 6.5.
