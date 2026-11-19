@@ -9,7 +9,7 @@ description: "The frontend team's rules for motion: the gate a move passes befor
 
 After `wizardingcode-design-direction` has written the contract and before the first animated line; and again before a review of a page's motion. `wizardingcode-frontend-visual-craft` holds the norms a page's motion is bound by. This skill holds how a move is chosen and made.
 
-Read `references/vocabulary.md` before the thesis is written, `references/recipes.md` before any code, and `references/review.md` before a review. `sources.md` says where each rule came from.
+Read `references/vocabulary.md` before the thesis is written, `references/recipes.md` before any code, `references/gestures.md` before anything a hand drags, and `references/review.md` before a review. `sources.md` says where each rule came from.
 
 ## How to read a row
 
@@ -146,7 +146,22 @@ A spring is for a thing a hand moved, or a thing that may be moved again before 
 
 ## Gestures
 
-A gesture has two phases, the drag and the release, and each has rules of its own. Those rules and the code of a drag are not in this skill yet. Until they are, a drag is built only where the thesis names it and a button beside it does the same.
+A gesture has two phases. While the pointer is down the element follows it one to one, with no curve, no length and no spring. On release a spring finishes the move from the place the element stands at and the speed the hand gave it. `references/gestures.md` holds the rules of each phase and a drag to dismiss, whole. A drag is built only where the project's own component and the browser's own scrolling do not cover the need, and whatever it does, a button beside it does the same.
+
+| Rule | Label | Source | What the source is |
+| :- | :- | :- | :- |
+| Whatever a drag does, a single pointer can do without dragging (2.5.7) | `norm` | https://www.w3.org/WAI/WCAG22/Understanding/dragging-movements.html | WCAG 2.2, Dragging Movements, level AA, through its Understanding document |
+| While the pointer is down the element follows it one to one, with no curve and no spring | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT; the split of a gesture in two phases is the source's frame |
+| A release is finished by a spring that starts from the hand's speed, never by a keyframe animation | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| A release dismisses by distance or by speed, never by distance alone | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| A thing on its way out can be caught and dragged back | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| Past its limit a drag meets resistance and not a wall | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| What moves with a drag is computed from the drag's progress, one source | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| A thing is dismissed along the axis it entered on | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| The dragged element's own transform is written at each event, and no component state is set | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| The element's `touch-action` names the axis the drag owns | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| Under reduced motion following the pointer stays, and the fling and the bounce go | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT |
+| A drag built for the page comes after the project's own component and the browser's own scrolling | `hypothesis` | `emilkowalski/skills`, `gestures/SKILL.md` | A practitioner's skill, MIT, which names its author's component; the crew's rule names the project's |
 
 ## Page, view and scroll-linked motion
 

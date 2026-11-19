@@ -233,7 +233,7 @@ for (const trigger of document.querySelectorAll("[data-menu-trigger]")) {
 }
 ```
 
-The menu's place on the page is the project's: this piece gives only its motion. The origin is computed for a popover in the browser's top layer, which is placed against the viewport; a menu placed inside a positioned ancestor takes its origin from the two rectangles in place of the offsets. `openFrom` sets the origin before the first frame; a menu the browser opens by its attribute takes it one task later, so a project that sees the first frame grow from the centre calls `openFrom` from its own handler. A menu opened by a key takes no transition: the project's handler of that key adds a class that sets the menu's transition to none, since the browser's event does not say what opened it. A modal is no menu and stays centred.
+The menu's place on the page is the project's: this piece gives only its motion. The origin is computed for a popover in the browser's top layer, which is placed against the viewport; a menu placed inside a positioned ancestor takes its origin from the two rectangles in place of the offsets. The loop that gives each trigger its origin runs once at load: a trigger added to the page later calls `openFrom`. `openFrom` sets the origin before the first frame; a menu the browser opens by its attribute takes it one task later, so a project that sees the first frame grow from the centre calls `openFrom` from its own handler. A menu opened by a key takes no transition: the project's handler of that key adds a class that sets the menu's transition to none, since the browser's event does not say what opened it. A modal is no menu and stays centred.
 
 ### 6. The first screen's entrance, by role
 
@@ -427,10 +427,13 @@ const reducedMotion = (() => {
       return () => watchers.delete(watcher);
     },
   };
-  query.addEventListener("change", (event) => {
+  const changed = (event) => {
     state.on = event.matches;
     for (const watcher of watchers) watcher(state.on);
-  });
+  };
+  // An older browser's list is no event target and has the older method alone.
+  if (query.addEventListener) query.addEventListener("change", changed);
+  else query.addListener(changed);
   return state;
 })();
 

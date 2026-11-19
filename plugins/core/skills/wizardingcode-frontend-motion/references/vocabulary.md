@@ -2,7 +2,7 @@
 
 A thesis names each move by a device of this list, so that a direction, a build and a review speak of the same thing, and so that two pages can be compared by what moves on them. A definition here is the crew's own sentence. A name that the trade uses is kept; where the trade has none, the name is the crew's.
 
-42 terms: eighteen are the devices of the design library (`plugins/core/design/library/motions.json`), under the ids the library gives them; twenty-four are the moves of an interface and of a page that the library does not hold.
+44 terms: eighteen are the devices of the design library (`plugins/core/design/library/motions.json`), under the ids the library gives them; twenty-six are the moves of an interface and of a page that the library does not hold.
 
 ## The design library's devices
 
@@ -63,5 +63,7 @@ Each is a showpiece: a page takes one as its signature, or none. The library's o
 ## Following the hand or the scroll
 
 - **`scroll-drift`**: a small move whose clock is the scroll's position, made by the browser with no script.
+- **`drag-dismiss`**: an element pulled along one axis that leaves when the release is going far enough, with a button beside it that does the same.
+- **`rubber-band`**: the give of an element dragged past its limit, less the further it is pulled, which says there is nothing further.
 - **`spring-settle`**: a thing released by a gesture comes to rest as a thing with weight, from the speed the hand gave it.
 - **`idle-loop`**: a small move that repeats on a long cycle, stops off screen and on a hidden tab, and can be paused.

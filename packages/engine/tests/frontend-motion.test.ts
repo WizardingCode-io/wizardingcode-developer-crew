@@ -11,7 +11,12 @@ const ROOT = join(import.meta.dir, "..", "..", "..");
 const DIR = "plugins/core/skills/wizardingcode-frontend-motion";
 const repoFile = (path: string): string => readFileSync(join(ROOT, path), "utf8");
 const part = (name: string): string => repoFile(`${DIR}/${name}`);
-const REFERENCES = ["references/vocabulary.md", "references/recipes.md", "references/review.md"];
+const REFERENCES = [
+  "references/vocabulary.md",
+  "references/recipes.md",
+  "references/review.md",
+  "references/gestures.md",
+];
 const PARTS = ["SKILL.md", ...REFERENCES];
 const LABELS = ["norm", "platform-guidance", "published-study", "hypothesis"];
 
@@ -398,7 +403,7 @@ test("motion AC-7: the skill says what it refuses, gives each conflict of the so
   // The gestures' paragraph says what is not here yet, and gives no rule of a set left out.
   const gestures = section(skill, "Gestures");
   expect(gestures).toContain("a button beside it does the same");
-  expect(ruleRows(gestures)).toEqual([]);
+  expect(gestures).toContain("references/gestures.md");
 });
 
 test("motion AC-8: no author's name outside the sources file, and the sources file, the ledger and the ADR say how the material entered", () => {
@@ -418,13 +423,7 @@ test("motion AC-8: no author's name outside the sources file, and the sources fi
     "D-1",
   ])
     expect(sources, words).toContain(words);
-  for (const out of [
-    "gsap-core",
-    "gsap-plugins",
-    "claudedesignskills",
-    "mobile-native",
-    "gestures",
-  ])
+  for (const out of ["gsap-core", "gsap-plugins", "claudedesignskills", "mobile-native"])
     expect(sources, out).toContain(out);
 
   const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as {
@@ -437,9 +436,21 @@ test("motion AC-8: no author's name outside the sources file, and the sources fi
     expect((row.text ?? "").length, row.rule).toBeGreaterThanOrEqual(20);
   }
   expect(new Set(mine.map((r) => r.text)).size).toBe(mine.length);
+  // As many ledger rows that hold a rule's text as rule rows: one row for one rule.
+  const cells = ruleRows(part("SKILL.md")).map((r) => r[0] ?? "");
+  expect(
+    mine.filter(
+      (r) => r.file === `${DIR}/SKILL.md` && cells.some((c) => c.includes(r.text ?? "\u0000")),
+    ).length,
+  ).toBe(cells.length);
   const skill = part("SKILL.md");
   for (const cells of ruleRows(skill)) {
     const rule = cells[0] ?? "";
+    // One row for one rule: no ledger text of the skill stands in two rule cells.
+    expect(
+      mine.filter((r) => r.file === `${DIR}/SKILL.md` && rule.includes(r.text ?? "\u0000")).length,
+      rule.slice(0, 70),
+    ).toBe(1);
     const held = mine.some(
       (r) => r.file === `${DIR}/SKILL.md` && rule.includes(r.text ?? "\u0000"),
     );
@@ -498,13 +509,22 @@ test("motion AC-9: the vocabulary defines every device of the library and every 
 // The browser row. A page made of the skill's own blocks, read from a file, with nothing asked of
 // any server. Skipped with one printed line where this machine has no headless browser.
 type Page = {
+  mouse: {
+    move(x: number, y: number, o?: { steps: number }): Promise<void>;
+    down(): Promise<void>;
+    up(): Promise<void>;
+  };
   goto(url: string): Promise<unknown>;
   emulateMedia(o: { reducedMotion: "reduce" | "no-preference" }): Promise<void>;
   evaluate<T>(script: string): Promise<T>;
   waitForFunction(script: string, arg?: unknown, o?: { timeout: number }): Promise<unknown>;
   on(event: "pageerror", handler: (error: Error) => void): void;
 };
-type Context = { newPage(): Promise<Page>; close(): Promise<void> };
+type Context = {
+  newPage(): Promise<Page>;
+  addInitScript(script: string): Promise<void>;
+  close(): Promise<void>;
+};
 type Browser = {
   newContext(o?: {
     viewport?: { width: number; height: number };
@@ -720,6 +740,17 @@ live(
       ),
     ).toBe(0);
 
+    // And one that loses its box takes none either.
+    expect(
+      await page.evaluate<number>(
+        `(() => {
+          const ghost = document.getElementById("ghost");
+          flip([ghost], () => { ghost.style.display = "none"; });
+          return ghost.getAnimations().length;
+        })()`,
+      ),
+    ).toBe(0);
+
     // (e) Reduced motion, switched on and off by the row with the page open.
     const moved = (left: number) => `(() => {
       const box = document.getElementById("box");
@@ -782,4 +813,480 @@ live(
     await still.context.close();
   },
   120_000,
+);
+
+// The gestures (item 2026-11-19-002): the reference's text, and its drag run in a real browser
+// under a pointer the row makes, whose every event carries a time the row sets.
+const GESTURE_HEADINGS = [
+  "Before a drag is built",
+  "The two phases",
+  "While the pointer is down",
+  "On release",
+  "What moves with the drag",
+  "The drag, whole",
+  "What the code does not do",
+  "Reduced motion",
+  "Checking a gesture",
+];
+
+test("gestures AC-1: the reference has its nine headings, and the skill's section sends a session to it with its rule rows, the norm and the figures that are a source's", () => {
+  const reference = part("references/gestures.md");
+  expect([...reference.matchAll(/^## (.+)$/gm)].map((m) => m[1])).toEqual(GESTURE_HEADINGS);
+  const skill = part("SKILL.md");
+  const gestures = section(skill, "Gestures");
+  const rows = ruleRows(gestures);
+  expect(rows.length).toBeGreaterThanOrEqual(6);
+  const norm = rows.filter((r) => r[1] === "`norm`");
+  expect(norm).toHaveLength(1);
+  expect(norm[0]?.[0]).toContain("2.5.7");
+  for (const figure of ["0.998", "0.55"]) {
+    const holders = [...rows, ...ruleRows(reference)].filter((r) => (r[0] ?? "").includes(figure));
+    expect(holders.length, figure).toBeGreaterThanOrEqual(1);
+    for (const row of holders) expect(row[1], figure).toBe("`hypothesis`");
+  }
+  expect(reference).toContain("were not read at their origin");
+  const vocabulary = part("references/vocabulary.md");
+  for (const term of ["drag-dismiss", "rubber-band"])
+    expect(vocabulary, term).toMatch(new RegExp(`^- \\*\\*\`${term}\`\\*\\*: `, "m"));
+  expect(vocabulary).toMatch(/^44 terms\b/m);
+});
+
+test("gestures AC-3: the reference's code reads the events' own time, writes no keyframes, and its tables hold nothing of the refused set", () => {
+  const reference = part("references/gestures.md");
+  const code = fences(reference);
+  expect(code.filter((b) => b.lang === "js").length).toBeGreaterThanOrEqual(1);
+  const all = code.map((b) => b.body).join("\n");
+  for (const banned of ["@keyframes", ".animate(", "touchmove", "performance.now(", "Date.now("])
+    expect(all, banned).not.toContain(banned);
+  expect(all).toContain("touch-action");
+  expect(all).toContain("reducedMotion");
+  expect(all).toContain("event.timeStamp");
+  expect(all).toContain("setPointerCapture");
+  const tables = ruleRows(reference)
+    .map((r) => r.join(" "))
+    .join("\n");
+  const skillRows = ruleRows(section(part("SKILL.md"), "Gestures"))
+    .map((r) => r.join(" "))
+    .join("\n");
+  for (const refused of ["manipulation", "overscroll-behavior", "tap highlight"]) {
+    expect(tables, refused).not.toContain(refused);
+    expect(skillRows, refused).not.toContain(refused);
+  }
+  expect(all).toContain("destroy()");
+});
+
+test("gestures AC-5: the sources file says what the drag keeps from its sources, and names the files and the page", () => {
+  const sources = part("sources.md");
+  const whole = sources.slice(0, sources.indexOf("Left out of this item"));
+  expect(whole).toMatch(/Read whole[\s\S]*skills\/gestures\/SKILL\.md/);
+  for (const words of [
+    "2.5.7",
+    "follow a source's order",
+    "The two formulas",
+    "0.998",
+    "0.55",
+    "were not read at their origin",
+  ])
+    expect(sources, words).toContain(words);
+  expect(sources).not.toContain("[source?]");
+});
+
+/** The page of the drag: the reference's CSS and function, the live read of reduced motion, and wiring of the row's own. */
+function dragPage(): string {
+  const reference = part("references/gestures.md");
+  const of = (lang: string) =>
+    fences(reference)
+      .filter((f) => f.lang === lang)
+      .map((f) => f.body);
+  const own =
+    "body{margin:0}[data-sheet]{position:fixed;left:0;top:100px;width:300px;height:300px;background:#888}" +
+    "#side{position:fixed;left:400px;top:100px;width:300px;height:300px;background:#666}";
+  return `<!doctype html><html><head><meta charset="utf-8"><style>${of("css").join("\n")}\n${own}</style></head><body>
+${of("html")[0] ?? ""}
+<div id="side"></div>
+<script>${piece(10).js}</script>
+<script>${of("js")[0] ?? ""}</script>
+<script>
+  const sheet = document.querySelector("[data-sheet]");
+  const side = document.getElementById("side");
+  window.log = { dismissed: 0, progress: [], sideDismissed: 0 };
+  window.drag = dragToDismiss(sheet, {
+    onDismiss: () => { log.dismissed += 1; },
+    onProgress: (share) => { log.progress.push(share); },
+  });
+  sheet.querySelector("[data-sheet-close]").addEventListener("click", () => window.drag.dismiss());
+  dragToDismiss(side, { axis: "x", onDismiss: () => { log.sideDismissed += 1; } });
+  // A pointer of the row's own: each event with the time the row gives it.
+  window.fire = (type, at, travel, o = {}) => {
+    const target = o.target ?? sheet;
+    const sideways = o.sideways ?? 0;
+    const event = new PointerEvent(type, {
+      bubbles: true, cancelable: true, pointerId: o.id ?? 1, isPrimary: (o.id ?? 1) === 1,
+      button: 0, buttons: type === "pointerup" ? 0 : 1,
+      clientX: 150 + sideways, clientY: 150 + travel,
+    });
+    Object.defineProperty(event, "timeStamp", { value: at });
+    target.dispatchEvent(event);
+  };
+  window.play = (events) => { for (const [type, at, travel, o] of events) window.fire(type, at, travel, o); };
+  window.place = (el = sheet) => { const r = el.getBoundingClientRect(); return [r.left, r.top]; };
+</script>
+</body></html>`;
+}
+
+type Step = [string, number, number];
+const press = (at = 0): Step => ["pointerdown", at, 0];
+const moves = (...pairs: [number, number][]): Step[] =>
+  pairs.map(([at, travel]) => ["pointermove", at, travel]);
+const release = (at: number, travel: number): Step => ["pointerup", at, travel];
+/** A travel to `travel` in sixteen even moves ending at `by`, then a release at `at`. */
+const still = (travel: number, by: number, at: number): Step[] => [
+  press(),
+  ...moves(
+    ...Array.from({ length: 16 }, (_, i): [number, number] => [
+      ((i + 1) * by) / 16,
+      ((i + 1) * travel) / 16,
+    ]),
+  ),
+  release(at, travel),
+];
+// The gestures of the spec's table: the pointer's travel from the press, in pixels, at each time.
+const GESTURES: Record<string, { steps: Step[]; ends: "rest" | "dismissed" }> = {
+  "(f) slow and short": {
+    steps: [press(), ...moves([100, 10], [200, 20], [300, 30], [400, 40]), release(400, 40)],
+    ends: "rest",
+  },
+  // The sample that stands exactly a window before the release is inside the window: with it the
+  // speed is 0.3 and the landing 179.7; without it the speed is nought and the landing 30.
+  "(f2) the window's edge": {
+    steps: [press(), ...moves([100, 10], [200, 40]), release(200, 40)],
+    ends: "dismissed",
+  },
+  "(g) a flick": {
+    steps: [press(), ...moves([10, 10], [20, 20], [30, 30], [40, 40]), release(40, 40)],
+    ends: "dismissed",
+  },
+  "(g2) held, then flicked": {
+    steps: [
+      press(),
+      ...moves([10, 12], [500, 12], [510, 22], [520, 32], [530, 42], [540, 52]),
+      release(540, 52),
+    ],
+    ends: "dismissed",
+  },
+  "(g3) the constant": {
+    steps: [press(), ...moves([40, 10], [80, 20], [120, 30]), release(120, 30)],
+    ends: "dismissed",
+  },
+  // Pulled fast and then held: by the release its samples are old, so its speed is nought.
+  "(h3) fast, then held": {
+    steps: [press(), ...moves([10, 10], [20, 60], [30, 100]), release(300, 100)],
+    ends: "rest",
+  },
+  "(h) far and still": { steps: still(160, 1800, 2000), ends: "dismissed" },
+  "(h2) short and still": { steps: still(100, 1800, 2000), ends: "rest" },
+  // After a release the browser tells the element its capture is gone: that undoes nothing.
+  "(h4) far and still, the capture lost after the release": {
+    steps: [...still(160, 1800, 2000), ["lostpointercapture", 2000, 160]],
+    ends: "dismissed",
+  },
+};
+
+live(
+  "gestures AC-2: under a pointer whose times the row sets, the drag commits past its threshold, follows one to one, resists, clears, returns from a slow drag, dismisses on a flick and on distance, has its button, obeys reduced motion, spares a control inside, can be caught, reports its progress, holds its pointer and keeps to its axis",
+  async () => {
+    if (!browser) return;
+    const dir = mkdtempSync(join(tmpdir(), "crew-drag-"));
+    try {
+      writeFileSync(join(dir, "index.html"), dragPage());
+      const url = pathToFileURL(join(dir, "index.html")).href;
+      const open = async (reducedMotion: "reduce" | "no-preference" = "no-preference") => {
+        const context = await browser.newContext({
+          viewport: { width: 1280, height: 800 },
+          reducedMotion,
+        });
+        const page = await context.newPage();
+        const errors: string[] = [];
+        page.on("pageerror", (error) => errors.push(error.message));
+        await page.goto(url);
+        return { context, page, errors };
+      };
+      const stateIs = (name: string) =>
+        `document.querySelector("[data-sheet]").dataset.dragState === "${name}"`;
+      const read = `({ state: document.querySelector("[data-sheet]").dataset.dragState,
+        top: place()[1] - 100, dismissed: log.dismissed, last: log.progress.at(-1), calls: log.progress.length,
+        transform: document.querySelector("[data-sheet]").style.transform })`;
+      type Read = {
+        state: string;
+        top: number;
+        dismissed: number;
+        last: number;
+        calls: number;
+        transform: string;
+      };
+      const play = (steps: unknown[]) => `play(${JSON.stringify(steps)})`;
+
+      // (a) to (e2), on one page: each ends where it began.
+      const one = await open();
+      const at = async (script: string) => {
+        await one.page.evaluate(script);
+        return one.page.evaluate<Read>(read);
+      };
+      expect((await one.page.evaluate<Read>(read)).state).toBe("rest");
+      // (a) under the threshold nothing moves.
+      let now = await at(play([press(), ...moves([10, 6])]));
+      expect([now.state, now.top, now.transform]).toEqual(["rest", 0, ""]);
+      // (b) past it the element follows one to one, from the point of commitment.
+      now = await at(play(moves([20, 40])));
+      expect(now.state).toBe("dragging");
+      expect(Math.abs(now.top - 30)).toBeLessThanOrEqual(1);
+      now = await at(play(moves([30, 70])));
+      expect(Math.abs(now.top - 60)).toBeLessThanOrEqual(1);
+      // (c) a second pointer changes nothing.
+      now = await at(
+        play([
+          ["pointerdown", 35, 0, { id: 2 }],
+          ["pointermove", 40, 170, { id: 2 }],
+          ["pointerup", 45, 170, { id: 2 }],
+        ]),
+      );
+      expect(now.state).toBe("dragging");
+      expect(Math.abs(now.top - 60)).toBeLessThanOrEqual(1);
+      // (e) the browser cancels the pointer: back to rest, nothing dismissed.
+      await one.page.evaluate(play([["pointercancel", 50, 70]]));
+      await one.page.waitForFunction(stateIs("rest"));
+      now = await one.page.evaluate<Read>(read);
+      expect([now.top, now.transform, now.dismissed, now.last]).toEqual([0, "", 0, 0]);
+      // (d) against the direction of dismissal: the band's value, by the row's own arithmetic.
+      now = await at(play([press(100), ...moves([110, -110])]));
+      const band = (100 * 300 * 0.55) / (300 + 0.55 * 100);
+      expect(band).toBeGreaterThan(40);
+      expect(band).toBeLessThan(60);
+      expect(Math.abs(now.top + band)).toBeLessThanOrEqual(1);
+      // (e2) the capture is lost: back to rest.
+      await one.page.evaluate(play([["lostpointercapture", 120, -110]]));
+      await one.page.waitForFunction(stateIs("rest"));
+      now = await one.page.evaluate<Read>(read);
+      expect([now.top, now.transform, now.dismissed]).toEqual([0, "", 0]);
+      // (k) a press on a control inside moves nothing.
+      now = await at(
+        `(() => { const inner = document.querySelector("[data-sheet-close]");
+          fire("pointerdown", 200, 0, { target: inner }); fire("pointermove", 210, 60, { target: inner });
+          fire("pointerup", 220, 60, { target: inner }); })()`,
+      );
+      expect([now.state, now.top, now.transform]).toEqual(["rest", 0, ""]);
+      // (o) the sideways element follows a sideways travel and ignores a vertical one.
+      const sideAt = (script: string) =>
+        one.page.evaluate<number[]>(`(() => { ${script}; return place(side); })()`);
+      let side = await sideAt(
+        `fire("pointerdown", 300, 0, { target: side }); fire("pointermove", 310, 80, { target: side })`,
+      );
+      expect(side).toEqual([400, 100]);
+      side = await sideAt(`fire("pointermove", 320, 80, { target: side, sideways: 50 })`);
+      expect(Math.abs((side[0] ?? 0) - 440)).toBeLessThanOrEqual(1);
+      expect(side[1]).toBe(100);
+      expect(one.errors).toEqual([]);
+      await one.context.close();
+
+      // (f) to (h2): the table's gestures, each on a page of its own, every end collected so that
+      // one run shows each gesture that ended wrong.
+      const ended: Record<string, string> = {};
+      const expected: Record<string, string> = {};
+      for (const [name, gesture] of Object.entries(GESTURES)) {
+        const run = await open();
+        // (m) before the release: a call for each move past the threshold, from the moves alone.
+        const up = gesture.steps.findIndex(([type]) => type === "pointerup");
+        await run.page.evaluate(play(gesture.steps.slice(0, up)));
+        const past = gesture.steps.filter(
+          ([type, , travel]) => type === "pointermove" && travel >= 10,
+        );
+        const calls = (await run.page.evaluate<Read>(read)).calls;
+        await run.page.evaluate(play(gesture.steps.slice(up)));
+        await run.page.waitForFunction(
+          `["rest", "dismissed"].includes(document.querySelector("[data-sheet]").dataset.dragState)`,
+        );
+        const end = await run.page.evaluate<Read>(read);
+        ended[name] = `${end.state}, ${calls} calls before the release`;
+        expected[name] = `${gesture.ends}, ${past.length} calls before the release`;
+        const gone = end.state === "dismissed";
+        expect(end.dismissed, name).toBe(gone ? 1 : 0);
+        expect(end.last, name).toBe(gone ? 1 : 0);
+        expect(end.top, name).toBe(gone ? 300 : 0);
+        expect(run.errors, name).toEqual([]);
+        await run.context.close();
+      }
+      expect(ended).toEqual(expected);
+
+      // (i) the button beside the element does the same with no drag.
+      const button = await open();
+      await button.page.evaluate(`document.querySelector("[data-sheet-close]").click()`);
+      await button.page.waitForFunction(stateIs("dismissed"));
+      expect((await button.page.evaluate<Read>(read)).dismissed).toBe(1);
+      await button.context.close();
+
+      // (j) reduced motion: the end is set in the release's own task.
+      const reduced = await open("reduce");
+      const atOnce = await reduced.page.evaluate<Read>(
+        `(${play(GESTURES["(h) far and still"]?.steps ?? [])}, ${read})`,
+      );
+      expect([atOnce.state, atOnce.top, atOnce.dismissed]).toEqual(["dismissed", 300, 1]);
+      await reduced.context.close();
+
+      // (l) caught while it settles: pressed in the release's own task, it stays where it is,
+      // and the drag goes on from there.
+      const caught = await open();
+      const held = await caught.page.evaluate<Read>(
+        `(${play(GESTURES["(h2) short and still"]?.steps ?? [])}, fire("pointerdown", 2000, 100), ${read})`,
+      );
+      expect(held.state).toBe("dragging");
+      expect(Math.abs(held.top - 90)).toBeLessThanOrEqual(1);
+      await caught.page.evaluate(
+        "new Promise((done) => { let n = 0; const tick = () => (++n === 5 ? done() : requestAnimationFrame(tick)); requestAnimationFrame(tick); })",
+      );
+      const after = await caught.page.evaluate<Read>(read);
+      expect(after.state).toBe("dragging");
+      expect(Math.abs(after.top - held.top)).toBeLessThanOrEqual(0.5);
+      const further = await caught.page.evaluate<Read>(`(fire("pointermove", 2010, 120), ${read})`);
+      expect(Math.abs(further.top - held.top - 20)).toBeLessThanOrEqual(1);
+      await caught.context.close();
+
+      // (l2) a drag caught again forgets the samples of the drag before it: pulled out fast and let go
+      // while it still goes out, so a dismissal starts; caught, moved once and released, its speed
+      // is that one move's, nought.
+      const again = await open();
+      await again.page.evaluate(
+        play([
+          press(),
+          ...moves([10, 10], [20, 130], [30, 100]),
+          release(30, 100),
+          ["pointerdown", 30, 100],
+          ["pointermove", 40, 120],
+          release(40, 120),
+        ]),
+      );
+      await again.page.waitForFunction(
+        `["rest", "dismissed"].includes(document.querySelector("[data-sheet]").dataset.dragState)`,
+      );
+      expect((await again.page.evaluate<Read>(read)).state).toBe("rest");
+      await again.context.close();
+
+      // (n) the browser's own mouse: taken far to the side of the element's box, where no event
+      // would reach the element, it still follows along its axis, which only a captured pointer
+      // gives. (Along the axis alone the element stays under the mouse and proves nothing.)
+      const real = await open();
+      await real.page.mouse.move(150, 150);
+      await real.page.mouse.down();
+      await real.page.mouse.move(150, 190, { steps: 4 });
+      const near = await real.page.evaluate<Read>(read);
+      expect(near.state).toBe("dragging");
+      expect(Math.abs(near.top - 30)).toBeLessThanOrEqual(1);
+      await real.page.mouse.move(1000, 250, { steps: 8 });
+      const far = await real.page.evaluate<Read>(read);
+      expect(far.state).toBe("dragging");
+      expect(Math.abs(far.top - 90)).toBeLessThanOrEqual(1);
+      await real.page.mouse.up();
+      await real.page.waitForFunction(
+        `["rest", "dismissed"].includes(document.querySelector("[data-sheet]").dataset.dragState)`,
+      );
+      // The browser's own loss of the capture after a release undoes nothing: the state and the
+      // count of dismissals agree.
+      const let_go = await real.page.evaluate<Read>(read);
+      expect(let_go.dismissed).toBe(let_go.state === "dismissed" ? 1 : 0);
+      expect(real.errors).toEqual([]);
+
+      // (p) a pointer let go outside the element before the drag committed never told the
+      // element: a mouse that then only hovers over it drags nothing, and the next press drags.
+      const stale = await open();
+      await stale.page.mouse.move(150, 150);
+      await stale.page.mouse.down();
+      await stale.page.mouse.move(1000, 154, { steps: 4 });
+      await stale.page.mouse.up();
+      expect((await stale.page.evaluate<Read>(read)).state).toBe("rest");
+      // Back over the element with no button down: it must not follow a mouse that only hovers.
+      // The first such move ends the kept drag by a settle from nothing, so the row waits for rest.
+      await stale.page.mouse.move(150, 150);
+      await stale.page.mouse.move(150, 200, { steps: 5 });
+      await stale.page.waitForFunction(stateIs("rest"));
+      const hovered = await stale.page.evaluate<Read>(read);
+      expect([hovered.state, hovered.top, hovered.transform]).toEqual(["rest", 0, ""]);
+      await stale.page.mouse.move(150, 150);
+      await stale.page.mouse.down();
+      await stale.page.mouse.move(150, 190, { steps: 4 });
+      const taken = await stale.page.evaluate<Read>(read);
+      expect(taken.state).toBe("dragging");
+      expect(Math.abs(taken.top - 30)).toBeLessThanOrEqual(1);
+      await stale.page.mouse.up();
+      expect(stale.errors).toEqual([]);
+      await stale.context.close();
+
+      // (q) destroyed, the element hears nothing more.
+      const off = await open();
+      const dead = await off.page.evaluate<Read>(
+        `(drag.destroy(), ${play([press(), ...moves([10, 40], [20, 70])])}, ${read})`,
+      );
+      expect([dead.state, dead.top, dead.transform]).toEqual(["rest", 0, ""]);
+      await off.context.close();
+
+      // (q2) destroyed while it settles: at rest at once, and five frames later still there.
+      const mid = await open();
+      const cut = await mid.page.evaluate<Read>(
+        `(${play(GESTURES["(h2) short and still"]?.steps ?? [])}, drag.destroy(), ${read})`,
+      );
+      expect([cut.state, cut.top, cut.transform]).toEqual(["rest", 0, ""]);
+      await mid.page.evaluate(
+        "new Promise((done) => { let n = 0; const tick = () => (++n === 5 ? done() : requestAnimationFrame(tick)); requestAnimationFrame(tick); })",
+      );
+      const later = await mid.page.evaluate<Read>(read);
+      expect([later.state, later.top, later.transform]).toEqual(["rest", 0, ""]);
+      await mid.context.close();
+      await real.context.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  120_000,
+);
+
+live(
+  "gestures AC-6: where the media query's list has no addEventListener the page loads and a move still obeys a change of the setting, the menu's text says its loop runs once (the element that loses its box is a case of the layout move's own row)",
+  async () => {
+    if (!browser) return;
+    expect(piece(5).text).toContain("runs once at load");
+    expect(piece(10).js).toContain("addListener");
+    const dir = mkdtempSync(join(tmpdir(), "crew-old-"));
+    try {
+      writeFileSync(join(dir, "index.html"), pageOf());
+      const context = await browser.newContext({ reducedMotion: "no-preference" });
+      // A browser of before the list was an event target: the method is gone before any script.
+      await context.addInitScript(
+        'Object.defineProperty(MediaQueryList.prototype, "addEventListener", { value: undefined });',
+      );
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await page.goto(pathToFileURL(join(dir, "index.html")).href);
+      expect(
+        await page.evaluate<string>(
+          "typeof matchMedia('(prefers-reduced-motion: reduce)').addEventListener",
+        ),
+      ).toBe("undefined");
+      const moved = (left: number) => `(() => {
+        const box = document.getElementById("box");
+        flip([box], () => { box.style.left = "${left}px"; });
+        const count = box.getAnimations().length;
+        box.getAnimations().forEach((a) => a.finish());
+        return count;
+      })()`;
+      expect(await page.evaluate<number>(moved(200))).toBe(1);
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.waitForFunction("matchMedia('(prefers-reduced-motion: reduce)').matches");
+      await page.evaluate(FRAMES);
+      expect(await page.evaluate<number>(moved(300))).toBe(0);
+      expect(errors).toEqual([]);
+      await context.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+  60_000,
 );

@@ -3207,6 +3207,141 @@
    "text": "one set of skills asks for it on every moving element",
    "proof": "frontend-motion.test.ts",
    "note": "read at aed9cfd, gsap-performance/SKILL.md; a party to the disagreement, its rule is not taken"
+  },
+  {
+   "source": "platform-pages",
+   "rule": "motion: Whatever a drag does, a single pointer can do without dragging (2.5.7)",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Whatever a drag does, a single pointer can do without dragging (2.5.7)",
+   "proof": "frontend-motion.test.ts",
+   "note": "WCAG 2.2, 2.5.7, cited at its Understanding page, opened on 2026-11-19; no text taken"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: While the pointer is down the element follows it one to one, with no c",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "While the pointer is down the element follows it one to one, with no curve and no spring",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A release is finished by a spring that starts from the hand's speed, n",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A release is finished by a spring that starts from the hand's speed, never by a keyframe animation",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A release dismisses by distance or by speed, never by distance alone",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A release dismisses by distance or by speed, never by distance alone",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A thing on its way out can be caught and dragged back",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A thing on its way out can be caught and dragged back",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Past its limit a drag meets resistance and not a wall",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Past its limit a drag meets resistance and not a wall",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: What moves with a drag is computed from the drag's progress, one sourc",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "What moves with a drag is computed from the drag's progress, one source",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A thing is dismissed along the axis it entered on",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A thing is dismissed along the axis it entered on",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The dragged element's own transform is written at each event, and no c",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The dragged element's own transform is written at each event, and no component state is set",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The element's `touch-action` names the axis the drag owns",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "The element's `touch-action` names the axis the drag owns",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Under reduced motion following the pointer stays, and the fling and th",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "Under reduced motion following the pointer stays, and the fling and the bounce go",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: A drag built for the page comes after the project's own component and",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/SKILL.md",
+   "text": "A drag built for the page comes after the project's own component and the browser's own scrolling",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, gestures/SKILL.md; restated; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The landing of a release is its place plus its speed projected with a",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/references/gestures.md",
+   "text": "The landing of a release is its place plus its speed projected with a deceleration of 0.998",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, apple-design/SKILL.md and gestures/SKILL.md; the formula and the figure kept as the source's, which gives them at second hand; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: Past its limit a drag is resisted by a band with a constant of 0.55",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/references/gestures.md",
+   "text": "Past its limit a drag is resisted by a band with a constant of 0.55",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, apple-design/SKILL.md and gestures/SKILL.md; the formula and the figure kept as the source's, which gives them at second hand; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "motion: The drag below commits after 10 px, and dismisses past 0.4 of the elem",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-frontend-motion/references/gestures.md",
+   "text": "The drag below commits after 10 px, and dismisses past 0.4 of the element's size",
+   "proof": "frontend-motion.test.ts",
+   "note": "read at 64eb3de, apple-design/SKILL.md and gestures/SKILL.md; the formula and the figure kept as the source's, which gives them at second hand; inside D-1 of item 2026-11-19-001, the session's reading"
   }
  ]
 }
