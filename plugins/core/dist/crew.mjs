@@ -659,6 +659,55 @@ function gitTry(root, args) {
     return null;
   }
 }
+var gitFailure = null;
+var GIT_SAID_MAX = 200;
+var CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g;
+function saidLine(text) {
+  const lines = text.split(`
+`).map((l) => l.replace(/\t/g, " ").replace(CONTROL_CHARACTERS, "").trim()).filter((l) => l !== "");
+  const line = lines.find((l) => /^(?:fatal|error):/.test(l)) ?? lines[0] ?? "";
+  const letters = [...line];
+  return letters.length > GIT_SAID_MAX ? `${letters.slice(0, GIT_SAID_MAX).join("")}…` : line;
+}
+function failedHow(error) {
+  const e = error;
+  if (typeof e.code === "string")
+    return e.code;
+  if (typeof e.signal === "string")
+    return `killed by ${e.signal}`;
+  if (typeof e.status === "number")
+    return `exit ${e.status}`;
+  return saidLine(typeof e.message === "string" ? e.message : String(error));
+}
+function gitTryNoting(root, args) {
+  try {
+    return gitOut(root, args);
+  } catch (first) {
+    if (gitFailure !== null)
+      return null;
+    const command = `git ${args.join(" ")}`;
+    try {
+      execFileSync2("git", args, {
+        cwd: root,
+        env: { ...process.env, LC_ALL: "C" },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: GIT_OUTPUT_BYTES
+      });
+      gitFailure = `${command}: ${failedHow(first)}; it answered when asked again`;
+    } catch (second) {
+      const stderr = second.stderr;
+      const said = saidLine(typeof stderr === "string" ? stderr : "");
+      gitFailure = `${command}: ${said || failedHow(first)}`;
+    }
+    return null;
+  }
+}
+function takeGitFailure() {
+  const note = gitFailure;
+  gitFailure = null;
+  return note;
+}
 function gitShowFile(root, commit, rel) {
   return gitTry(root, ["show", `${commit}:${rel}`]);
 }
@@ -724,17 +773,18 @@ function trackedPaths(root, pathspec) {
 function gitChangedPaths(root) {
   try {
     return gitStatusEntries(root).map((e) => e.path);
-  } catch {
+  } catch (error) {
+    gitFailure ??= `git status: ${saidLine(error instanceof Error ? error.message : String(error))}`;
     return null;
   }
 }
 function untrackedPaths(root) {
-  const out = gitTry(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  const out = gitTryNoting(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
   return out === null ? null : out.split("\x00").filter(Boolean);
 }
 var HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 function gitChangedSince(root, base) {
-  const diff = gitTry(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]);
+  const diff = gitTryNoting(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]);
   const untracked = untrackedPaths(root);
   if (diff === null || untracked === null)
     return null;
@@ -16470,11 +16520,14 @@ function pairRefusal(criterionId, step, entry, command) {
   return null;
 }
 function baselineRefusal(paths, profile, work, criterionId) {
+  takeGitFailure();
   const changed = changedWatchedPaths(paths.root, profile, work).filter((p) => !matchesAny(p, TEST_PATTERNS));
+  const failure = takeGitFailure();
   if (!changed.length)
     return null;
   const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
-  return `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`;
+  const told = failure ? `; git could not answer, so every watched file was counted (${failure})` : "";
+  return `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}${told}`;
 }
 async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason, say) {
   const asked = criterionRefusal(work, criterionId, step, reason);

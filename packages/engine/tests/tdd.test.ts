@@ -263,7 +263,7 @@ test("SP3-T1 AC-3 (finding 79): a before is refused, naming the paths, when a wa
   write(root, "src/y.mjs", "a\n");
   write(root, "tests/x.test.mjs", "the red test of a behaviour criterion\n");
   const early = await recordTdd(paths, work, evidence, profile, preserve.id, "before");
-  expect(early.ok).toBe(true);
+  expect(early.ok, early.ok ? "" : early.message).toBe(true);
   if (early.ok) early.apply(evidence);
   expect(evidence.tdd[0]?.before?.exit).toBe(0);
 });

@@ -43,6 +43,82 @@ function gitTry(root: string, args: string[]): string | null {
   }
 }
 
+/**
+ * The one note of a git command that failed while the change was being listed (finding 249): the
+ * command and why. Read by `takeGitFailure` and by nothing else. It is the first failure since the
+ * last take: while it stands no later failure is noted and git is not asked again for one, so a
+ * caller that takes no note (the Stop hook, the gate) pays one second ask and no more, and the one
+ * caller that reads it clears it before it lists.
+ */
+let gitFailure: string | null = null;
+const GIT_SAID_MAX = 200;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what goes
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g;
+
+/**
+ * One line fit for a message: git's `fatal:` or `error:` line where it wrote one (a warning or a
+ * hint may stand before it), else its first line that says anything; a tab as a space, the other
+ * control characters out, cut at a length with a mark.
+ */
+function saidLine(text: string): string {
+  const lines = text
+    .split("\n")
+    .map((l) => l.replace(/\t/g, " ").replace(CONTROL_CHARACTERS, "").trim())
+    .filter((l) => l !== "");
+  const line = lines.find((l) => /^(?:fatal|error):/.test(l)) ?? lines[0] ?? "";
+  const letters = [...line];
+  return letters.length > GIT_SAID_MAX ? `${letters.slice(0, GIT_SAID_MAX).join("")}…` : line;
+}
+
+/** Why a command could not be run or ended badly, in few words: its code, its signal or its status. */
+function failedHow(error: unknown): string {
+  const e = error as { code?: unknown; signal?: unknown; status?: unknown; message?: unknown };
+  if (typeof e.code === "string") return e.code;
+  if (typeof e.signal === "string") return `killed by ${e.signal}`;
+  if (typeof e.status === "number") return `exit ${e.status}`;
+  return saidLine(typeof e.message === "string" ? e.message : String(error));
+}
+
+/**
+ * `gitTry` for the commands that list the change. The command runs as it always did and its first
+ * answer is the engine's. Only when it fails, and no note stands yet, is it asked once more, in the
+ * same way but with its stderr read, to learn why: git's own line, how it failed where git wrote
+ * nothing, or that it answered the second time, which is what a fault that passes looks like. The
+ * second answer is never used.
+ */
+function gitTryNoting(root: string, args: string[]): string | null {
+  try {
+    return gitOut(root, args);
+  } catch (first) {
+    // A note already stands: the first failure of a listing is the one kept, and git is not
+    // asked again for the ones after it.
+    if (gitFailure !== null) return null;
+    const command = `git ${args.join(" ")}`;
+    try {
+      execFileSync("git", args, {
+        cwd: root,
+        env: { ...process.env, LC_ALL: "C" },
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        maxBuffer: GIT_OUTPUT_BYTES,
+      });
+      gitFailure = `${command}: ${failedHow(first)}; it answered when asked again`;
+    } catch (second) {
+      const stderr = (second as { stderr?: unknown }).stderr;
+      const said = saidLine(typeof stderr === "string" ? stderr : "");
+      gitFailure = `${command}: ${said || failedHow(first)}`;
+    }
+    return null;
+  }
+}
+
+/** The note of the first git command that failed while the change was listed, taken and cleared. */
+export function takeGitFailure(): string | null {
+  const note = gitFailure;
+  gitFailure = null;
+  return note;
+}
+
 /** A file's content at a commit, or null when the commit or the path is not there. */
 export function gitShowFile(root: string, commit: string, rel: string): string | null {
   return gitTry(root, ["show", `${commit}:${rel}`]);
@@ -140,14 +216,17 @@ export function trackedPaths(root: string, pathspec: string[]): Set<string> | nu
 export function gitChangedPaths(root: string): string[] | null {
   try {
     return gitStatusEntries(root).map((e) => e.path);
-  } catch {
+  } catch (error) {
+    // The status reader says why in its own error: git's first line, read with its stderr.
+    // The same rule as `gitTryNoting`, in one word: the first failure since the last take is kept.
+    gitFailure ??= `git status: ${saidLine(error instanceof Error ? error.message : String(error))}`;
     return null;
   }
 }
 
 /** Null when git could not run. */
 export function untrackedPaths(root: string): string[] | null {
-  const out = gitTry(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  const out = gitTryNoting(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
   return out === null ? null : out.split("\0").filter(Boolean);
 }
 
@@ -156,7 +235,7 @@ export const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 
 /** Paths that differ from a base commit, committed since or not, plus untracked files. Null when git could not run. */
 export function gitChangedSince(root: string, base: string): string[] | null {
-  const diff = gitTry(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]);
+  const diff = gitTryNoting(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]);
   const untracked = untrackedPaths(root);
   if (diff === null || untracked === null) return null;
   return [...new Set([...diff.split("\0").filter(Boolean), ...untracked])].sort();

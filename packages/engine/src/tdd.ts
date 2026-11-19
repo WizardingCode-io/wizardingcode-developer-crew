@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { proposedByPack } from "./detect/index.ts";
-import { changedWatchedPaths } from "./fingerprint.ts";
+import { changedWatchedPaths, takeGitFailure } from "./fingerprint.ts";
 import { nowIso } from "./fs.ts";
 import { gateTimeoutMs } from "./gates.ts";
 import { matchesAny } from "./glob.ts";
@@ -251,12 +251,18 @@ function baselineRefusal(
   work: WorkItem,
   criterionId: string,
 ): string | null {
+  // A note left by a caller that takes none is not this refusal's (finding 249).
+  takeGitFailure();
   const changed = changedWatchedPaths(paths.root, profile, work).filter(
     (p) => !matchesAny(p, TEST_PATTERNS),
   );
+  const failure = takeGitFailure();
   if (!changed.length) return null;
   const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
-  return `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`;
+  const told = failure
+    ? `; git could not answer, so every watched file was counted (${failure})`
+    : "";
+  return `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}${told}`;
 }
 
 export async function recordTdd(
