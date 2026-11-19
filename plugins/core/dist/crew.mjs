@@ -3844,7 +3844,7 @@ var WRAPPERS = [
 ];
 
 // packages/engine/src/version.ts
-var VERSION = "0.27.0";
+var VERSION = "0.28.0";
 function compareVersions(a, b) {
   const x = a.split(".").map(Number);
   const y = b.split(".").map(Number);
