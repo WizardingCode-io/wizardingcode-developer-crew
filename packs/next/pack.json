@@ -1,8 +1,8 @@
 {
   "name": "wizardingcode-pack-next",
-  "version": "0.26.2",
+  "version": "0.27.0",
   "kind": "stack",
-  "core": ">=0.26.2",
+  "core": ">=0.27.0",
   "verifiedAgainst": {
     "next": "16.x",
     "vitest": "5.0.5",
