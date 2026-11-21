@@ -177,6 +177,8 @@ export interface Target {
   tags?: string[];
   /** Gates the user removed with `crew profile unset` (finding 87): a `test` listed here is not planned for the target. */
   unset?: GateName[];
+  /** The frameworks the target's own manifest shows, ids of `FRAMEWORKS` in its order (item 2026-11-21-003): the detection's, replaced at each one. */
+  frameworks?: string[];
 }
 
 /**

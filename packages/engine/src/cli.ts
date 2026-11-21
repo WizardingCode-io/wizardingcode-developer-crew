@@ -103,6 +103,7 @@ import {
   ENVIRONMENT_TIMEOUT_MS,
   type EnvironmentCommand,
 } from "./detect/environment.ts";
+import { frameworksLine } from "./detect/frameworks.ts";
 import { commandText, detectProfile, missingTestCommands } from "./detect/index.ts";
 import {
   checkHealth,
@@ -1097,7 +1098,7 @@ function profileView(env: Env, profile: Profile): Outcome {
     ];
     return `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${
       commands.join(", ") || "no commands"
-    }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}`;
+    }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}${frameworksLine(t)}`;
   });
   if (profile.ui) lines.push(`  ${uiLine(profile.ui)}`);
   if (profile.browser) lines.push(`  ${shown("browser: devtools", profile.browser.devtools)}`);

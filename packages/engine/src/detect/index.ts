@@ -6,6 +6,7 @@ import { findBrowser, onPath } from "../pdf.ts";
 import { SKIP_DIRS } from "../skip-dirs.ts";
 import type { Environment, GateCommand, GateName, Profile, Target } from "../types.ts";
 import { confirmedEnvironment, detectEnvironment, environmentChanges } from "./environment.ts";
+import { frameworksOf } from "./frameworks.ts";
 import { goDetector } from "./go.ts";
 import { nodeDetector } from "./node.ts";
 import { phpDetector } from "./php.ts";
@@ -163,6 +164,9 @@ export function detectTargets(root: string, rules: readonly PackRule[] = []): Ta
             }
           : {}),
       };
+      // What the target's own manifest shows of the frameworks the engine knows: the detection's, no person's.
+      const frameworks = frameworksOf(dir, found.stack);
+      if (frameworks.length) target.frameworks = frameworks;
       targets.push(target);
       if (found.workspaces) workspaces.set(target, found.workspaces);
     }
@@ -228,8 +232,11 @@ export function mergeProfile(
     }
     for (const old of previous.targets) {
       const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
-      if (!found && Object.values(old.gates).some(theirs))
-        targets.push({ ...old, gates: { ...old.gates } });
+      if (!found && Object.values(old.gates).some(theirs)) {
+        // Kept for the person's command; its manifest is gone, so nothing shows a framework any more.
+        const { frameworks: _gone, ...kept } = old;
+        targets.push({ ...kept, gates: { ...old.gates } });
+      }
     }
   }
   // The environment the user confirmed outlives the detection whole, as a confirmed gate does;
@@ -316,6 +323,10 @@ export function profileChanges(previous: Profile, next: Profile): string[] {
     }
     for (const gate of Object.keys(old.gates) as GateName[])
       if (!target.gates[gate]) lines.push(`${gate} (${target.path}): removed`);
+    // The ids are the fresh detection's: nothing of the earlier list is printed.
+    const shown = target.frameworks ?? [];
+    if ((old.frameworks ?? []).join("\n") !== shown.join("\n"))
+      lines.push(`frameworks of ${target.path}: ${shown.length ? shown.join(", ") : "none"}`);
   }
   for (const old of previous.targets)
     if (!next.targets.some((t) => same(t, old)))

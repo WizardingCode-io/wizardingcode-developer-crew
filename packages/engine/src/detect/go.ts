@@ -6,8 +6,8 @@ import type { DetectedTarget, Detector } from "./types.ts";
 const GOLANGCI = [".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json"];
 
 /**
- * A Go module: a folder whose `go.mod` is a regular file. The file is a marker and its text is
- * never read. The gates are the toolchain's own; the build is the compiler's check, so there is no
+ * A Go module: a folder whose `go.mod` is a regular file. The file is a marker here: this detector
+ * does not read its text (the frameworks' reader does, for the module paths it requires). The gates are the toolchain's own; the build is the compiler's check, so there is no
  * type check gate, and `go test` takes packages, so there is no scoped test. A `go.work` is not
  * read: each module it uses has its own `go.mod` and is a target of its own.
  */

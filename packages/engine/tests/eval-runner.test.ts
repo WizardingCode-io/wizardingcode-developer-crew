@@ -584,7 +584,15 @@ Object.assign(SCAFFOLD_STATE, {
       file: ".crew/profile.json",
       pattern: CORE_GATE("typecheck", "vendor/bin/phpstan analyse --no-progress", "detected"),
     },
-    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"laravel")[\s\S]*$/ },
+    // 2026-11-21-003 edits this assertion: with no pack registered the profile holds no pack's
+    // command and no pack's tag, which the word "laravel" used to stand for; the core itself now
+    // writes the framework its composer.json shows, and that is the one place the word may be.
+    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"tags")[\s\S]*$/ },
+    {
+      file: ".crew/profile.json",
+      pattern:
+        /^(?:(?!"laravel")[\s\S])*"frameworks": \[\s*"laravel"\s*\](?:(?!"laravel")[\s\S])*$/,
+    },
     { file: "packs/wizardingcode-pack-laravel.json", home: true, absent: true },
   ],
   // SP9 Task 13 (2026-10-28-006): the laravel pack's Blade pair. The tree adds a Dusk test case, a
@@ -630,9 +638,16 @@ Object.assign(SCAFFOLD_STATE, {
       file: ".crew/profile.json",
       pattern: /^(?![\s\S]*"test":\s*\{)(?![\s\S]*"e2e":\s*\{)[\s\S]*"lint":/,
     },
+    // 2026-11-21-003 edits this assertion, as it edits the one of `pack-laravel-absent`: no pack's
+    // command, no pack's tag, and the word "laravel" only as the framework the core itself shows.
     {
       file: ".crew/profile.json",
-      pattern: /^(?![\s\S]*"pack")(?![\s\S]*"laravel")(?![\s\S]*"dusk")[\s\S]*$/,
+      pattern: /^(?![\s\S]*"pack")(?![\s\S]*"tags")(?![\s\S]*"dusk")[\s\S]*$/,
+    },
+    {
+      file: ".crew/profile.json",
+      pattern:
+        /^(?:(?!"laravel")[\s\S])*"frameworks": \[\s*"laravel"\s*\](?:(?!"laravel")[\s\S])*$/,
     },
     { file: "packs/wizardingcode-pack-laravel.json", home: true, absent: true },
   ],
