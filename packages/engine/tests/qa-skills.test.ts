@@ -359,7 +359,10 @@ test(`${ITEM} AC-12: the build reference sends a session to the entry before its
   const at = paragraphs.indexOf(SENTENCE);
   expect(at).toBeGreaterThan(0);
   expect(paragraphs[at - 1]?.split("\n").at(-1)?.startsWith("5. ")).toBe(true);
-  expect(paragraphs[at + 1]?.startsWith("Use `-- <command>`")).toBe(true);
+  expect(paragraphs[at + 1]).toBe(
+    "Before a change to a pipeline, a deployment, an environment file or infrastructure code, read `wizardingcode-devops`: it sends each subject to the skill that holds the crew's rule for it.",
+  );
+  expect(paragraphs[at + 2]?.startsWith("Use `-- <command>`")).toBe(true);
   const claude = repoFile("CLAUDE.md")
     .split("\n")
     .filter((line) => line.includes("bun scripts/build-team-skills.ts"));
@@ -450,7 +453,9 @@ test(`${ITEM} AC-14: the script writes the five files and no other, writes a cha
       .sort();
   const held = () =>
     HOLDING.map(([skill]) => readFileSync(join(copy, SKILLS, skill, "sources.md"), "utf8"));
-  const build = () => spawnSync("bun", [script, "--root", copy], { encoding: "utf8" });
+  // The copy holds the QA team's folders alone, so each run asks for that team (item 2026-11-21-009).
+  const build = () =>
+    spawnSync("bun", [script, "--root", copy, "--team", "qa"], { encoding: "utf8" });
   const WROTE = HOLDING.map(([skill]) => `wrote ${SKILLS}/${skill}/sources.md`);
   const before = [listing(), held()];
   const first = build();
@@ -506,5 +511,7 @@ test(`${ITEM} AC-14: the script writes the five files and no other, writes a cha
   // An empty root is refused before anything is read.
   const none = spawnSync("bun", [script, "--root"], { encoding: "utf8" });
   expect(none.status).toBe(1);
-  expect(none.stderr.trim()).toBe("usage: bun scripts/build-team-skills.ts [--root <repository>]");
+  expect(none.stderr.trim()).toBe(
+    "usage: bun scripts/build-team-skills.ts [--root <repository>] [--team <team>]",
+  );
 });

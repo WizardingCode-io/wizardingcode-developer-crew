@@ -52,6 +52,44 @@ export const TEAM_SKILLS: Readonly<Partial<Record<TeamName, readonly TeamSkill[]
     },
     { skill: "wizardingcode-qa-evals", title: "Evals", subjects: ["Testing systems with AI"] },
   ],
+  devops: [
+    { skill: "wizardingcode-devops", title: "DevOps", subjects: [] },
+    {
+      skill: "wizardingcode-devops-pipelines",
+      title: "Pipelines",
+      subjects: ["Pipelines", "The pipeline's supply chain"],
+    },
+    {
+      skill: "wizardingcode-devops-secrets-identities",
+      title: "Secrets and identities",
+      subjects: ["Secrets", "Permissions and identities"],
+    },
+    {
+      skill: "wizardingcode-devops-environment-containers",
+      title: "Environment and containers",
+      subjects: ["Hosts", "Reproducibility", "The project's environment", "Containers and images"],
+    },
+    {
+      skill: "wizardingcode-devops-iac",
+      title: "Infrastructure as code",
+      subjects: ["Infrastructure as code", "Cost"],
+    },
+    {
+      skill: "wizardingcode-devops-deploy-rollback",
+      title: "Deploy and rollback",
+      subjects: [
+        "Rollback",
+        "Deployment strategies and releases",
+        "Platforms and hosting",
+        "Backups and disaster recovery",
+      ],
+    },
+    {
+      skill: "wizardingcode-devops-operation",
+      title: "Operation",
+      subjects: ["Observability and operation"],
+    },
+  ],
 };
 
 export type SkillSources =
