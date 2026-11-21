@@ -34,3 +34,14 @@ The engine's list of install forms is closed and holds no form that takes a comm
 - Rule 1's "installed at once" is read as "proposed at once", with the person's yes before the first line run, and that reading is the crew's. The user's own text says "installed at once"; the user may replace this decision with it.
 - The state of a row is read from the row's own words. A definition that calls a server unstable in other words than "experimental" and "release candidate" leaves its row ready until its team's rows are held to their states by a test, as the backend's are.
 - Only the backend's declaration has a project form, so only its rows have a state.
+
+## Amendment: the record (2026-11-21)
+
+Point 8 left the record undecided. Item 2026-11-21-007 adds it.
+
+- The file is `.crew/local/sources.json`: this machine's and this checkout's, under the folder git ignores and only the engine writes. It is not committed, since the yes of point 1 is each person's own: a colleague is asked on their own machine, and so are another machine and another worktree of the same checkout.
+- Two forms write it: `crew sources backend --installed <page>` once a ready row's lines ran, and `crew sources backend --declined <page>` after a no. Only a row the engine calls ready is recorded; a held row and a row in the project already are refused.
+- `crew sources backend --project` prints a recorded row's decision and day in place of `ready`, so a session does not present it again. A held row prints held whatever the record holds, and a row whose line changed since it was recorded is ready again and says so.
+- What a record is not: a record says what a session recorded and not that a line ran. Under `attendedDecisions: relay` the hook does not ask, so a record is no proof the person was asked. A record is not a yes: an `installed` entry lets no session run a line, since point 3 says no earlier session's answer is the yes.
+- With nobody watching the hook denies the record whatever its flags, and the command refuses --mode and `--validator`, so nothing is recorded. The hook fails open, and the command cannot tell whether a person is present: that nothing is recorded with nobody present rests on those two.
+- The file is under no hash. It is read as a regular file under a cap and against a strict shape, and never behind a folder that is a link; a file a person or a program changed reads as a record wherever it fits the shape, and the engine cannot tell it from its own. Such a record can only stop a ready row from being presented: it never shows a held row as installed and is never a yes.

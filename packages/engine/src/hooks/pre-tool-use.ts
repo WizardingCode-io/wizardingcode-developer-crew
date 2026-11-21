@@ -665,6 +665,8 @@ function userOnlyCommand(
     unreadable(verb) ||
     ((verb === "profile" || verb === "policy") && unreadable(second)) ||
     verb === "skip" ||
+    // A person's yes or no to an install is recorded by a person alone (ADR 0025).
+    (verb === "sources" && recordsSources(parsed)) ||
     verb === "approve" ||
     verb === "accept" ||
     verb === "decide" ||
@@ -817,6 +819,44 @@ function knowledgeUnmark(
     withMode: (mode) =>
       `Crew: a mark is removed by a person (${mode} mode); run the command without --mode so they are asked`,
     ask: "Crew: a mark is removed by a person: this command records their decision",
+  });
+}
+
+/**
+ * Whether a `sources` command records a person's yes or no to an install (ADR 0025): its words hold
+ * one of the two recording flags, or a word after the verb the hook cannot read (a positional, a
+ * flag's name or a flag's value), which may be either flag.
+ */
+function recordsSources(parsed: Parsed): boolean {
+  if (parsed.flags.installed !== undefined || parsed.flags.declined !== undefined) return true;
+  const unreadable = (word: string) => UNREADABLE_VERB.test(word);
+  return (
+    parsed.positional.slice(1).some(unreadable) ||
+    Object.entries(parsed.flags).some(
+      ([name, value]) => unreadable(name) || (typeof value === "string" && unreadable(value)),
+    )
+  );
+}
+
+/**
+ * `crew sources … --installed|--declined <page>` has no unattended form (ADR 0025: with nobody
+ * present nothing is installed, so nothing is recorded): where nobody watches it is denied whatever
+ * the flags, and with a person present the attended policy decides, `--validator` exempting
+ * nothing. Null for every other command.
+ */
+function sourcesRecorded(
+  parsed: Parsed,
+  permissionMode: string | undefined,
+  headless: boolean,
+  policy: Policy,
+): Decision | null {
+  if (parsed.positional[0] !== "sources" || !recordsSources(parsed)) return null;
+  return personOnly(parsed, permissionMode, headless, policy, {
+    unwatched: (where) =>
+      `Crew: no person is watching this session (${where}) and an install is recorded on a person's own yes or no: run it in a session a person watches; nothing is recorded until then.`,
+    withMode: (mode) =>
+      `Crew: a person is present (${mode} mode) and an install is recorded on their own yes or no: run the command without --mode`,
+    ask: "Crew: this command records the person's own yes or no to an install",
   });
 }
 
@@ -2301,6 +2341,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         specReviewSigned(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         journeySigned(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
+        sourcesRecorded(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy, {
           text: command,
           policyTampered: loadPolicy(ctx.paths).tampered,

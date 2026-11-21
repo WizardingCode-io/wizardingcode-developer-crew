@@ -16,7 +16,9 @@ import type { Profile, Target } from "../src/types.ts";
 import { cliIo, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 const ITEM = "2026-11-21-004";
-const USAGE = "usage: crew sources [<team> [<n>]] | crew sources backend --project";
+// 2026-11-21-007 edits this literal: the usage gained the two forms that record a row.
+const USAGE =
+  "usage: crew sources [<team> [<n>]] | crew sources backend --project | crew sources backend --installed <page> | crew sources backend --declined <page>";
 const NO_PROJECT =
   "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 const NO_TARGET =

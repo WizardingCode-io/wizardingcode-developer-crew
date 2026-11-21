@@ -433,7 +433,7 @@ import {
   teamLine,
   teamsFor,
 } from "./team.ts";
-import { sourcesCommand } from "./team-sources.ts";
+import { recordSourcesCommand, sourcesCommand } from "./team-sources.ts";
 import type {
   ChecklistRecord,
   Criterion,
@@ -656,7 +656,8 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
     "contract",
   ],
   mode: [],
-  sources: ["project"],
+  // `--mode` and `--validator` are known so that the command can refuse them in its own words.
+  sources: ["project", "installed", "declined", "mode", "validator"],
   config: [],
   version: [],
   help: [],
@@ -4565,13 +4566,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   // What each team was given is read from the plugin's own folder, and with --project the
   // project's manifests are read in memory, all before a project is resolved: nothing is loaded
   // or written, first-use records included, so it runs anywhere.
+  // The form that records a row (ADR 0025's amendment) writes, so it goes on to the project below.
   if (command === "sources") {
-    const answer = sourcesCommand(
-      pluginRoot(),
-      args,
-      parsed.flags.project === true ? { project: { cwd: io.cwd } } : {},
-    );
-    return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
+    if (parsed.flags.mode !== undefined || parsed.flags.validator !== undefined)
+      return refuse(
+        "an install is recorded on a person's own yes or no: crew sources takes no --mode or --validator",
+      );
+    if (parsed.flags.installed === undefined && parsed.flags.declined === undefined) {
+      const answer = sourcesCommand(
+        pluginRoot(),
+        args,
+        parsed.flags.project === true ? { project: { cwd: io.cwd } } : {},
+      );
+      return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
+    }
   }
   // launchd runs the tick from the root of the disk: it reads the user's journeys, not a repository.
   if (command === "journey" && args[0] === "tick")
@@ -5549,6 +5557,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "design":
       return designCommand(env, args, parsed);
+    case "sources": {
+      const answer = recordSourcesCommand(
+        pluginRoot(),
+        args,
+        parsed.flags,
+        io.cwd,
+        new Date().toISOString(),
+      );
+      return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
+    }
     case "spec-review":
       return specReviewCommand(env, args, parsed);
     case "journey":
@@ -7687,6 +7705,8 @@ const HELP = `crew ${VERSION}
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   sources [<team> [<n>]]                what each team was given (its sources, tools, servers and skills): the teams and their files, a team's index, or one section; installs nothing
   sources backend --project             the rows of the backend's per-stack table that are this project's, by the frameworks its manifests show; reads the project, writes nothing
+  sources backend --installed <page>    record that the person said yes to a ready row and its lines ran (asks the user; never with --mode or --validator)
+  sources backend --declined <page>     record that the person said no to a ready row (asks the user; never with --mode or --validator)
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

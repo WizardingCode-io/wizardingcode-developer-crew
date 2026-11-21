@@ -9,6 +9,13 @@ import { detectTargets } from "./detect/index.ts";
 import { TOOLS, toolIds } from "./detect/tools.ts";
 import { readRegular } from "./fs.ts";
 import { findRoot } from "./paths.ts";
+import {
+  readSourcesRecord,
+  recordSourceRow,
+  SOURCES_RECORD_NAME,
+  type SourceEntry,
+  sourcesPlaceRefused,
+} from "./sources-record.ts";
 import { TEAMS } from "./team.ts";
 import { CORE_STACKS, type Target, type TeamName } from "./types.ts";
 
@@ -31,7 +38,13 @@ export const DECLARATION_MAX_BYTES = 1024 * 1024;
 export const LAST_LINE =
   "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources backend --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
 
-const USAGE = "usage: crew sources [<team> [<n>]] | crew sources backend --project";
+const USAGE =
+  "usage: crew sources [<team> [<n>]] | crew sources backend --project | crew sources backend --installed <page> | crew sources backend --declined <page>";
+/** The one team whose declaration has a project form, and so a record. */
+const PROJECT_TEAM = "backend";
+/** What a form of a project answers where the folder is in none. */
+const NO_PROJECT =
+  "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 const FIRST_SECTION = "\n## 3. ";
 const LAST_SECTION = /^## \d+\. What the code needs, not decided here$/m;
 
@@ -428,12 +441,13 @@ function errorServiceRows(
     });
 }
 
-/** The targets of a project whose stack the declaration has rows for, detected in memory; null where the folder is in no project. */
-function projectTargets(cwd: string): Target[] | null {
+/** A project's root and its targets whose stack the declaration has rows for, detected in memory; null where the folder is in no project. */
+function detectedProject(cwd: string): { root: string; targets: Target[] } | null {
   const root = findRoot(cwd);
   if (root === null) return null;
   // No pack's rules: the stacks are the core's five, and nothing is loaded or saved.
-  return detectTargets(root).filter((target) => ROW_STACKS.includes(target.stack));
+  const targets = detectTargets(root).filter((target) => ROW_STACKS.includes(target.stack));
+  return { root, targets };
 }
 
 /** The lines that describe a project: its stacks with their frameworks, and its tools where it shows any. */
@@ -459,13 +473,45 @@ function describedProject(targets: readonly Target[]): string[] {
 /** A count with its word: `0 rows`, `1 row`, `2 rows`. */
 const rowsCount = (count: number) => `${count} row${count === 1 ? "" : "s"}`;
 
-/** The rows of a project under their headings, what was left out of the per-stack table, and what the command cannot tell. */
-function projectRowLines(declaration: string, targets: readonly Target[]): string[] {
+/** The day of an entry: the first ten characters of its time, which is its day in UTC. */
+const dayOf = (entry: SourceEntry) => entry.at.slice(0, 10);
+
+const sameLines = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((line, at) => line === b[at]);
+
+/** The entry a record holds for a row of the project team's, by the row's page. */
+function entryOf(entries: readonly SourceEntry[], row: ProjectRow): SourceEntry | undefined {
+  return entries.find((entry) => entry.team === PROJECT_TEAM && entry.page === row.cells[2]);
+}
+
+/**
+ * The lines printed after a row for its state, with the record: a ready row with an entry prints
+ * the entry's decision and day where its lines are the row's, and ready again, said, where they
+ * changed. A held row and a row in the project already print their state whatever the record holds.
+ */
+function stateLines(row: ProjectRow, entries: readonly SourceEntry[]): string[] {
+  const entry = row.install.state === "ready" ? entryOf(entries, row) : undefined;
+  if (entry === undefined) return installLines(row.install);
+  if (sameLines(entry.lines, installSpans(row.cells)))
+    return [`  install: ${entry.decision}, recorded on ${dayOf(entry)}`];
+  const [, ...notes] = installLines(row.install);
+  return [
+    `  install: ready, its line changed since it was recorded as ${entry.decision} on ${dayOf(entry)}`,
+    ...notes,
+  ];
+}
+
+/** The rows of a project under their headings, each with its state, what was left out of the per-stack table, and what the command cannot tell. */
+function projectRowLines(
+  declaration: string,
+  targets: readonly Target[],
+  entries: readonly SourceEntry[],
+): string[] {
   const rows = projectRows(declaration, targets);
   const of = (mark: RowMark) => rows.filter((row) => row.mark === mark);
   const orNone = (lines: string[]) => (lines.length ? lines : ["  none"]);
   const printed = (mark: RowMark) =>
-    orNone(of(mark).flatMap((row) => [declarationLine(row.line), ...installLines(row.install)]));
+    orNone(of(mark).flatMap((row) => [declarationLine(row.line), ...stateLines(row, entries)]));
   const held = installLines({ state: "held", reason: ERROR_SERVICE_HOLD });
   return [
     "rows for this project's frameworks:",
@@ -484,18 +530,93 @@ function projectRowLines(declaration: string, targets: readonly Target[]): strin
   ];
 }
 
-/** The lines of `crew sources backend --project`, after the declaration's path. The two short answers hold nothing of a project's rows. */
+/** The lines of `crew sources backend --project`, after the declaration's path. The two short answers hold nothing of a project's rows nor of its record. */
 function projectLines(declaration: string, cwd: string): string[] {
-  const targets = projectTargets(cwd);
-  if (targets === null)
-    return [
-      "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it",
-    ];
-  if (targets.length === 0)
+  const project = detectedProject(cwd);
+  if (project === null) return [NO_PROJECT];
+  if (project.targets.length === 0)
     return [
       `this project: no target of a stack the declaration has rows for (${ROW_STACKS.join(", ")})`,
     ];
-  return [...describedProject(targets), ...projectRowLines(declaration, targets)];
+  const record = readSourcesRecord(project.root);
+  return [
+    ...describedProject(project.targets),
+    ...projectRowLines(declaration, project.targets, record.entries),
+    ...(record.unread
+      ? [
+          `the record of installs (${SOURCES_RECORD_NAME}) could not be read as the engine writes it and was not read`,
+        ]
+      : []),
+  ];
+}
+
+/** The marks of the rows a project may record: its own, by a framework, a tool or its stack. */
+const OWN_MARKS: readonly RowMark[] = ["framework", "tool", "by stack"];
+const NOT_RECORDED = {
+  place: ".crew/local is not a folder of this project",
+  bounds: "the row does not fit the record's bounds",
+} as const;
+
+/**
+ * `crew sources backend --installed <page> | --declined <page>`: one row of the project's recorded
+ * by its page, at the time given. It refuses by the first case of the spec's table that holds, and
+ * a refusal prints no row and no character of the page given. `root` is the plugin's folder and
+ * `cwd` a folder of the project.
+ */
+export function recordSourcesCommand(
+  root: string,
+  args: readonly string[],
+  flags: Readonly<Record<string, string | boolean>>,
+  cwd: string,
+  at: string,
+): { code: number; text: string } {
+  const refuse = (text: string) => ({ code: 1, text });
+  // One of the two flags, and no more: which one is the decision, and its value the page.
+  if ((flags.installed === undefined) === (flags.declined === undefined)) return refuse(USAGE);
+  const decision = flags.installed === undefined ? "declined" : "installed";
+  const page = flags[decision];
+  if (typeof page !== "string" || page === "") return refuse(USAGE);
+  if (args.length !== 1 || flags.project !== undefined) return refuse(USAGE);
+  if (args[0] !== PROJECT_TEAM) return refuse("only the backend's declaration has a project form");
+  const read = readTeamDeclaration(root, PROJECT_TEAM);
+  if ("refused" in read) return refuse(read.refused);
+  const project = detectedProject(cwd);
+  // The command reaches here in a project; a caller with a folder in none is told so.
+  if (project === null) return refuse(NO_PROJECT);
+  if (sourcesPlaceRefused(project.root)) return refuse(`not recorded: ${NOT_RECORDED.place}`);
+  const row = projectRows(read.text, project.targets).find(
+    (candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page,
+  );
+  if (row === undefined)
+    return refuse(
+      "no row of this project is read at that page: crew sources backend --project prints the rows and their pages",
+    );
+  if (row.install.state === "held")
+    return refuse(`not recorded: the row is held, ${row.install.reason}`);
+  if (row.install.state === "in the project already")
+    return refuse("not recorded: the row is in the project already");
+  const recorded = recordSourceRow(
+    project.root,
+    { team: PROJECT_TEAM, page, decision, lines: installSpans(row.cells) },
+    at,
+  );
+  if (!recorded.ok) return refuse(`not recorded: ${NOT_RECORDED[recorded.why]}`);
+  return {
+    code: 0,
+    text: [
+      declarationLine(row.line),
+      `recorded: ${recorded.entry.decision} on ${dayOf(recorded.entry)}`,
+      ...(recorded.replaced
+        ? [`it replaces: ${recorded.replaced.decision} on ${dayOf(recorded.replaced)}`]
+        : []),
+      ...(recorded.notKept
+        ? [
+            `the record that stood (${SOURCES_RECORD_NAME}) could not be read as the engine writes it and was not kept`,
+          ]
+        : []),
+      LAST_LINE,
+    ].join("\n"),
+  };
 }
 
 /**

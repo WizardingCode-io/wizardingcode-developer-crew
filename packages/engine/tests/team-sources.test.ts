@@ -339,7 +339,9 @@ test(`${ITEM} AC-19: a name that is no team, a number that is no section and a t
   const third = await run("sources", "backend", "1", "2");
   expect(third.code).toBe(1);
   // 2026-11-21-004 edits this line: the usage gained the form of the project's rows.
-  expect(said(third)).toBe("usage: crew sources [<team> [<n>]] | crew sources backend --project");
+  expect(said(third)).toBe(
+    "usage: crew sources [<team> [<n>]] | crew sources backend --project | crew sources backend --installed <page> | crew sources backend --declined <page>",
+  );
   const flag = await run("sources", "backend", "--first", "PHP");
   expect(flag.code).toBe(1);
   expect(said(flag)).toContain("unknown flag --first for sources");
