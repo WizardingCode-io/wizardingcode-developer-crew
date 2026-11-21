@@ -24867,7 +24867,7 @@ ${row}
 // packages/engine/src/team-sources.ts
 import { join as join74 } from "node:path";
 var DECLARATION_MAX_BYTES = 1024 * 1024;
-var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names: the page is read again before the line is run, and who runs it is not decided yet.";
+var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources backend --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
 var USAGE = "usage: crew sources [<team> [<n>]] | crew sources backend --project";
 function cells(line) {
   return line.slice(1, line.endsWith("|") ? -1 : undefined).split("|").map((cell) => cell.trim());
@@ -24945,6 +24945,119 @@ function indexLine(section) {
   const tail = counts.length ? ` (${counts.join(", ")})` : "";
   return `${section.number}. ${section.level === 3 ? "  " : ""}${title}${tail}`;
 }
+var INSTALL_FORMS = [
+  { form: "composer require", note: "adds a dependency to the project's `composer.json`" },
+  {
+    form: "php artisan boost:install",
+    note: "runs Boost's installer in the project; it may add Laravel Herd's server, a held row: that part is declined"
+  },
+  { form: "vendor/bin/mate", note: "runs the project's own Mate binary" },
+  {
+    form: "npx skills add",
+    note: "downloads and runs the npm package `skills` first, which the row does not say is its publisher's"
+  },
+  { form: "npx --no-install drizzle-kit skills", note: "runs the project's own drizzle-kit" },
+  {
+    form: "uvx library-skills install",
+    note: "downloads and runs the PyPI package `library-skills` first, which the row does not say is its publisher's"
+  },
+  { form: "claude plugin marketplace add", note: "adds a marketplace to the person's Claude Code" },
+  {
+    form: "claude plugin install",
+    note: "installs a plugin, with any hooks it carries, into the person's Claude Code, for every project of theirs unless a scope is given"
+  }
+];
+var ERROR_SERVICE_HOLD = "it reaches production data with a credential";
+var HOLD = {
+  noCommand: "its row gives no command",
+  notStable: "not stable by its own row",
+  hosted: "hosted, so what a session asks leaves the machine",
+  value: "its line takes a value of the machine, a token or a key",
+  prompt: "its line is typed at Claude Code's prompt, which a session cannot do",
+  noForm: "its line is not one of the engine's install forms"
+};
+var COMPOSER_REQUIRE = "composer require";
+var NOT_STABLE_PHRASES = ["experimental", "release candidate"];
+var NOT_STABLE_TAG = /.@(?:rc|beta|alpha|next|canary)$/;
+var VALUE_MARKS = [
+  "$",
+  "{",
+  "<",
+  " -e ",
+  " -H ",
+  "--env",
+  "--header",
+  "--token",
+  "--api-key",
+  "--password"
+];
+var SHELL_MARKS = ["|", ";", "&", ">", `
+`];
+function installSpans(cells) {
+  return [...(cells.at(-1) ?? "").matchAll(/`([^`]*)`/g)].map((match) => match[1] ?? "");
+}
+function formOf(line) {
+  return INSTALL_FORMS.find(({ form }) => line === form || line.startsWith(`${form} `));
+}
+function holdOf(cells, lines) {
+  if (lines.length === 0)
+    return HOLD.noCommand;
+  const some = (test) => lines.some(test);
+  const said = (cell, phrase) => names2((cell ?? "").toLowerCase(), phrase);
+  if (cells.some((cell) => NOT_STABLE_PHRASES.some((phrase) => said(cell, phrase))) || some((line) => line.split(" ").some((word) => NOT_STABLE_TAG.test(word))))
+    return HOLD.notStable;
+  if (some((line) => line.includes("http://") || line.includes("https://")) || said(cells[1], "hosted"))
+    return HOLD.hosted;
+  if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark))))
+    return HOLD.value;
+  if (some((line) => line.startsWith("/")))
+    return HOLD.prompt;
+  return null;
+}
+function formsOf(lines) {
+  const forms = [];
+  for (const line of lines) {
+    const form = formOf(line);
+    if (form === undefined || SHELL_MARKS.some((mark) => line.includes(mark)))
+      return null;
+    if (!forms.includes(form))
+      forms.push(form);
+  }
+  return forms;
+}
+function onlyPackageOf(tool, stack) {
+  const signs = Object.hasOwn(tool.stacks, stack) ? tool.stacks[stack] : undefined;
+  if (!signs || signs.files?.length || signs.tables?.length)
+    return;
+  return signs.dependencies?.length === 1 ? signs.dependencies[0] : undefined;
+}
+function requiresShown(line, stack, shown) {
+  if (formOf(line)?.form !== COMPOSER_REQUIRE)
+    return false;
+  const words = line.slice(COMPOSER_REQUIRE.length).split(" ").filter(Boolean);
+  const required = words.find((word) => !word.startsWith("-"));
+  return TOOLS.some((tool) => shown.has(tool.id) && onlyPackageOf(tool, stack) === required);
+}
+function rowInstall(cells, shown) {
+  const lines = installSpans(cells);
+  const reason = holdOf(cells, lines);
+  if (reason !== null)
+    return { state: "held", reason };
+  const forms = formsOf(lines);
+  if (forms === null)
+    return { state: "held", reason: HOLD.noForm };
+  const stack = STACK_OF.get(cells[0] ?? "");
+  if (stack !== undefined && lines.some((line) => requiresShown(line, stack, shown)))
+    return { state: "in the project already" };
+  return { state: "ready", forms };
+}
+function installLines(install) {
+  if (install.state === "held")
+    return [`  install: held, ${install.reason}`];
+  if (install.state !== "ready")
+    return [`  install: ${install.state}`];
+  return ["  install: ready", ...install.forms.map(({ form, note }) => `    ${form}: ${note}`)];
+}
 var PER_STACK = "### Per stack, from the framework's or the tool's own team";
 var STACK_OF = new Map([
   ["PHP", "php"],
@@ -24974,23 +25087,26 @@ function projectRows(declaration, targets) {
     const row = cells(line);
     const stack = STACK_OF.get(row[0] ?? "");
     const mine = targets.filter((target) => target.stack === stack);
+    const tools = shownTools(mine);
+    const marked = (mark) => ({
+      mark,
+      cells: row,
+      line,
+      install: rowInstall(row, tools)
+    });
     if (stack === undefined || mine.length === 0)
-      return { mark: "other stack", cells: row, line };
+      return marked("other stack");
     const said = row[1] ?? "";
     const frameworks = FRAMEWORKS.filter((f) => f.stack === stack && names2(said, f.name));
     if (frameworks.length) {
       const shown = shownIds(mine);
-      const mark = frameworks.some((f) => shown.has(f.id)) ? "framework" : "not this project's";
-      return { mark, cells: row, line };
+      return marked(frameworks.some((f) => shown.has(f.id)) ? "framework" : "not this project's");
     }
-    const tools = TOOLS.filter((tool) => Object.hasOwn(tool.stacks, stack) && names2(said, tool.name));
-    if (tools.length) {
-      const shown = shownTools(mine);
-      const mark = tools.some((tool) => shown.has(tool.id)) ? "tool" : "not this project's";
-      return { mark, cells: row, line };
-    }
+    const named = TOOLS.filter((tool) => Object.hasOwn(tool.stacks, stack) && names2(said, tool.name));
+    if (named.length)
+      return marked(named.some((tool) => tools.has(tool.id)) ? "tool" : "not this project's");
     const product = NOT_IN_A_MANIFEST.some((entry) => names2(said, entry.name));
-    return { mark: product ? "not this project's" : "by stack", cells: row, line };
+    return marked(product ? "not this project's" : "by stack");
   });
 }
 var COMMON = "### Common to every stack";
@@ -25035,7 +25151,8 @@ function projectRowLines(declaration, targets) {
   const rows = projectRows(declaration, targets);
   const of = (mark) => rows.filter((row) => row.mark === mark);
   const orNone = (lines) => lines.length ? lines : ["  none"];
-  const printed = (mark) => orNone(of(mark).map((row) => declarationLine(row.line)));
+  const printed = (mark) => orNone(of(mark).flatMap((row) => [declarationLine(row.line), ...installLines(row.install)]));
+  const held = installLines({ state: "held", reason: ERROR_SERVICE_HOLD });
   return [
     "rows for this project's frameworks:",
     ...printed("framework"),
@@ -25045,7 +25162,7 @@ function projectRowLines(declaration, targets) {
     ...printed("by stack"),
     "error services this project shows:",
     "  a row here adds a server that reaches the service's production data with a credential, and a hosted one sends what a session asks off the machine; where the credential is held and with what scope is not decided: run no line of this section before it is",
-    ...orNone(errorServiceRows(declaration, targets).map(declarationLine)),
+    ...orNone(errorServiceRows(declaration, targets).flatMap((line) => [declarationLine(line), ...held])),
     `left out: ${rowsCount(of("other stack").length)} of another stack, ${rowsCount(of("not this project's").length)} of a framework, a tool or a product this project does not show`,
     "not told: the rows of the table Common to every stack for source hosting and databases, which depend on a service nothing detects"
   ];

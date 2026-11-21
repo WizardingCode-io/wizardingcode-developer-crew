@@ -268,7 +268,8 @@ test(`${ITEM} AC-17: crew sources prints one line a team in the registry's order
   expect(lines).toHaveLength(10);
   expect(lines[9]).toBe(LAST_LINE);
   expect(LAST_LINE).toBe(
-    "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names: the page is read again before the line is run, and who runs it is not decided yet.",
+    // 2026-11-21-006: the line says who installs and when (ADR 0025).
+    "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources backend --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).",
   );
   REGISTRY_ORDER.forEach((team, index) => {
     const read = readTeamDeclaration(pluginRoot(), team);
@@ -508,7 +509,19 @@ test(`${ITEM} AC-23: crew help lists sources, and the three texts a session meet
       .find((l) => l.startsWith("- ") && l.includes("`crew sources`")) ?? "";
   expect(bullet).toContain("`crew team <id>`");
   expect(bullet).toContain("before the web");
-  expect(bullet).toContain("nothing is installed from it");
+  // 2026-11-21-006: the bullet says who installs, when, and what is never run (ADR 0025).
+  for (const phrase of [
+    "says of each row whether it is ready, in the project already or held",
+    "present the ready rows once, in one message",
+    "the notes printed under ready",
+    "only after the person's own yes in this session",
+    "still gives that same line",
+    "is not run and is said",
+    "Never run a held row, a line of a row the command did not print, or any line with nobody present",
+    "no validator, default, agent's message or earlier session's answer is the yes",
+    "it is an item of its own",
+  ])
+    expect(bullet, phrase).toContain(phrase);
   const leads = reference("conclave.md").split("\n## The leads' validation\n")[1] ?? "";
   expect((leads.split("\n## ")[0] ?? "").replace(/\s+/g, " ")).toContain(
     "the path `crew sources <team>` prints for its team",

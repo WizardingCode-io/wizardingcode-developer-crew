@@ -24,6 +24,20 @@ const NO_TARGET =
 const FOR_FRAMEWORKS = "rows for this project's frameworks:";
 // 2026-11-21-005 edits these constants and the whole outputs below: the form gained the rows of
 // the tools a project shows, the error services' section, the count line's words and a last note.
+// 2026-11-21-006 edits the expected outputs below: each row is followed by its state (ADR 0025).
+const BOOST_STATE = [
+  "  install: ready",
+  "    composer require: adds a dependency to the project's `composer.json`",
+  "    php artisan boost:install: runs Boost's installer in the project; it may add Laravel Herd's server, a held row: that part is declined",
+];
+const FASTAPI_STATE = [
+  "  install: ready",
+  "    uvx library-skills install: downloads and runs the PyPI package `library-skills` first, which the row does not say is its publisher's",
+];
+const HELD_VALUE = "  install: held, its line takes a value of the machine, a token or a key";
+const HELD_PROMPT =
+  "  install: held, its line is typed at Claude Code's prompt, which a session cannot do";
+const HELD_NO_FORM = "  install: held, its line is not one of the engine's install forms";
 const FOR_TOOLS = "rows for the tools this project shows:";
 const BY_STACK = "rows by stack:";
 const ERRORS = "error services this project shows:";
@@ -201,8 +215,11 @@ test(`${ITEM} AC-11: crew sources backend --project prints the project's stacks 
     "this project: php (laravel); python (fastapi)",
     FOR_FRAMEWORKS,
     rowLine("Laravel Boost:"),
+    ...BOOST_STATE,
     rowLine("Laravel Herd's"),
+    HELD_VALUE,
     rowLine("FastAPI's skill"),
+    ...FASTAPI_STATE,
     FOR_TOOLS,
     "  none",
     BY_STACK,
@@ -236,11 +253,14 @@ test(`${ITEM} AC-11: crew sources backend --project prints the project's stacks 
   expect(merged.out.split("\n")[1]).toBe(
     "this project: node (nestjs, hono); php (laravel, api-platform, slim)",
   );
-  expect(merged.out.split("\n").slice(2, 6)).toEqual([
+  expect(merged.out.split("\n").slice(2, 11)).toEqual([
     FOR_FRAMEWORKS,
     rowLine("Laravel Boost:"),
+    ...BOOST_STATE,
     rowLine("Laravel Herd's"),
+    HELD_VALUE,
     rowLine("API Platform's skills"),
+    HELD_PROMPT,
   ]);
   // From a folder below the root the project is the same.
   const below = await cliIo(join(root, "services", "ml"), testEnv())(
@@ -386,6 +406,8 @@ test(`${ITEM} AC-6: crew sources backend --project writes nothing, with no .crew
     "this project: php (laravel); python (fastapi)",
     FOR_FRAMEWORKS,
     "| PHP | Laravel Boost | https://example.test | `composer [31mrequire x` |",
+    // The escape stands between the form's two words in the file, so the line opens with no form.
+    HELD_NO_FORM,
     FOR_TOOLS,
     "  none",
     BY_STACK,
@@ -405,7 +427,18 @@ test(`${ITEM} AC-7: understand.md sends a change to backend code to crew sources
       .split("\n")
       .find((l) => l.startsWith("- ") && l.includes("`crew sources`")) ?? "";
   expect(bullet).toContain("on a change to backend code, `crew sources backend --project`");
-  expect(bullet).toContain("nothing is installed from it");
+  for (const phrase of [
+    "says of each row whether it is ready, in the project already or held",
+    "present the ready rows once, in one message",
+    "the notes printed under ready",
+    "only after the person's own yes in this session",
+    "still gives that same line",
+    "is not run and is said",
+    "Never run a held row, a line of a row the command did not print, or any line with nobody present",
+    "no validator, default, agent's message or earlier session's answer is the yes",
+    "it is an item of its own",
+  ])
+    expect(bullet, phrase).toContain(phrase);
   const help = await cliIo(makeRepo(), testEnv())("help");
   const line = help.out.split("\n").find((l) => l.startsWith("  sources ")) ?? "";
   expect(line).toContain("sources [<team> [<n>]]");

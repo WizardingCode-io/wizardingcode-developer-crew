@@ -21,6 +21,22 @@ const ITEM = "2026-11-21-005";
 const IDS = TOOLS.map((t) => t.id);
 const BACKEND = join(pluginRoot(), "teams", "backend.md");
 const FOR_FRAMEWORKS = "rows for this project's frameworks:";
+// 2026-11-21-006 edits the expected outputs below: each row is followed by its state (ADR 0025).
+const BOOST_STATE = [
+  "  install: ready",
+  "    composer require: adds a dependency to the project's `composer.json`",
+  "    php artisan boost:install: runs Boost's installer in the project; it may add Laravel Herd's server, a held row: that part is declined",
+];
+const FASTAPI_STATE = [
+  "  install: ready",
+  "    uvx library-skills install: downloads and runs the PyPI package `library-skills` first, which the row does not say is its publisher's",
+];
+const HELD_VALUE = "  install: held, its line takes a value of the machine, a token or a key";
+const HELD_PROMPT =
+  "  install: held, its line is typed at Claude Code's prompt, which a session cannot do";
+const HELD_CREDENTIAL = "  install: held, it reaches production data with a credential";
+const HELD_NOT_STABLE = "  install: held, not stable by its own row";
+const HELD_NO_COMMAND = "  install: held, its row gives no command";
 const FOR_TOOLS = "rows for the tools this project shows:";
 const BY_STACK = "rows by stack:";
 const ERRORS = "error services this project shows:";
@@ -669,15 +685,20 @@ function expectedForLaravel(): string[] {
     "tools: php (sentry); python (uv)",
     FOR_FRAMEWORKS,
     rowLine("Laravel Boost:"),
+    ...BOOST_STATE,
     rowLine("Laravel Herd's"),
+    HELD_VALUE,
     rowLine("FastAPI's skill"),
+    ...FASTAPI_STATE,
     FOR_TOOLS,
     rowLine("Astral's plugin"),
+    HELD_PROMPT,
     BY_STACK,
     "  none",
     ERRORS,
     ERRORS_NOTE,
     rowLine("Errors in production: Sentry"),
+    HELD_CREDENTIAL,
     leftOut("7 rows", "6 rows"),
     NOT_TOLD,
     LAST_LINE,
@@ -721,15 +742,18 @@ test(`${ITEM} AC-16: crew sources backend --project prints the project's tools, 
   );
   expect(errors[2]).toBe("tools: node (drizzle, rollbar); go (bugsnag)");
   const from = errors.indexOf(ERRORS);
-  expect(errors.slice(from, from + 4)).toEqual([
+  expect(errors.slice(from, from + 6)).toEqual([
     ERRORS,
     ERRORS_NOTE,
     rowLine("Errors in production: Rollbar"),
+    HELD_CREDENTIAL,
     rowLine("Errors in production: Bugsnag"),
+    HELD_CREDENTIAL,
   ]);
-  expect(errors.slice(errors.indexOf(BY_STACK), errors.indexOf(BY_STACK) + 2)).toEqual([
+  expect(errors.slice(errors.indexOf(BY_STACK), errors.indexOf(BY_STACK) + 3)).toEqual([
     BY_STACK,
     rowLine("gopls's built-in"),
+    HELD_NOT_STABLE,
   ]);
   // The count's words follow its numbers, on made tables: one of each, and none.
   const table = (rows: string[], common: string[] = []) =>
@@ -772,6 +796,7 @@ test(`${ITEM} AC-16: crew sources backend --project prints the project's tools, 
   expect(one.slice(3)).toEqual([
     FOR_FRAMEWORKS,
     "| PHP | Laravel Boost | | |",
+    HELD_NO_COMMAND,
     FOR_TOOLS,
     "  none",
     BY_STACK,
@@ -779,6 +804,7 @@ test(`${ITEM} AC-16: crew sources backend --project prints the project's tools, 
     ERRORS,
     ERRORS_NOTE,
     "| Errors in production: Sentry | hosted | https://example.test | `claude [31mmcp add x` |",
+    HELD_CREDENTIAL,
     leftOut("1 row", "1 row"),
     NOT_TOLD,
     LAST_LINE,
