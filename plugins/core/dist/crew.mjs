@@ -1,7 +1,7 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync31, lstatSync as lstatSync13, readFileSync as readFileSync14, realpathSync as realpathSync14, rmSync as rmSync12, statSync as statSync14 } from "node:fs";
 import { tmpdir as tmpdir3 } from "node:os";
-import { basename as basename12, dirname as dirname16, isAbsolute as isAbsolute16, join as join71, relative as relative16, resolve as resolve10, sep as sep10 } from "node:path";
+import { basename as basename12, dirname as dirname16, isAbsolute as isAbsolute16, join as join72, relative as relative16, resolve as resolve10, sep as sep10 } from "node:path";
 
 // packages/engine/src/adapters.ts
 import { existsSync as existsSync5 } from "node:fs";
@@ -24258,9 +24258,119 @@ ${row}
   return { path: `docs/designs/${id}.md` };
 }
 
+// packages/engine/src/team-sources.ts
+import { join as join70 } from "node:path";
+var DECLARATION_MAX_BYTES = 1024 * 1024;
+var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names: the page is read again before the line is run, and who runs it is not decided yet.";
+var USAGE = "usage: crew sources [<team> [<n>]]";
+function cells(line) {
+  return line.slice(1, line.endsWith("|") ? -1 : undefined).split("|").map((cell) => cell.trim());
+}
+var isRow = (line) => line.startsWith("| ") && !line.startsWith("| :-");
+var REMOVED_RANGES = [
+  [0, 31],
+  [127, 159],
+  [8203, 8207],
+  [8234, 8238],
+  [8294, 8297]
+];
+function declarationLine(line) {
+  let kept = "";
+  for (const char of line) {
+    const code = char.codePointAt(0) ?? 0;
+    if (!REMOVED_RANGES.some(([from, to]) => code >= from && code <= to))
+      kept += char;
+  }
+  return kept;
+}
+var teamNames = () => Object.keys(TEAMS);
+var notATeam = () => `not a team: the teams are ${teamNames().join(", ")}`;
+function readTeamDeclaration(root, team) {
+  if (!Object.hasOwn(TEAMS, team))
+    return { refused: notATeam() };
+  const path = join70(root, "teams", `${team}.md`);
+  const bytes = readRegular(path, DECLARATION_MAX_BYTES);
+  if (bytes === null)
+    return { refused: `${path}: absent or not a regular file` };
+  if (bytes === "over cap")
+    return { refused: `${path}: over ${DECLARATION_MAX_BYTES / (1024 * 1024)} MiB` };
+  return { path, text: bytes.toString("utf8") };
+}
+function tablesOf(lines) {
+  const tables = [];
+  let run = [];
+  const close = () => {
+    const [header, ...rest] = run;
+    if (header !== undefined && rest.length > 0)
+      tables.push({ header: cells(header), rows: rest.filter(isRow).map(cells) });
+    run = [];
+  };
+  for (const line of lines) {
+    if (line.startsWith("|"))
+      run.push(line);
+    else
+      close();
+  }
+  close();
+  return tables;
+}
+function declarationSections(text) {
+  const sections = [];
+  let current = null;
+  const close = () => {
+    if (current)
+      sections.push({ number: sections.length + 1, ...current, tables: tablesOf(current.lines) });
+  };
+  for (const line of text.split(`
+`)) {
+    const level = line.startsWith("## ") ? 2 : line.startsWith("### ") ? 3 : null;
+    if (level !== null) {
+      close();
+      current = { level, heading: line, lines: [line] };
+    } else
+      current?.lines.push(line);
+  }
+  close();
+  return sections;
+}
+function indexLine(section) {
+  const title = declarationLine(section.heading.replace(/^#+ /, ""));
+  const counts = section.tables.map((t) => `${t.rows.length} row${t.rows.length === 1 ? "" : "s"}`);
+  const tail = counts.length ? ` (${counts.join(", ")})` : "";
+  return `${section.number}. ${section.level === 3 ? "  " : ""}${title}${tail}`;
+}
+function sourcesCommand(root, args) {
+  const refuse = (text) => ({ code: 1, text });
+  const done = (lines) => ({ code: 0, text: [...lines, LAST_LINE].join(`
+`) });
+  if (args.length > 2)
+    return refuse(USAGE);
+  const [team, n] = args;
+  if (team === undefined) {
+    const lines = [];
+    for (const name of teamNames()) {
+      const read = readTeamDeclaration(root, name);
+      if ("refused" in read)
+        return refuse(read.refused);
+      lines.push(`${name}: ${declarationSections(read.text).length} sections, ${read.path}`);
+    }
+    return done(lines);
+  }
+  const read = readTeamDeclaration(root, team);
+  if ("refused" in read)
+    return refuse(read.refused);
+  const sections = declarationSections(read.text);
+  if (n === undefined)
+    return done([read.path, ...sections.map(indexLine)]);
+  const section = /^[1-9]\d*$/.test(n) ? sections[Number(n) - 1] : undefined;
+  if (!section)
+    return refuse(`${team} has ${sections.length} sections: give a number from 1 to ${sections.length}`);
+  return done(section.lines.map(declarationLine));
+}
+
 // packages/engine/src/workspace.ts
 import { existsSync as existsSync30 } from "node:fs";
-import { join as join70 } from "node:path";
+import { join as join71 } from "node:path";
 var NO_WORKSPACE = "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace";
 var CLOSED = new Set(["done", "refused", "expired"]);
 function isOpen(m) {
@@ -24310,7 +24420,7 @@ function workspaceStatus(paths, policy, env) {
       priorities: 0,
       questions: 0
     };
-    if (!existsSync30(join70(root, ".git")))
+    if (!existsSync30(join71(root, ".git")))
       return { ...empty, gone: true, environment: "none" };
     const projectPaths = pathsFor(root, userDir);
     const ctx = mailContext(projectPaths, loadPolicy(projectPaths).policy, env);
@@ -24407,6 +24517,7 @@ var KNOWN_FLAGS = {
     "contract"
   ],
   mode: [],
+  sources: [],
   config: [],
   version: [],
   help: []
@@ -24548,22 +24659,22 @@ function skipRefusal(step) {
 }
 function accept(env, target, parsed) {
   if (target === "profile" || target === "policy" || target === "decisions") {
-    if (!recordIntegrity(env.paths, join71(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join72(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync31(join71(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync31(join72(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
   if (registerTampered(env.paths))
     return refuse(`${tamperMessage({ file: ".crew/decisions.json", accept: "decisions" })}; then crew accept ${target}`);
   const decision = decisionFlag(parsed, env.policy);
   if (isOutcome(decision))
     return decision;
-  const gone = PROTECTED_WORK_FILES.filter((name) => recordedAndGone(env.paths, join71(dir, name)));
-  const changed = PROTECTED_WORK_FILES.filter((name) => protectedTextChanged(env.paths, join71(dir, name)));
+  const gone = PROTECTED_WORK_FILES.filter((name) => recordedAndGone(env.paths, join72(dir, name)));
+  const changed = PROTECTED_WORK_FILES.filter((name) => protectedTextChanged(env.paths, join72(dir, name)));
   if (changed.length > 0 || gone.length > 0)
     decide(env, target, {
       kind: "accept",
@@ -24571,8 +24682,8 @@ function accept(env, target, parsed) {
       by: whoDecides(decision)
     });
   for (const name of gone)
-    forgetIntegrity(env.paths, join71(dir, name));
-  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join71(dir, name)));
+    forgetIntegrity(env.paths, join72(dir, name));
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join72(dir, name)));
   const givenUp = gone.flatMap((name) => GIVEN_UP[name] ? [`${name}: ${GIVEN_UP[name]}`] : []);
   const goneText = gone.length ? `; taken as gone: ${gone.join(", ")}${givenUp.length ? `; ${givenUp.join("; ")}` : ""}${gone.includes("design/surface.json") ? `; the item has no design gate until a surface is recorded again (crew design ${target} surface …)` : ""}` : "";
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are${goneText}`, {
@@ -24893,7 +25004,7 @@ function rulingBinding(env, roles, workId, rulingPath) {
   if (!judgeFiles.length)
     return `no ruling of the judge on record for ${workId}: launch the judge; the hook files its answer`;
   const dir = workDir(env.paths, workId);
-  if (!judgeFiles.some((f) => realOrSelf(join71(dir, f)) === realOrSelf(rulingPath)))
+  if (!judgeFiles.some((f) => realOrSelf(join72(dir, f)) === realOrSelf(rulingPath)))
     return `the ruling is the judge's filed answer (${judgeFiles.map((f) => `.crew/work/${workId}/${f}`).join(", ")}), never a file the session wrote: resume the judge when its ruling is missing`;
   return null;
 }
@@ -24921,11 +25032,11 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
   if (!planned)
     return refuse("strategy is not a phase of this item: a strategy ruling is recorded on a new project alone");
   const dir = workDir(env.paths, work.id);
-  const inputs = readJson(join71(dir, "review", "strategy", "inputs.json"));
+  const inputs = readJson(join72(dir, "review", "strategy", "inputs.json"));
   if (!inputs || typeof inputs.hash !== "string" || typeof inputs.at !== "string")
     return refuse(`no strategy check for this item: run crew strategy ${work.id} check first, then the reviewer and the judge`);
-  const research = readText(join71(dir, "conclave", "researcher.md"));
-  const text = readText(join71(dir, "strategy.md"));
+  const research = readText(join72(dir, "conclave", "researcher.md"));
+  const text = readText(join72(dir, "strategy.md"));
   if (research === null)
     return refuse(RESEARCHER_FIRST);
   if (text === null)
@@ -24941,7 +25052,7 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
     return refuse(usage);
   if (record.verdict !== "not-run") {
     if (planned.reviewer === "cto") {
-      const cto = join71(dir, "conclave", "cto.md");
+      const cto = join72(dir, "conclave", "cto.md");
       if (!existsSync31(cto))
         return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
       if (statSync14(cto).mtimeMs < Date.parse(inputs.at))
@@ -24993,7 +25104,7 @@ async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
     return input;
   const { records, rulingPath } = input;
   fillTokens(records, before.evidence.roles ?? [], inputs.at);
-  const defects = await askDefects(env, ioEnv, records, join71(reviewDir(env.paths, work.id, task), "diff.patch"));
+  const defects = await askDefects(env, ioEnv, records, join72(reviewDir(env.paths, work.id, task), "diff.patch"));
   const notes = [];
   const appendRefusal = appendVerifications(env, work.id, defects?.records ?? []);
   if (appendRefusal)
@@ -25051,17 +25162,17 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join71(dir, "spec.md")),
-    strategyText: readText(join71(dir, "strategy.md")),
-    researcherText: readText(join71(dir, "conclave", "researcher.md")),
-    analysisText: readText(join71(dir, "analysis.md")),
-    originRecorded: existsSync31(join71(dir, "analysis", "origin.json")),
+    specText: readText(join72(dir, "spec.md")),
+    strategyText: readText(join72(dir, "strategy.md")),
+    researcherText: readText(join72(dir, "conclave", "researcher.md")),
+    analysisText: readText(join72(dir, "analysis.md")),
+    originRecorded: existsSync31(join72(dir, "analysis", "origin.json")),
     knownRootCauses: knownCausesOf(env, work),
     gitRepository: isGitRepo(env.paths.root),
-    conclaveText: readText(join71(dir, "conclave.md")),
+    conclaveText: readText(join72(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync31(join71(dir, "plan.md")),
-    planText: readText(join71(dir, "plan.md")),
+    planExists: existsSync31(join72(dir, "plan.md")),
+    planText: readText(join72(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -25070,7 +25181,7 @@ function guardContext(env, work, tampered) {
 }
 function deliver2(env, opened, evidence) {
   const refused = saveWorkAsItStands(env, opened);
-  writeProtectedText(env.paths, join71(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+  writeProtectedText(env.paths, join72(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
   return refused;
 }
 function isLeadsAnswer(record, by) {
@@ -25096,7 +25207,7 @@ function verdictAfterRecord(env, opened) {
     const notSaved = deliver2(env, opened, written.saved);
     return { result, evidence: written.saved, notes: notSaved ? [notSaved] : [], written: true };
   }
-  writeProtectedText(env.paths, join71(workDir(env.paths, work.id), "report.md"), reportOf(env, work, written.saved));
+  writeProtectedText(env.paths, join72(workDir(env.paths, work.id), "report.md"), reportOf(env, work, written.saved));
   return { result, evidence: written.saved, notes: [], written: true };
 }
 function saveWorkAsItStands(env, opened) {
@@ -25133,7 +25244,7 @@ function reportOf(env, work, evidence) {
     analysis: readOrigin(env.paths, work.id) ?? undefined,
     strategy: strategyOf(env, work, evidence),
     audit: auditViewOf(env, work),
-    knowledge: readText(join71(workDir(env.paths, work.id), "knowledge.md")),
+    knowledge: readText(join72(workDir(env.paths, work.id), "knowledge.md")),
     ctoPlan: env.mail.self.workspace ? latestPlan(env.paths.userDir, env.mail.self.workspace) : null,
     uiEvidence: readUiEvidence(env.paths, work.id),
     designScore: readScore(env.paths, work.id)
@@ -25165,10 +25276,10 @@ function auditSignature(work) {
 }
 async function renderAudit(env, io, work, signed) {
   const dir = workDir(env.paths, work.id);
-  const auditDir = join71(dir, "audit");
+  const auditDir = join72(dir, "audit");
   const assembled = assembleAuditReport({
     auditDir,
-    logsDir: join71(dir, "logs"),
+    logsDir: join72(dir, "logs"),
     root: env.paths.root,
     id: work.id,
     project: env.mail.self.project,
@@ -25180,12 +25291,12 @@ async function renderAudit(env, io, work, signed) {
     return refuse(assembled.refused);
   const { inputs, counts } = assembled;
   const brand = brandOf(io.env, env.paths.root);
-  writeProtectedText(env.paths, join71(auditDir, "report.md"), renderAuditMarkdown(inputs));
-  writeProtectedText(env.paths, join71(auditDir, "report.html"), renderAuditHtml(inputs, brand));
-  const pdfPath = join71(auditDir, "report.pdf");
+  writeProtectedText(env.paths, join72(auditDir, "report.md"), renderAuditMarkdown(inputs));
+  writeProtectedText(env.paths, join72(auditDir, "report.html"), renderAuditHtml(inputs, brand));
+  const pdfPath = join72(auditDir, "report.pdf");
   rmSync12(pdfPath, { force: true });
-  const printed = await printPdf(join71(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
-    logPath: join71(dir, "logs", "audit-pdf.txt")
+  const printed = await printPdf(join72(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
+    logPath: join72(dir, "logs", "audit-pdf.txt")
   });
   const record = {
     at: nowIso(),
@@ -25199,7 +25310,7 @@ async function renderAudit(env, io, work, signed) {
     verdict: inputs.verdict,
     signed
   };
-  writeProtectedJson(env.paths, join71(auditDir, "report.json"), record);
+  writeProtectedJson(env.paths, join72(auditDir, "report.json"), record);
   const kept = Object.values(counts).reduce((n, c) => n + c.defects + c.advisories, 0);
   const next = signed ? `crew phase ${work.id} next` : `crew approve ${work.id} audit (a person signs), then crew phase ${work.id} next`;
   return ok(`audit report of ${work.id}: verdict ${inputs.verdict}; ${kept} finding${kept === 1 ? "" : "s"} kept, ${inputs.leftOut.length} left out for want of proof; audit/report.md, audit/report.html, ${printed.ok ? `audit/report.pdf (${printed.by})` : `pdf not produced: ${printed.reason}`}${brand ? "" : "; brand assets not found"}
@@ -25209,7 +25320,7 @@ function strategyOf(env, work, evidence) {
   if (!phasesFor(work).includes("strategy"))
     return null;
   const dir = workDir(env.paths, work.id);
-  return strategyReport(readText(join71(dir, "strategy.md")), readText(join71(dir, "conclave", "researcher.md")), evidence, work.knowledge?.listed ?? []);
+  return strategyReport(readText(join72(dir, "strategy.md")), readText(join72(dir, "conclave", "researcher.md")), evidence, work.knowledge?.listed ?? []);
 }
 function strategyLine(report, planned) {
   const state = report === null ? "no strategy.md yet" : report.faults.length ? `${report.faults.length} fault${report.faults.length === 1 ? "" : "s"}` : "ok";
@@ -25236,11 +25347,11 @@ function auditStatusOf(env, work) {
   };
 }
 function auditLine(env, work) {
-  const dir = join71(workDir(env.paths, work.id), "audit");
-  const runs = readJson(join71(dir, "runs.json"));
+  const dir = join72(workDir(env.paths, work.id), "audit");
+  const runs = readJson(join72(dir, "runs.json"));
   if (!runs)
     return `  audit run: none yet (crew audit ${work.id} run)`;
-  const scope = readJson(join71(dir, "scope.json"));
+  const scope = readJson(join72(dir, "scope.json"));
   return `  audit run: ${auditSummary(runs.runs)}; files ${scope?.files ?? 0}`;
 }
 function startPriority(flag, origin, answers) {
@@ -25508,23 +25619,23 @@ function registryLeftOut(raw, root, scratch) {
     return "gone";
   if (scratch.some((dir) => root === dir || root.startsWith(`${dir}${sep10}`)))
     return { reason: "a scratch checkout under the temporary folder" };
-  if (!existsSync31(join71(root, ".git")))
+  if (!existsSync31(join72(root, ".git")))
     return { reason: "not a git checkout" };
-  const crewDir = join71(raw, ".crew");
+  const crewDir = join72(raw, ".crew");
   if (!existsSync31(crewDir) && !isLink3(crewDir))
     return { reason: "no .crew folder" };
   if (isLink3(raw))
     return { reason: "the root is a symbolic link" };
   if (isLink3(crewDir))
     return { reason: ".crew is a symbolic link" };
-  if (isLink3(join71(crewDir, "policy.json")))
+  if (isLink3(join72(crewDir, "policy.json")))
     return { reason: "policy.json is a symbolic link" };
   if (!statSync14(crewDir).isDirectory())
     return { reason: "no .crew folder" };
   return null;
 }
 function standingSkipLeftOut(raw) {
-  if (!existsSync31(join71(raw, ".crew", "profile.json")))
+  if (!existsSync31(join72(raw, ".crew", "profile.json")))
     return { reason: "no profile yet" };
   return null;
 }
@@ -25922,7 +26033,7 @@ function logDecision(env, work, answers) {
     kind: work.kind,
     kindFrom: work.kindFrom
   });
-  const file = join71(env.paths.localDir, "decisions.jsonl");
+  const file = join72(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -25991,7 +26102,7 @@ async function classify(env, work, answers, context, ioEnv) {
   return out;
 }
 async function lookupForItem(env, work, ioEnv, options = {}) {
-  const file = join71(workDir(env.paths, work.id), "knowledge.md");
+  const file = join72(workDir(env.paths, work.id), "knowledge.md");
   const readAt = nowIso();
   const read = options.base ?? readBase(env.paths.userDir);
   if (read.base === null) {
@@ -26455,7 +26566,7 @@ async function researchCommand(env, parsed, args, io) {
   if (args[1] !== "verify")
     return refuse(usage);
   const dir = workDir(env.paths, opened.work.id);
-  const file = typeof parsed.flags.file === "string" ? resolve10(env.paths.root, parsed.flags.file) : join71(dir, "conclave", "researcher.md");
+  const file = typeof parsed.flags.file === "string" ? resolve10(env.paths.root, parsed.flags.file) : join72(dir, "conclave", "researcher.md");
   const named = rel(env.paths, file);
   if (named.startsWith("..") || isAbsolute16(named))
     return refuse(`${parsed.flags.file} is not under the root`);
@@ -26521,7 +26632,7 @@ async function researchCommand(env, parsed, args, io) {
       tail = `jev unavailable: ${out.unavailable}`;
   }
   const ordered = facts.map((f) => statuses.get(f.id));
-  writeProtectedJson(env.paths, join71(dir, "conclave", "researcher.verification.json"), {
+  writeProtectedJson(env.paths, join72(dir, "conclave", "researcher.verification.json"), {
     at: nowIso(),
     hash: sha256(text),
     facts: ordered
@@ -26550,8 +26661,8 @@ function specReviewCommand(env, args, parsed) {
     return refuse(`${work.id} has no spec review: it belongs to an item on the full route`);
   const verb = args[1];
   const dir = workDir(env.paths, work.id);
-  const specText = readText(join71(dir, "spec.md"));
-  const planText = readText(join71(dir, "plan.md"));
+  const specText = readText(join72(dir, "spec.md"));
+  const planText = readText(join72(dir, "plan.md"));
   const hash = specReviewHash(specText ?? "", planText ?? "");
   const { evidence } = loadEvidence(env.paths, work.id);
   const record = evidence.specReview ?? emptySpecReview();
@@ -26572,7 +26683,7 @@ function specReviewCommand(env, args, parsed) {
     case "status":
       return ok(`${work.id} spec review: ${specReviewLine(record)}`, { specReview: record });
     case "report": {
-      writeText(join71(dir, "spec-review", "consolidated.md"), renderSpecReview(record));
+      writeText(join72(dir, "spec-review", "consolidated.md"), renderSpecReview(record));
       return ok(`.crew/work/${work.id}/spec-review/consolidated.md`, {});
     }
     case "check": {
@@ -26621,7 +26732,7 @@ function specReviewCommand(env, args, parsed) {
         }
         const row = roles.filter((r) => r.agent === role).at(-1);
         const file = `spec-review/${role}.md`;
-        const text = readText(join71(dir, file));
+        const text = readText(join72(dir, file));
         const notRunWay = `record it as not run: crew spec-review ${work.id} record ${due.stage} ${role} --not-run --reason "<why>"`;
         if (!row || text === null)
           return refuse(`${role} has not answered this stage: launch it fresh, or ${notRunWay}`);
@@ -26643,7 +26754,7 @@ function specReviewCommand(env, args, parsed) {
         if (!a.parsed)
           continue;
         record.agentIds.push(a.agentId);
-        writeText(join71(dir, "spec-review", `round${round.n}-stage${due.stage}-${a.role}.md`), a.text);
+        writeText(join72(dir, "spec-review", `round${round.n}-stage${due.stage}-${a.role}.md`), a.text);
       }
       const unsaved = save();
       if (unsaved)
@@ -26661,7 +26772,7 @@ function specReviewCommand(env, args, parsed) {
 `), {});
     }
     case "brief": {
-      const text = readText(join71(dir, "concepts_brief.md"));
+      const text = readText(join72(dir, "concepts_brief.md"));
       if (text === null)
         return refuse("concepts_brief.md is not in the item's folder");
       const missing = briefProblems(text);
@@ -26868,7 +26979,7 @@ function specEvidenceProblem(root, itemDir, evidence) {
   if (!file || !symbol)
     return `--evidence is <file:symbol>, not "${evidence}"`;
   const own = file === "spec.md" || file === "plan.md";
-  const path = own ? join71(itemDir, file) : resolve10(root, file);
+  const path = own ? join72(itemDir, file) : resolve10(root, file);
   const inside = relative16(root, path);
   if (inside.startsWith("..") || isAbsolute16(inside))
     return `${file} is outside the repository`;
@@ -27044,7 +27155,7 @@ async function designCommand(env, args, parsed) {
       }
     }
     case "score": {
-      const text = readTextQuietly(join71(workDir(env.paths, work.id), "review", "ui-ux.findings.md"));
+      const text = readTextQuietly(join72(workDir(env.paths, work.id), "review", "ui-ux.findings.md"));
       const readings = readRound(env.paths, work.id);
       if (readings.filed === READERS - 1)
         return refuse(READERS_REFUSALS.third);
@@ -27099,12 +27210,12 @@ async function designCommand(env, args, parsed) {
         const dir = compDir(env.paths, work.id);
         ensureDir(dir);
         for (const n of [1, 2, 3]) {
-          const out = join71(dir, `comp-${n}.png`);
+          const out = join72(dir, `comp-${n}.png`);
           const command = tool.split(/(\{prompt\}|\{out\})/).map((part) => part === "{prompt}" ? quoteWord(`${prompt} (composition ${n} of 3)`) : part === "{out}" ? quoteWord(out) : part).join("");
           const run = await runCommand(command, {
             cwd: env.paths.root,
             timeoutMs: 300000,
-            logPath: join71(dir, `comp-${n}.log`)
+            logPath: join72(dir, `comp-${n}.log`)
           });
           if (run.exit !== 0)
             return refuse(`the image tool failed on comp ${n} (exit ${run.exit})`);
@@ -27116,7 +27227,7 @@ async function designCommand(env, args, parsed) {
         if (![1, 2, 3].includes(n))
           return refuse("approve takes 1 to 3");
         const comp = `comp-${n}.png`;
-        if (!existsSync31(join71(compDir(env.paths, work.id), comp)))
+        if (!existsSync31(join72(compDir(env.paths, work.id), comp)))
           return refuse(`no ${comp} (crew design ${work.id} comp generate "<prompt>")`);
         const file = flag("regions");
         if (!file)
@@ -27184,12 +27295,16 @@ async function dispatch(parsed, io) {
     return ok(HELP);
   if (command === "mode" || command === "config")
     return settings(command, args, { userDir: userDirOf(io.env) });
+  if (command === "sources") {
+    const answer = sourcesCommand(pluginRoot(), args);
+    return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
+  }
   if (command === "journey" && args[0] === "tick")
     return ok(tickJourneys(userDirOf(io.env), realJourneyDeps(io.env)).join(`
 `), {});
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join71(resolve10(io.cwd), ".crew"));
+    ensureDir(join72(resolve10(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -27224,7 +27339,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join71(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join72(env.paths.crewDir, "policy.json"));
         }
       }
       return profileView(env, profile);
@@ -27831,10 +27946,10 @@ ${originNotes.join(`
       }
       if (args[1] === "close") {
         const jev = jevConfig(io.env, env.config);
-        const conclaveDir = join71(workDir(env.paths, opened.work.id), "conclave");
-        const researcherText = readText(join71(conclaveDir, "researcher.md"));
+        const conclaveDir = join72(workDir(env.paths, opened.work.id), "conclave");
+        const researcherText = readText(join72(conclaveDir, "researcher.md"));
         if (jev.configured && askAllowed(env.policy, "fact") && researcherText !== null) {
-          const read = readProtectedJson(env.paths, join71(conclaveDir, "researcher.verification.json"));
+          const read = readProtectedJson(env.paths, join72(conclaveDir, "researcher.verification.json"));
           if (read.tampered || read.data?.hash !== sha256(researcherText))
             return refuse(`run crew research ${opened.work.id} verify first (the researcher's facts are unverified)`);
         }
@@ -27932,7 +28047,7 @@ ${originNotes.join(`
         return refuse(cappedRefusal(result.capped));
       if ("stale" in result)
         return refuse(staleRefusal(work.id, result.stale));
-      const scope = readJson(join71(workDir(env.paths, work.id), "audit", "scope.json"));
+      const scope = readJson(join72(workDir(env.paths, work.id), "audit", "scope.json"));
       const areas = scope?.riskAreas.length ? scope.riskAreas.join(", ") : "none";
       const text = [
         `audit run of ${work.id} at ${result.head ? result.head.slice(0, 12) : "no git"}:`,
@@ -27953,10 +28068,10 @@ ${originNotes.join(`
       if (!plannedCheck)
         return refuse("strategy is not a phase of this item: a strategy belongs to a new project");
       const dir = workDir(env.paths, opened.work.id);
-      const research = readText(join71(dir, "conclave", "researcher.md"));
+      const research = readText(join72(dir, "conclave", "researcher.md"));
       if (research === null)
         return refuse(RESEARCHER_FIRST);
-      const text = readText(join71(dir, "strategy.md"));
+      const text = readText(join72(dir, "strategy.md"));
       if (text === null)
         return refuse("strategy.md in the work folder (references/strategy.md)");
       const faults = checkStrategy(text, research, opened.work.knowledge?.listed ?? []);
@@ -27965,7 +28080,7 @@ ${originNotes.join(`
 `), { faults });
       const hash = strategyHash(text, research);
       const reviewer = plannedCheck.reviewer;
-      writeProtectedJson(env.paths, join71(dir, "review", "strategy", "inputs.json"), {
+      writeProtectedJson(env.paths, join72(dir, "review", "strategy", "inputs.json"), {
         at: nowIso(),
         hash,
         strategy: "strategy.md",
@@ -28074,7 +28189,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
           const dir = workDir(env.paths, opened.work.id);
           const evidence = loadEvidence(env.paths, opened.work.id).evidence;
           const outcome = await verifyValidator(jev, env.policy, {
-            conclave: readText(join71(dir, "conclave.md")) ?? "",
+            conclave: readText(join72(dir, "conclave.md")) ?? "",
             decisions: (opened.work.decisions ?? []).map((d) => ({
               id: d.id,
               question: d.question,
@@ -28144,7 +28259,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       ];
       if (opened.work.specReview) {
         const dir = workDir(env.paths, opened.work.id);
-        const published = publishedDesign(env, opened.work, loadEvidence(env.paths, opened.work.id).evidence.specReview, readText(join71(dir, "spec.md")), readText(join71(dir, "plan.md")));
+        const published = publishedDesign(env, opened.work, loadEvidence(env.paths, opened.work.id).evidence.specReview, readText(join72(dir, "spec.md")), readText(join72(dir, "plan.md")));
         lines.push("refused" in published ? `not published: ${published.refused}` : `${published.path}: commit it; it is outside what the proof covers`);
       }
       const text = [lines.join(`
@@ -28407,7 +28522,7 @@ ${workNotSaved}` : ""),
         return input;
       const { records } = input;
       fillTokens(records, before.evidence.roles ?? [], readReviewInputs(env.paths, opened.work.id)?.at);
-      const defects = await askDefects(env, io.env, records, join71(reviewDir(env.paths, opened.work.id), "diff.patch"));
+      const defects = await askDefects(env, io.env, records, join72(reviewDir(env.paths, opened.work.id), "diff.patch"));
       const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
         for (const record of records)
           recordJudgement(fresh, record);
@@ -28532,7 +28647,7 @@ ${report}`, {
       });
       if ("refused" in saved)
         return refuse(saved.refused);
-      writeProtectedText(env.paths, join71(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join72(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "task": {
@@ -28562,7 +28677,7 @@ ${out.notes.join(`
         const scope = commaList(parsed.flags.scope);
         if (!task || !criteria.length || args.length > 3)
           return refuse(usage);
-        const planText = readText(join71(workDir(env.paths, opened.work.id), "plan.md"));
+        const planText = readText(join72(workDir(env.paths, opened.work.id), "plan.md"));
         const part = typeof parsed.flags.part === "string" ? parsed.flags.part : null;
         const out = noteTask(opened.work, task, {
           criteria,
@@ -28595,7 +28710,7 @@ ${out.notes.join(`
         if ("refused" in record)
           return refuse(record.refused);
         if (parsed.flags.print) {
-          const brief = record.brief ? readText(join71(workDir(env.paths, opened.work.id), record.brief)) : null;
+          const brief = record.brief ? readText(join72(workDir(env.paths, opened.work.id), record.brief)) : null;
           if (brief === null)
             return refuse(`${task} has no brief yet (crew task <id> brief ${task})`);
           return ok(brief.endsWith(`
@@ -28690,7 +28805,7 @@ test-first not credited: ${out.uncredited}` : "";
         return seatJudgement(env, parsed, opened, args.slice(2));
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
       const audit = kindOfItem(opened.work) === "audit";
-      const scope = audit ? readJson(join71(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
+      const scope = audit ? readJson(join72(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
       const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
       const seats = audit ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy) : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, {
         strategy: phasesFor(opened.work).includes("strategy"),
@@ -28764,10 +28879,10 @@ test-first not credited: ${out.uncredited}` : "";
       if (filed.fileHash !== undefined && filed.fileHash !== contentHash)
         return refuse(`${name} changed after its filing: its content is not the one ${oneLine(filed.agent)} filed; resume the lead for a new answer; nothing recorded`);
       const contentChecked = filed.fileHash !== undefined;
-      const specText = readText(join71(dir, "spec.md"));
+      const specText = readText(join72(dir, "spec.md"));
       if (what === "spec" && specText === null)
         return refuse(`no spec.md to validate: write .crew/work/${work.id}/spec.md first (the route asks for it)`);
-      const hash = validationHash(what, specText, readText(join71(dir, "plan.md")), evidence.fingerprint ?? "");
+      const hash = validationHash(what, specText, readText(join72(dir, "plan.md")), evidence.fingerprint ?? "");
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
       const { round, newRound } = validationRound(work.validations ?? [], what, by, hash, rounds.validation);
       if (what === "spec" && newRound) {
@@ -29650,6 +29765,7 @@ var HELP = `crew ${VERSION}
   debate <id> open --reason "<why>"     the conclave's debate opens on a decision with consequences (once per item)
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
+  sources [<team> [<n>]]                what each team was given (its sources, tools, servers and skills): the teams and their files, a team's index, or one section; installs nothing
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

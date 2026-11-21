@@ -13,6 +13,7 @@ const SHIPPED = [
   "e2e",
   "hooks",
   "skills",
+  "teams",
 ] as const;
 const TOP = "wizardingcode-developer-crew";
 

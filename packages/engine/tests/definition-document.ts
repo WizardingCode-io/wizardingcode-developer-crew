@@ -26,21 +26,9 @@ export function numberedLine(text: string, number: number, opens: string): strin
   return lines.find((line) => line.startsWith(opens)) ?? "";
 }
 
-/** The cells of one table line. */
-export function cells(line: string): string[] {
-  return line
-    .slice(1, line.endsWith("|") ? -1 : undefined)
-    .split("|")
-    .map((cell) => cell.trim());
-}
-
-/** A line of a table that is not the rule under its header. */
-export const isRow = (line: string) => line.startsWith("| ") && !line.startsWith("| :-");
-
-/** The rows of a section's tables, each as its cells, the rule under a header left out. */
-export function rows(part: string): string[][] {
-  return part.split("\n").filter(isRow).map(cells);
-}
+// One reader for a table (item 2026-11-21-001): the engine cuts a declaration's rows with the same
+// functions these tests cut a definition's.
+export { cells, isRow, rows } from "../src/team-sources.ts";
 
 /** The top-level bullets of a section, each without its dash. */
 export function bullets(part: string): string[] {

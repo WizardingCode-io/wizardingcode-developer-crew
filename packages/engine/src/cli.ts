@@ -431,6 +431,7 @@ import {
   teamLine,
   teamsFor,
 } from "./team.ts";
+import { sourcesCommand } from "./team-sources.ts";
 import type {
   ChecklistRecord,
   Criterion,
@@ -652,6 +653,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
     "contract",
   ],
   mode: [],
+  sources: [],
   config: [],
   version: [],
   help: [],
@@ -4557,6 +4559,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   if (!command || command === "help") return ok(HELP);
   if (command === "mode" || command === "config")
     return settings(command, args, { userDir: userDirOf(io.env) });
+  // What each team was given is read from the plugin's own folder before a
+  // project is resolved, so it writes nothing, first-use records included, and runs anywhere.
+  if (command === "sources") {
+    const answer = sourcesCommand(pluginRoot(), args);
+    return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
+  }
   // launchd runs the tick from the root of the disk: it reads the user's journeys, not a repository.
   if (command === "journey" && args[0] === "tick")
     return ok(tickJourneys(userDirOf(io.env), realJourneyDeps(io.env)).join("\n"), {});
@@ -7669,6 +7677,7 @@ const HELP = `crew ${VERSION}
   debate <id> open --reason "<why>"     the conclave's debate opens on a decision with consequences (once per item)
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
+  sources [<team> [<n>]]                what each team was given (its sources, tools, servers and skills): the teams and their files, a team's index, or one section; installs nothing
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

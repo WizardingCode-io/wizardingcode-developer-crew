@@ -44,5 +44,6 @@ A row with no proof is left out. The session saves your answer as `.crew/work/<i
 - Every fact names its source: a file and line, or a URL you fetched in this run. A sentence without a source is not a fact; leave it out.
 - Say what the code does, not what it should do. Say what the documentation says, not what you remember of it: fetch it.
 - When two sources disagree, return both and say so under "What the facts do not settle".
+- When the prompt carries a path that `crew sources` printed (a team's declaration: its sources, tools, servers and skills), read the sections that bear on the question before you search; nothing is installed from a declaration.
 - Stay on the decisions you were given; a fact about something else is noise.
 - You never write files or run commands; the session saves your answer as `.crew/work/<id>/conclave/researcher.md`. You see nothing of the conversation; the files are your whole context.

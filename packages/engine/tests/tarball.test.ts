@@ -51,6 +51,8 @@ test("SP6-T4 AC-6: buildTarball writes the archive of plugins/core under one fol
     `${TOP}/e2e`,
     `${TOP}/hooks`,
     `${TOP}/skills`,
+    // 2026-11-21-001 edits this list: the teams' declarations ship with the plugin.
+    `${TOP}/teams`,
   ]);
   expect(paths).toContain(`${TOP}/.claude-plugin/plugin.json`);
   expect(paths).toContain(`${TOP}/dist/crew.mjs`);

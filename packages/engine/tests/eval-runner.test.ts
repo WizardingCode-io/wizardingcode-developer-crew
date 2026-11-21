@@ -2662,8 +2662,20 @@ test("AC-14 (was AC-13; findings 64, 95): the kit's session gets Bash whole, Wri
         encoding: "utf8",
       },
     );
+  // 2026-11-21-001 edits this assertion: the ETL team's declaration quotes Confluent's own flag of
+  // that name, word for word from the definition. It is the one file that may hold the words, and
+  // only on a line that names Confluent; any other file, or any other line, is the kit's grant
+  // outside scripts/eval.ts.
   const flag = grep("--allow-tools");
-  expect(flag.status, `${flag.stdout}${flag.stderr}`).toBe(1);
+  const CONFLUENT_ROW = "plugins/core/teams/etl.md";
+  // Status 0 with that one file listed: 1 would mean the declaration lost the row, 2 an error.
+  expect(flag.status, `${flag.stdout}${flag.stderr}`).toBe(0);
+  expect(flag.stdout.trim().split("\n")).toEqual([CONFLUENT_ROW]);
+  const quoted = readFileSync(join(repoRoot, CONFLUENT_ROW), "utf8")
+    .split("\n")
+    .filter((line) => line.includes("--allow-tools"));
+  expect(quoted).toHaveLength(1);
+  expect(quoted[0]).toContain("Confluent's local server");
   const narrow = grep("Bash\\(crew", "crew.mjs");
   expect(narrow.status, `${narrow.stdout}${narrow.stderr}`).toBe(1);
   expect(readFileSync(join(repoRoot, "plugins/core/dist/crew.mjs"), "utf8")).not.toContain(
