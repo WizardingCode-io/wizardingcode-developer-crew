@@ -11660,6 +11660,17 @@ var FRAMEWORKS = [
   { id: "rocket", name: "Rocket", stack: "rust", identifiers: ["rocket"] },
   { id: "tokio", name: "Tokio", stack: "rust", identifiers: ["tokio"] }
 ];
+var NOT_IN_A_MANIFEST = [
+  {
+    name: "WordPress",
+    reason: "a site, a plugin or a theme is known by its files (wp-config.php, a header comment), not by a dependency"
+  },
+  { name: "PHP with no framework", reason: "the absence of a framework is no dependency" },
+  {
+    name: "the standard library's net/http",
+    reason: "the standard library has no require line in go.mod"
+  }
+];
 var MANIFEST_MAX_BYTES = 1024 * 1024;
 var MANIFEST_LINE_MAX = 4096;
 var REQUIREMENTS_FILES_MAX = 16;
@@ -11834,7 +11845,9 @@ function pyprojectNames(text) {
   let inArray = false;
   for (const line of linesOf(text)) {
     if (line.text === null) {
-      if (!inArray && line.opens === "[")
+      if (inArray)
+        inArray = false;
+      else if (line.opens === "[")
         table = "other";
       continue;
     }
@@ -11986,9 +11999,11 @@ function frameworksOf(dir, stack) {
       return [];
   }
 }
+function frameworkIds(value) {
+  return Array.isArray(value) ? value.filter((id) => typeof id === "string" && IDS.has(id)) : [];
+}
 function frameworksLine(target) {
-  const listed = target.frameworks;
-  const ids = Array.isArray(listed) ? listed.filter((id) => typeof id === "string" && IDS.has(id)) : [];
+  const ids = frameworkIds(target.frameworks);
   return ids.length ? `
     frameworks: ${ids.join(", ")}` : "";
 }
@@ -12465,6 +12480,11 @@ function detectBrowser(env, candidates) {
 function commandText(command) {
   return `${command.command}${command.source === "proposed" ? " [proposed]" : ""}`;
 }
+function levelWith(saved, fresh) {
+  if (saved === undefined)
+    return fresh.length === 0;
+  return Array.isArray(saved) && saved.length === fresh.length && saved.every((id, at) => id === fresh[at]);
+}
 function profileChanges(previous, next) {
   const lines = [];
   const same = (a, b) => a.path === b.path && a.stack === b.stack;
@@ -12486,9 +12506,7 @@ function profileChanges(previous, next) {
       if (!target.gates[gate])
         lines.push(`${gate} (${target.path}): removed`);
     const shown = target.frameworks ?? [];
-    if ((old.frameworks ?? []).join(`
-`) !== shown.join(`
-`))
+    if (!levelWith(old.frameworks, shown))
       lines.push(`frameworks of ${target.path}: ${shown.length ? shown.join(", ") : "none"}`);
   }
   for (const old of previous.targets)
@@ -18243,7 +18261,8 @@ var BOOLEAN_FLAGS = new Set([
   "all",
   "remove",
   "dry-run",
-  "here"
+  "here",
+  "project"
 ]);
 function commaList(value) {
   if (typeof value !== "string")
@@ -24717,7 +24736,7 @@ ${row}
 import { join as join73 } from "node:path";
 var DECLARATION_MAX_BYTES = 1024 * 1024;
 var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names: the page is read again before the line is run, and who runs it is not decided yet.";
-var USAGE = "usage: crew sources [<team> [<n>]]";
+var USAGE = "usage: crew sources [<team> [<n>]] | crew sources backend --project";
 function cells(line) {
   return line.slice(1, line.endsWith("|") ? -1 : undefined).split("|").map((cell) => cell.trim());
 }
@@ -24794,13 +24813,86 @@ function indexLine(section) {
   const tail = counts.length ? ` (${counts.join(", ")})` : "";
   return `${section.number}. ${section.level === 3 ? "  " : ""}${title}${tail}`;
 }
-function sourcesCommand(root, args) {
+var PER_STACK = "### Per stack, from the framework's or the tool's own team";
+var STACK_OF = new Map([
+  ["PHP", "php"],
+  ["Node / TypeScript", "node"],
+  ["Python", "python"],
+  ["Go", "go"],
+  ["Rust", "rust"]
+]);
+var ROW_STACKS = [...STACK_OF.values()];
+var isLetter = (char) => char !== undefined && /[A-Za-z]/.test(char);
+function shownIds(targets) {
+  return new Set(targets.flatMap((target) => frameworkIds(target.frameworks)));
+}
+function names2(text, phrase) {
+  for (let at = text.indexOf(phrase);at >= 0; at = text.indexOf(phrase, at + 1))
+    if (!isLetter(text[at - 1]) && !isLetter(text[at + phrase.length]))
+      return true;
+  return false;
+}
+function projectRows(declaration, targets) {
+  const section = declarationSections(declaration).find((s) => s.heading === PER_STACK);
+  const lines = (section?.lines ?? []).filter(isRow).slice(1);
+  return lines.map((line) => {
+    const row = cells(line);
+    const stack = STACK_OF.get(row[0] ?? "");
+    const mine = targets.filter((target) => target.stack === stack);
+    if (stack === undefined || mine.length === 0)
+      return { mark: "other stack", cells: row, line };
+    const said = row[1] ?? "";
+    const named = FRAMEWORKS.filter((f) => f.stack === stack && names2(said, f.name)).map((f) => f.id);
+    if (named.length) {
+      const shown = shownIds(mine);
+      const mark = named.some((id) => shown.has(id)) ? "framework" : "not this project's";
+      return { mark, cells: row, line };
+    }
+    const product = NOT_IN_A_MANIFEST.some((entry) => names2(said, entry.name));
+    return { mark: product ? "not this project's" : "by stack", cells: row, line };
+  });
+}
+function projectLines(declaration, cwd) {
+  const root = findRoot(cwd);
+  if (root === null)
+    return [
+      "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it"
+    ];
+  const targets = detectTargets(root).filter((target) => ROW_STACKS.includes(target.stack));
+  const stacks = CORE_STACKS.filter((stack) => targets.some((target) => target.stack === stack));
+  if (stacks.length === 0)
+    return [
+      `this project: no target of a stack the declaration has rows for (${ROW_STACKS.join(", ")})`
+    ];
+  const project = stacks.map((stack) => {
+    const shown = shownIds(targets.filter((t) => t.stack === stack));
+    const ids = FRAMEWORKS.filter((f) => shown.has(f.id)).map((f) => f.id);
+    return `${stack} (${ids.length ? ids.join(", ") : "no framework of the table"})`;
+  });
+  const rows = projectRows(declaration, targets);
+  const of = (mark) => rows.filter((row) => row.mark === mark);
+  const printed = (mark) => {
+    const found = of(mark).map((row) => declarationLine(row.line));
+    return found.length ? found : ["  none"];
+  };
+  return [
+    `this project: ${project.join("; ")}`,
+    "rows for this project's frameworks:",
+    ...printed("framework"),
+    "rows by stack (the tool each names is not detected yet):",
+    ...printed("by stack"),
+    `left out: ${of("other stack").length} rows of another stack, ${of("not this project's").length} rows of a framework or a product this project does not show`
+  ];
+}
+function sourcesCommand(root, args, options = {}) {
   const refuse = (text) => ({ code: 1, text });
   const done = (lines) => ({ code: 0, text: [...lines, LAST_LINE].join(`
 `) });
   if (args.length > 2)
     return refuse(USAGE);
   const [team, n] = args;
+  if (options.project && (team === undefined || n !== undefined))
+    return refuse(USAGE);
   if (team === undefined) {
     const lines = [];
     for (const name of teamNames()) {
@@ -24814,6 +24906,11 @@ function sourcesCommand(root, args) {
   const read = readTeamDeclaration(root, team);
   if ("refused" in read)
     return refuse(read.refused);
+  if (options.project) {
+    if (team !== "backend")
+      return refuse("only the backend's declaration has rows by stack: crew sources backend --project");
+    return done([read.path, ...projectLines(read.text, options.project.cwd)]);
+  }
   const sections = declarationSections(read.text);
   if (n === undefined)
     return done([read.path, ...sections.map(indexLine)]);
@@ -24972,7 +25069,7 @@ var KNOWN_FLAGS = {
     "contract"
   ],
   mode: [],
-  sources: [],
+  sources: ["project"],
   config: [],
   version: [],
   help: []
@@ -27751,7 +27848,7 @@ async function dispatch(parsed, io) {
   if (command === "mode" || command === "config")
     return settings(command, args, { userDir: userDirOf(io.env) });
   if (command === "sources") {
-    const answer = sourcesCommand(pluginRoot(), args);
+    const answer = sourcesCommand(pluginRoot(), args, parsed.flags.project === true ? { project: { cwd: io.cwd } } : {});
     return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
   }
   if (command === "journey" && args[0] === "tick")
@@ -30221,6 +30318,7 @@ var HELP = `crew ${VERSION}
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   sources [<team> [<n>]]                what each team was given (its sources, tools, servers and skills): the teams and their files, a team's index, or one section; installs nothing
+  sources backend --project             the rows of the backend's per-stack table that are this project's, by the frameworks its manifests show; reads the project, writes nothing
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

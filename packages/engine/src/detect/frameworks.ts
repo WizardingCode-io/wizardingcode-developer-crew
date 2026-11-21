@@ -311,8 +311,11 @@ function pyprojectNames(text: string): string[] {
   let inArray = false;
   for (const line of linesOf(text)) {
     if (line.text === null) {
-      // A header passed over closes the table that was open; inside the array a line is an entry.
-      if (!inArray && line.opens === "[") table = "other";
+      // A line passed over inside the array ends the array: it may be the one that closes it, and
+      // reading on would take what follows for entries. Elsewhere a header passed over closes the
+      // table that was open.
+      if (inArray) inArray = false;
+      else if (line.opens === "[") table = "other";
       continue;
     }
     if (inArray) {
@@ -465,11 +468,15 @@ export function frameworksOf(dir: string, stack: string): string[] {
   }
 }
 
+/** The ids of the table a list holds, in the list's order; none for a value that is no list. A saved profile's field is read through this, so a value changed by hand is never trusted for its shape. */
+export function frameworkIds(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((id): id is string => typeof id === "string" && IDS.has(id))
+    : [];
+}
+
 /** The line a profile's view prints under a target that shows a framework: ids of the table alone, so a profile changed by hand puts no word of its own there. */
 export function frameworksLine(target: Pick<Target, "frameworks">): string {
-  const listed: unknown = target.frameworks;
-  const ids = Array.isArray(listed)
-    ? listed.filter((id): id is string => typeof id === "string" && IDS.has(id))
-    : [];
+  const ids = frameworkIds(target.frameworks);
   return ids.length ? `\n    frameworks: ${ids.join(", ")}` : "";
 }

@@ -29,6 +29,8 @@ export const BOOLEAN_FLAGS = new Set([
   "dry-run",
   // `crew await <id> role --here` (finding 183): the wait inside the turn, never a value.
   "here",
+  // `crew sources backend --project`: the rows of this project, never a value.
+  "project",
 ]);
 
 /** A comma-separated flag as its trimmed non-empty words; a flag absent, boolean or empty gives none (finding 88). */

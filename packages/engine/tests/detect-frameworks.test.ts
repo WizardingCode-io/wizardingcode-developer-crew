@@ -749,7 +749,8 @@ test(`${ITEM} AC-18: a text manifest's cost follows its size whatever its lines 
       in: [edge.id],
     });
   }
-  // A line passed over inside a multi-line array leaves the array open: the entry after it is read.
+  // 2026-11-21-004 reverses this case: a line passed over inside a multi-line array ends the array,
+  // since it may be the one that closes it; the entry after it is not read.
   expect(
     found(
       pyproject(
@@ -757,7 +758,7 @@ test(`${ITEM} AC-18: a text manifest's cost follows its size whatever its lines 
       ),
       "python",
     ),
-  ).toEqual(["flask"]);
+  ).toEqual([]);
   // A table header passed over closes the table that was open: what follows is under a table not known.
   expect(
     found(

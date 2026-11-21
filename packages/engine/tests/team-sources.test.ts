@@ -337,11 +337,14 @@ test(`${ITEM} AC-19: a name that is no team, a number that is no section and a t
   }
   const third = await run("sources", "backend", "1", "2");
   expect(third.code).toBe(1);
-  expect(said(third)).toBe("usage: crew sources [<team> [<n>]]");
+  // 2026-11-21-004 edits this line: the usage gained the form of the project's rows.
+  expect(said(third)).toBe("usage: crew sources [<team> [<n>]] | crew sources backend --project");
   const flag = await run("sources", "backend", "--first", "PHP");
   expect(flag.code).toBe(1);
   expect(said(flag)).toContain("unknown flag --first for sources");
-  for (const answer of [third, flag]) expect(said(answer)).not.toContain("| ");
+  // 2026-11-21-004 edits this line: the usage holds " | " between its two forms now, so "no row of
+  // a declaration" is read as what it is, no line that opens as a table's row.
+  for (const answer of [third, flag]) expect(said(answer)).not.toMatch(/^\| /m);
 });
 
 test(`${ITEM} AC-20: a declaration that is absent, a link, a folder or over the cap is refused by name with no text, and so is a name that is no team where a file stands at the path it would build`, () => {

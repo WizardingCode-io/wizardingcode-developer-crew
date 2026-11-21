@@ -2029,3 +2029,21 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Evidence: the item's `logs/test-_-*.txt` of that run (the failed row and its line); the item's delivery notes, under "A gate run's red in a row of another item".
 - Outcome: open. Item `2026-11-19-003` gave the next occurrence its instrument and found no cause: the row prints the refusal's message, and where a git command fails while the change is listed the refusal names the command and why. How to read the next occurrence, in two cases. Every watched file named, with a clause "git could not answer": git did not answer, and the clause says which command and what git wrote, or that it answered when asked again, which is a fault that passed. The two sources alone, with no clause: git answered and the cause is elsewhere. One way to that second case is in the code and asks git nothing: a path is also named where a file's content differs from the hash the item recorded for it, which is read from the disk. What findings 248 and 249 share as fact: each is one row that failed once under the whole suite and passed alone and on the next run. They are not shown to be one, and the row of finding 248 has no such instrument yet.
 
+### 250. The detectors of PHP, Node and Python read a project's manifest with no bound, and the walk follows a linked folder
+
+- Date: 2026-11-21. Project: this repository, the security lead's reading at the specs of items `2026-11-21-003` and `2026-11-21-004`. Category: `defect`. Severity: low.
+- What happened: nothing failed. By reading: `packages/engine/src/detect/php.ts`, `node.ts` and `python.ts` find their target with `readJson` and `readTextQuietly` (`packages/engine/src/fs.ts`), a plain read with no size cap that follows a symbolic link; the walk of `detectTargets` (`packages/engine/src/detect/index.ts`) tests a folder with `statSync`, which follows a link to a folder. Detection runs at `crew detect`, at each refresh of the profile and from the hooks. The readers the two items added (`packages/engine/src/detect/frameworks.ts`, `rust.ts`) read a regular file of at most 1 MiB and never through a link.
+- Cause: the three detectors were written before the bounded read (`readRegular`) existed.
+- Expected: every read detection makes of a project's file is a regular file under a cap, never through a link, and a folder reached through a link is not walked; a named pipe or a link to a device under a manifest's name blocks no command.
+- Evidence: the security lead's validations of the two items (`conclave/lead-security.md` and its replies in each item's folder); with it, the same lead's finding of item `2026-11-21-002`: `package.json`'s `workspaces` reach `globToRegExp` (`packages/engine/src/glob.ts`) with no cap on their count, their length or their stars.
+- Outcome: open. Bounding the three reads changes which folders are targets (a manifest that is a link is a target today), so it is an item of its own with its own preserve criterion.
+
+### 251. The comparison of two profiles trusts the shape of a saved profile's gates
+
+- Date: 2026-11-21. Project: this repository, the code-quality review of item `2026-11-21-003` and the security lead's reading at its delivery. Category: `defect`. Severity: low.
+- What happened: nothing failed. By reading: `profileChanges` (`packages/engine/src/detect/index.ts`) reads `old.gates[gate]` and `Object.keys(old.gates)` of a saved profile. A profile changed by hand is refused as tampered before that; one the user then accepts with `gates` as something that is no object makes every refresh throw, and a hook that throws fails open, its rule skipped. Item `2026-11-21-004` closed the same fault for `frameworks`, which is now compared and never called.
+- Cause: the function was written for profiles the engine alone writes.
+- Expected: no value of a saved profile makes a refresh throw: a shape that is not the engine's is a change, replaced by the fresh detection and said.
+- Evidence: `review/ruling.json` of item `2026-11-21-003` (code-quality, F-1); the security lead's delivery validation of that item.
+- Outcome: open. One guard for every field `profileChanges` reads of a saved target, in the item that bounds the detectors' reads (finding 250).
+

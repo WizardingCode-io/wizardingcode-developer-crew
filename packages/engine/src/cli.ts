@@ -655,7 +655,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
     "contract",
   ],
   mode: [],
-  sources: [],
+  sources: ["project"],
   config: [],
   version: [],
   help: [],
@@ -4561,10 +4561,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   if (!command || command === "help") return ok(HELP);
   if (command === "mode" || command === "config")
     return settings(command, args, { userDir: userDirOf(io.env) });
-  // What each team was given is read from the plugin's own folder before a
-  // project is resolved, so it writes nothing, first-use records included, and runs anywhere.
+  // What each team was given is read from the plugin's own folder, and with --project the
+  // project's manifests are read in memory, all before a project is resolved: nothing is loaded
+  // or written, first-use records included, so it runs anywhere.
   if (command === "sources") {
-    const answer = sourcesCommand(pluginRoot(), args);
+    const answer = sourcesCommand(
+      pluginRoot(),
+      args,
+      parsed.flags.project === true ? { project: { cwd: io.cwd } } : {},
+    );
     return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
   }
   // launchd runs the tick from the root of the disk: it reads the user's journeys, not a repository.
@@ -7680,6 +7685,7 @@ const HELP = `crew ${VERSION}
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   sources [<team> [<n>]]                what each team was given (its sources, tools, servers and skills): the teams and their files, a team's index, or one section; installs nothing
+  sources backend --project             the rows of the backend's per-stack table that are this project's, by the frameworks its manifests show; reads the project, writes nothing
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

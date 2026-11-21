@@ -298,6 +298,20 @@ export function commandText(command: GateCommand): string {
 }
 
 /**
+ * Whether a target's saved `frameworks` is level with the fresh detection: a list of exactly the
+ * fresh ids in their order, an absent field being level with none. Anything else is a change, so a
+ * value made by hand is replaced and never stays; the saved value is only compared, never called.
+ */
+function levelWith(saved: unknown, fresh: readonly string[]): boolean {
+  if (saved === undefined) return fresh.length === 0;
+  return (
+    Array.isArray(saved) &&
+    saved.length === fresh.length &&
+    saved.every((id, at) => id === fresh[at])
+  );
+}
+
+/**
  * What a re-detection changed, one line each ("test (.): bun run test", "packageManager (.): bun"),
  * so the gate run and the session say what the profile picked up (finding 23). The watch list and
  * `detectedAt` are not changes.
@@ -325,7 +339,7 @@ export function profileChanges(previous: Profile, next: Profile): string[] {
       if (!target.gates[gate]) lines.push(`${gate} (${target.path}): removed`);
     // The ids are the fresh detection's: nothing of the earlier list is printed.
     const shown = target.frameworks ?? [];
-    if ((old.frameworks ?? []).join("\n") !== shown.join("\n"))
+    if (!levelWith(old.frameworks, shown))
       lines.push(`frameworks of ${target.path}: ${shown.length ? shown.join(", ") : "none"}`);
   }
   for (const old of previous.targets)

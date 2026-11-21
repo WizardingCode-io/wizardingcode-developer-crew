@@ -4,9 +4,12 @@
 // sections and tables, and answers `crew sources`. Nothing here installs or writes.
 
 import { join } from "node:path";
+import { FRAMEWORKS, frameworkIds, NOT_IN_A_MANIFEST } from "./detect/frameworks.ts";
+import { detectTargets } from "./detect/index.ts";
 import { readRegular } from "./fs.ts";
+import { findRoot } from "./paths.ts";
 import { TEAMS } from "./team.ts";
-import type { TeamName } from "./types.ts";
+import { CORE_STACKS, type Target, type TeamName } from "./types.ts";
 
 /** The definition each team's declaration is cut from, under `docs/specs/`. */
 export const TEAM_DEFINITION_FILES: Record<TeamName, string> = {
@@ -27,7 +30,7 @@ export const DECLARATION_MAX_BYTES = 1024 * 1024;
 export const LAST_LINE =
   "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names: the page is read again before the line is run, and who runs it is not decided yet.";
 
-const USAGE = "usage: crew sources [<team> [<n>]]";
+const USAGE = "usage: crew sources [<team> [<n>]] | crew sources backend --project";
 const FIRST_SECTION = "\n## 3. ";
 const LAST_SECTION = /^## \d+\. What the code needs, not decided here$/m;
 
@@ -167,18 +170,126 @@ function indexLine(section: DeclarationSection): string {
   return `${section.number}. ${section.level === 3 ? "  " : ""}${title}${tail}`;
 }
 
+export type RowMark = "framework" | "by stack" | "not this project's" | "other stack";
+
+export interface ProjectRow {
+  mark: RowMark;
+  cells: string[];
+  /** The row as the declaration holds it. */
+  line: string;
+}
+
+/** The heading of the one table whose rows are keyed by stack. */
+const PER_STACK = "### Per stack, from the framework's or the tool's own team";
+/** The stack names of that table's first cell, each to the core's stack, in the declaration's order. */
+const STACK_OF: ReadonlyMap<string, string> = new Map([
+  ["PHP", "php"],
+  ["Node / TypeScript", "node"],
+  ["Python", "python"],
+  ["Go", "go"],
+  ["Rust", "rust"],
+]);
+/** The core's stacks the table has rows for, in the declaration's order. */
+const ROW_STACKS: readonly string[] = [...STACK_OF.values()];
+const isLetter = (char: string | undefined) => char !== undefined && /[A-Za-z]/.test(char);
+
+/** The ids of the table that targets show between them. */
+function shownIds(targets: readonly Pick<Target, "frameworks">[]): Set<string> {
+  return new Set(targets.flatMap((target) => frameworkIds(target.frameworks)));
+}
+
+/** Whether a text names a phrase whole: the phrase with a letter on neither side of it. */
+function names(text: string, phrase: string): boolean {
+  for (let at = text.indexOf(phrase); at >= 0; at = text.indexOf(phrase, at + 1))
+    if (!isLetter(text[at - 1]) && !isLetter(text[at + phrase.length])) return true;
+  return false;
+}
+
+/**
+ * The rows of the backend declaration's per-stack table, each marked for a project's targets: a
+ * row of a stack the project has is the project's by a framework its cell names and a target shows
+ * (`framework`), or by its stack where the cell names no framework (`by stack`: a tool the engine
+ * does not detect yet); a row that names frameworks no target shows, or a product no manifest
+ * shows, is `not this project's`. A framework named decides over such a product.
+ */
+export function projectRows(
+  declaration: string,
+  targets: readonly Pick<Target, "stack" | "frameworks">[],
+): ProjectRow[] {
+  const section = declarationSections(declaration).find((s) => s.heading === PER_STACK);
+  // The table's lines after its header: the rows, as the file holds them.
+  const lines = (section?.lines ?? []).filter(isRow).slice(1);
+  return lines.map((line): ProjectRow => {
+    const row = cells(line);
+    const stack = STACK_OF.get(row[0] ?? "");
+    const mine = targets.filter((target) => target.stack === stack);
+    if (stack === undefined || mine.length === 0) return { mark: "other stack", cells: row, line };
+    const said = row[1] ?? "";
+    const named = FRAMEWORKS.filter((f) => f.stack === stack && names(said, f.name)).map(
+      (f) => f.id,
+    );
+    if (named.length) {
+      const shown = shownIds(mine);
+      const mark = named.some((id) => shown.has(id)) ? "framework" : "not this project's";
+      return { mark, cells: row, line };
+    }
+    const product = NOT_IN_A_MANIFEST.some((entry) => names(said, entry.name));
+    return { mark: product ? "not this project's" : "by stack", cells: row, line };
+  });
+}
+
+/** The lines of `crew sources backend --project`, after the declaration's path: the project as detected in memory and its rows. */
+function projectLines(declaration: string, cwd: string): string[] {
+  const root = findRoot(cwd);
+  if (root === null)
+    return [
+      "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it",
+    ];
+  // No pack's rules: the stacks are the core's five, and nothing is loaded or saved.
+  const targets = detectTargets(root).filter((target) => ROW_STACKS.includes(target.stack));
+  const stacks = CORE_STACKS.filter((stack) => targets.some((target) => target.stack === stack));
+  if (stacks.length === 0)
+    return [
+      `this project: no target of a stack the declaration has rows for (${ROW_STACKS.join(", ")})`,
+    ];
+  const project = stacks.map((stack) => {
+    const shown = shownIds(targets.filter((t) => t.stack === stack));
+    const ids = FRAMEWORKS.filter((f) => shown.has(f.id)).map((f) => f.id);
+    return `${stack} (${ids.length ? ids.join(", ") : "no framework of the table"})`;
+  });
+  const rows = projectRows(declaration, targets);
+  const of = (mark: RowMark) => rows.filter((row) => row.mark === mark);
+  const printed = (mark: RowMark) => {
+    const found = of(mark).map((row) => declarationLine(row.line));
+    return found.length ? found : ["  none"];
+  };
+  return [
+    `this project: ${project.join("; ")}`,
+    "rows for this project's frameworks:",
+    ...printed("framework"),
+    "rows by stack (the tool each names is not detected yet):",
+    ...printed("by stack"),
+    `left out: ${of("other stack").length} rows of another stack, ${of("not this project's").length} rows of a framework or a product this project does not show`,
+  ];
+}
+
 /**
  * `crew sources [<team> [<n>]]`: the teams with their files, a team's index, or one section's own
- * lines, each ended by the fixed last line. A refusal carries no line of a declaration.
+ * lines; `crew sources backend --project`: the rows of the backend's per-stack table that are the
+ * project's at `cwd`. Each ends with the fixed last line. A refusal carries no line of a declaration.
  */
 export function sourcesCommand(
   root: string,
   args: readonly string[],
+  /** `project`: the folder whose project's rows are asked for, with `--project`. */
+  options: { project?: { cwd: string } } = {},
 ): { code: number; text: string } {
   const refuse = (text: string) => ({ code: 1, text });
   const done = (lines: string[]) => ({ code: 0, text: [...lines, LAST_LINE].join("\n") });
   if (args.length > 2) return refuse(USAGE);
   const [team, n] = args;
+  // The project's rows are one team's and no section's.
+  if (options.project && (team === undefined || n !== undefined)) return refuse(USAGE);
   if (team === undefined) {
     const lines: string[] = [];
     for (const name of teamNames()) {
@@ -190,6 +301,13 @@ export function sourcesCommand(
   }
   const read = readTeamDeclaration(root, team);
   if ("refused" in read) return refuse(read.refused);
+  if (options.project) {
+    if (team !== "backend")
+      return refuse(
+        "only the backend's declaration has rows by stack: crew sources backend --project",
+      );
+    return done([read.path, ...projectLines(read.text, options.project.cwd)]);
+  }
   const sections = declarationSections(read.text);
   if (n === undefined) return done([read.path, ...sections.map(indexLine)]);
   const section = /^[1-9]\d*$/.test(n) ? sections[Number(n) - 1] : undefined;
