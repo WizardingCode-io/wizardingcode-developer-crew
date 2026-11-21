@@ -80,13 +80,13 @@ export function isFrontendPath(rel: string): boolean {
 
 /**
  * A test file, from its path alone (finding 149): a `tests`, `test` or `spec` folder at the root or
- * at a workspace's root (`packages/<name>/`, `apps/<name>/`), `src/test/`, `__tests__/` at any
+ * at a workspace's root (`packages/<name>/`, `apps/<name>/`, a Cargo workspace's `crates/<name>/`), `src/test/`, `__tests__/` at any
  * depth, or a test's own name (`.test.`, `.spec.`, `_test.`, `Test.php`, `Tests.cs`). Narrow on
  * purpose: `src/spec/` or `app/test/` hold source, so their lines are read for personal data.
  */
 export function isTestPath(rel: string): boolean {
   const path = rel.replace(/\\/g, "/");
-  if (/^(?:(?:packages|apps)\/[^/]+\/)?(?:tests?|spec)\//.test(path)) return true;
+  if (/^(?:(?:packages|apps|crates)\/[^/]+\/)?(?:tests?|spec)\//.test(path)) return true;
   if (/^src\/test\//.test(path) || inTestsFolder(path)) return true;
   const name = path.slice(path.lastIndexOf("/") + 1);
   return isTestName(name) || /_test\.[^.]+$/.test(name) || /(?:Test\.php|Tests\.cs)$/.test(name);

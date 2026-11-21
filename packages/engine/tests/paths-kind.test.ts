@@ -116,3 +116,11 @@ test("2026-10-30-001 AC-23: a module under a public folder at the root or at a w
   // A stylesheet or a page stays an interface file wherever it sits, by its extension.
   expect(isInterfacePath("public/build/app.css")).toBe(true);
 });
+
+test("2026-11-21-002 AC-17: a Go test file, a root tests folder and a Rust source file answer isTestPath as they did before Go and Rust were detected", () => {
+  for (const path of ["pkg/handler_test.go", "handler_test.go", "tests/api.rs", "test/api.rs"])
+    expect(isTestPath(path), path).toBe(true);
+  // A Rust unit test lives inline in its source file: no path tells it from source.
+  for (const path of ["src/lib.rs", "src/main.rs", "src/handler.go", "cmd/app/main.go"])
+    expect(isTestPath(path), path).toBe(false);
+});

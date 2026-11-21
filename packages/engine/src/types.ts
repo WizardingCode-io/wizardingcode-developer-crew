@@ -157,7 +157,7 @@ export interface GateCommand {
 }
 
 /** The stacks the core detects; 'other' is a target a person configured by hand, on a stack no detector knows. */
-export const CORE_STACKS = ["node", "php", "python", "other"] as const;
+export const CORE_STACKS = ["node", "php", "python", "go", "rust", "other"] as const;
 export type CoreStack = (typeof CORE_STACKS)[number];
 /** A core stack, or the id of a pack's detector rule (SP6 Task 2). */
 export type Stack = string;

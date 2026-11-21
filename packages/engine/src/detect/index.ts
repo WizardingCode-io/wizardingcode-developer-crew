@@ -6,12 +6,20 @@ import { findBrowser, onPath } from "../pdf.ts";
 import { SKIP_DIRS } from "../skip-dirs.ts";
 import type { Environment, GateCommand, GateName, Profile, Target } from "../types.ts";
 import { confirmedEnvironment, detectEnvironment, environmentChanges } from "./environment.ts";
+import { goDetector } from "./go.ts";
 import { nodeDetector } from "./node.ts";
 import { phpDetector } from "./php.ts";
 import { pythonDetector } from "./python.ts";
+import { rustDetector } from "./rust.ts";
 import type { DetectedTarget, Detector, DetectorRule } from "./types.ts";
 
-export const DETECTORS: readonly Detector[] = [nodeDetector, phpDetector, pythonDetector];
+export const DETECTORS: readonly Detector[] = [
+  nodeDetector,
+  phpDetector,
+  pythonDetector,
+  goDetector,
+  rustDetector,
+];
 export const DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**", ".claude/**"];
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 /** Defaults of earlier releases. A saved list equal to one of them was never the user's choice, so it follows the current default. */

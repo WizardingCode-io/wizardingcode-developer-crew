@@ -464,6 +464,7 @@ import type {
   WorkItem,
 } from "./types.ts";
 import {
+  CORE_STACKS,
   e2eTarget,
   GATE_NAMES,
   isBuiltInGate,
@@ -7644,7 +7645,7 @@ function settings(command: "mode" | "config", args: string[], user: { userDir: s
   });
 }
 
-const STACKS: readonly Stack[] = ["node", "php", "python", "other"];
+const STACKS: readonly Stack[] = CORE_STACKS;
 
 const HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile

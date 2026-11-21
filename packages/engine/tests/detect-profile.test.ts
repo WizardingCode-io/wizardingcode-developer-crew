@@ -190,7 +190,8 @@ test("SP6-T2 AC-3: a detector rule refines the core target of its folder as prop
   const root = makeRepo({
     "composer.json": JSON.stringify({ scripts: { test: "phpunit", lint: "pint" } }),
     artisan: "#!/usr/bin/env php\n",
-    "svc/Cargo.toml": "[package]\n",
+    // 2026-11-21-002 edits this fixture: the core detects Rust now, so the stack only a pack adds is Elixir.
+    "svc/mix.exs": "defmodule Svc.MixProject do\nend\n",
     "api/composer.json": JSON.stringify({ scripts: {} }),
   });
   const laravel = {
@@ -204,16 +205,16 @@ test("SP6-T2 AC-3: a detector rule refines the core target of its folder as prop
       testScoped: "php artisan test {files}",
     },
   };
-  const rust = {
-    pack: "wizardingcode-pack-rust",
+  const elixir = {
+    pack: "wizardingcode-pack-elixir",
     rule: {
-      stack: "rust",
-      markers: ["Cargo.toml"],
-      packageManager: "cargo",
-      gates: { test: "cargo test" },
+      stack: "elixir",
+      markers: ["mix.exs"],
+      packageManager: "mix",
+      gates: { test: "mix test" },
     },
   };
-  const targets = detectTargets(root, [laravel, rust]);
+  const targets = detectTargets(root, [laravel, elixir]);
   const refined = targets.find((t) => t.path === "." && t.stack === "php") as Target;
   // The gates the rule names replace the core's, as proposed commands of the pack; the others stay.
   expect(refined.gates.test).toEqual({
@@ -241,9 +242,9 @@ test("SP6-T2 AC-3: a detector rule refines the core target of its folder as prop
   // A rule without extends is a new stack of its own.
   const svc = targets.find((t) => t.path === "svc") as Target;
   expect(svc).toMatchObject({
-    stack: "rust",
-    packageManager: "cargo",
-    gates: { test: { command: "cargo test", source: "proposed", pack: "wizardingcode-pack-rust" } },
+    stack: "elixir",
+    packageManager: "mix",
+    gates: { test: { command: "mix test", source: "proposed", pack: "wizardingcode-pack-elixir" } },
   });
   expect(svc.tags).toBeUndefined();
   // The core first: with no rule the targets are the core's three, the php one unrefined.

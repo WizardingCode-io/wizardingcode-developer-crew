@@ -54,7 +54,7 @@ test("SP6-T2 AC-1: readManifest refuses each field of the wrong shape with one t
     ],
     [
       { detectors: [{ ...manifest().detectors[0], extends: "laravel" }] as never },
-      "pack.json: detector laravel: extends laravel is not a core stack (node, php, python, other)",
+      "pack.json: detector laravel: extends laravel is not a core stack (node, php, python, go, rust, other)",
     ],
     [
       { detectors: [{ ...manifest().detectors[0], markers: [] }] as never },
