@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import { FRAMEWORKS, frameworkIds, NOT_IN_A_MANIFEST } from "./detect/frameworks.ts";
 import { detectTargets } from "./detect/index.ts";
+import { TOOLS, toolIds } from "./detect/tools.ts";
 import { readRegular } from "./fs.ts";
 import { findRoot } from "./paths.ts";
 import { TEAMS } from "./team.ts";
@@ -170,7 +171,7 @@ function indexLine(section: DeclarationSection): string {
   return `${section.number}. ${section.level === 3 ? "  " : ""}${title}${tail}`;
 }
 
-export type RowMark = "framework" | "by stack" | "not this project's" | "other stack";
+export type RowMark = "framework" | "tool" | "by stack" | "not this project's" | "other stack";
 
 export interface ProjectRow {
   mark: RowMark;
@@ -205,16 +206,22 @@ function names(text: string, phrase: string): boolean {
   return false;
 }
 
+/** The ids of the tools' table that targets show between them. */
+function shownTools(targets: readonly Pick<Target, "tools">[]): Set<string> {
+  return new Set(targets.flatMap((target) => toolIds(target.tools)));
+}
+
 /**
- * The rows of the backend declaration's per-stack table, each marked for a project's targets: a
- * row of a stack the project has is the project's by a framework its cell names and a target shows
- * (`framework`), or by its stack where the cell names no framework (`by stack`: a tool the engine
- * does not detect yet); a row that names frameworks no target shows, or a product no manifest
- * shows, is `not this project's`. A framework named decides over such a product.
+ * The rows of the backend declaration's per-stack table, each marked for a project's targets. For
+ * a row of a stack the project has, in this order: a framework of the stack named in its cell
+ * decides (`framework` where a target shows one named, else `not this project's`); else a tool of
+ * the stack named in its cell decides the same way (`tool`); else a product no manifest shows is
+ * `not this project's`; else the row is the project's `by stack`. So a framework's row is a
+ * project's whether or not the tool it installs is already there.
  */
 export function projectRows(
   declaration: string,
-  targets: readonly Pick<Target, "stack" | "frameworks">[],
+  targets: readonly Pick<Target, "stack" | "frameworks" | "tools">[],
 ): ProjectRow[] {
   const section = declarationSections(declaration).find((s) => s.heading === PER_STACK);
   // The table's lines after its header: the rows, as the file holds them.
@@ -225,12 +232,18 @@ export function projectRows(
     const mine = targets.filter((target) => target.stack === stack);
     if (stack === undefined || mine.length === 0) return { mark: "other stack", cells: row, line };
     const said = row[1] ?? "";
-    const named = FRAMEWORKS.filter((f) => f.stack === stack && names(said, f.name)).map(
-      (f) => f.id,
-    );
-    if (named.length) {
+    const frameworks = FRAMEWORKS.filter((f) => f.stack === stack && names(said, f.name));
+    if (frameworks.length) {
       const shown = shownIds(mine);
-      const mark = named.some((id) => shown.has(id)) ? "framework" : "not this project's";
+      const mark = frameworks.some((f) => shown.has(f.id)) ? "framework" : "not this project's";
+      return { mark, cells: row, line };
+    }
+    const tools = TOOLS.filter(
+      (tool) => Object.hasOwn(tool.stacks, stack) && names(said, tool.name),
+    );
+    if (tools.length) {
+      const shown = shownTools(mine);
+      const mark = tools.some((tool) => shown.has(tool.id)) ? "tool" : "not this project's";
       return { mark, cells: row, line };
     }
     const product = NOT_IN_A_MANIFEST.some((entry) => names(said, entry.name));
@@ -238,39 +251,92 @@ export function projectRows(
   });
 }
 
-/** The lines of `crew sources backend --project`, after the declaration's path: the project as detected in memory and its rows. */
-function projectLines(declaration: string, cwd: string): string[] {
+/** The heading of the table whose rows are every stack's, and how its rows for an error service open. */
+const COMMON = "### Common to every stack";
+const ERROR_SERVICE = "Errors in production: ";
+
+/** The rows of the common table for the error services a project's targets show, as the file holds them, in its order. */
+function errorServiceRows(
+  declaration: string,
+  targets: readonly Pick<Target, "tools">[],
+): string[] {
+  const section = declarationSections(declaration).find((s) => s.heading === COMMON);
+  const shown = shownTools(targets);
+  return (section?.lines ?? [])
+    .filter(isRow)
+    .slice(1)
+    .filter((line) => {
+      const use = cells(line)[0] ?? "";
+      if (!use.startsWith(ERROR_SERVICE)) return false;
+      const service = use.slice(ERROR_SERVICE.length);
+      return TOOLS.some((tool) => tool.name === service && shown.has(tool.id));
+    });
+}
+
+/** The targets of a project whose stack the declaration has rows for, detected in memory; null where the folder is in no project. */
+function projectTargets(cwd: string): Target[] | null {
   const root = findRoot(cwd);
-  if (root === null)
-    return [
-      "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it",
-    ];
+  if (root === null) return null;
   // No pack's rules: the stacks are the core's five, and nothing is loaded or saved.
-  const targets = detectTargets(root).filter((target) => ROW_STACKS.includes(target.stack));
+  return detectTargets(root).filter((target) => ROW_STACKS.includes(target.stack));
+}
+
+/** The lines that describe a project: its stacks with their frameworks, and its tools where it shows any. */
+function describedProject(targets: readonly Target[]): string[] {
   const stacks = CORE_STACKS.filter((stack) => targets.some((target) => target.stack === stack));
-  if (stacks.length === 0)
-    return [
-      `this project: no target of a stack the declaration has rows for (${ROW_STACKS.join(", ")})`,
-    ];
-  const project = stacks.map((stack) => {
-    const shown = shownIds(targets.filter((t) => t.stack === stack));
+  const of = (stack: string) => targets.filter((target) => target.stack === stack);
+  const frameworks = stacks.map((stack) => {
+    const shown = shownIds(of(stack));
     const ids = FRAMEWORKS.filter((f) => shown.has(f.id)).map((f) => f.id);
     return `${stack} (${ids.length ? ids.join(", ") : "no framework of the table"})`;
   });
+  const tools = stacks.flatMap((stack) => {
+    const shown = shownTools(of(stack));
+    const ids = TOOLS.filter((tool) => shown.has(tool.id)).map((tool) => tool.id);
+    return ids.length ? [`${stack} (${ids.join(", ")})`] : [];
+  });
+  return [
+    `this project: ${frameworks.join("; ")}`,
+    ...(tools.length ? [`tools: ${tools.join("; ")}`] : []),
+  ];
+}
+
+/** A count with its word: `0 rows`, `1 row`, `2 rows`. */
+const rowsCount = (count: number) => `${count} row${count === 1 ? "" : "s"}`;
+
+/** The rows of a project under their headings, what was left out of the per-stack table, and what the command cannot tell. */
+function projectRowLines(declaration: string, targets: readonly Target[]): string[] {
   const rows = projectRows(declaration, targets);
   const of = (mark: RowMark) => rows.filter((row) => row.mark === mark);
-  const printed = (mark: RowMark) => {
-    const found = of(mark).map((row) => declarationLine(row.line));
-    return found.length ? found : ["  none"];
-  };
+  const orNone = (lines: string[]) => (lines.length ? lines : ["  none"]);
+  const printed = (mark: RowMark) => orNone(of(mark).map((row) => declarationLine(row.line)));
   return [
-    `this project: ${project.join("; ")}`,
     "rows for this project's frameworks:",
     ...printed("framework"),
-    "rows by stack (the tool each names is not detected yet):",
+    "rows for the tools this project shows:",
+    ...printed("tool"),
+    "rows by stack:",
     ...printed("by stack"),
-    `left out: ${of("other stack").length} rows of another stack, ${of("not this project's").length} rows of a framework or a product this project does not show`,
+    "error services this project shows:",
+    "  a row here adds a server that reaches the service's production data with a credential, and a hosted one sends what a session asks off the machine; where the credential is held and with what scope is not decided: run no line of this section before it is",
+    ...orNone(errorServiceRows(declaration, targets).map(declarationLine)),
+    `left out: ${rowsCount(of("other stack").length)} of another stack, ${rowsCount(of("not this project's").length)} of a framework, a tool or a product this project does not show`,
+    "not told: the rows of the table Common to every stack for source hosting and databases, which depend on a service nothing detects",
   ];
+}
+
+/** The lines of `crew sources backend --project`, after the declaration's path. The two short answers hold nothing of a project's rows. */
+function projectLines(declaration: string, cwd: string): string[] {
+  const targets = projectTargets(cwd);
+  if (targets === null)
+    return [
+      "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it",
+    ];
+  if (targets.length === 0)
+    return [
+      `this project: no target of a stack the declaration has rows for (${ROW_STACKS.join(", ")})`,
+    ];
+  return [...describedProject(targets), ...projectRowLines(declaration, targets)];
 }
 
 /**

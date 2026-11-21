@@ -22,7 +22,17 @@ const NO_PROJECT =
 const NO_TARGET =
   "this project: no target of a stack the declaration has rows for (php, node, python, go, rust)";
 const FOR_FRAMEWORKS = "rows for this project's frameworks:";
-const BY_STACK = "rows by stack (the tool each names is not detected yet):";
+// 2026-11-21-005 edits these constants and the whole outputs below: the form gained the rows of
+// the tools a project shows, the error services' section, the count line's words and a last note.
+const FOR_TOOLS = "rows for the tools this project shows:";
+const BY_STACK = "rows by stack:";
+const ERRORS = "error services this project shows:";
+const ERRORS_NOTE =
+  "  a row here adds a server that reaches the service's production data with a credential, and a hosted one sends what a session asks off the machine; where the credential is held and with what scope is not decided: run no line of this section before it is";
+const NOT_TOLD =
+  "not told: the rows of the table Common to every stack for source hosting and databases, which depend on a service nothing detects";
+const leftOut = (other: string, not: string) =>
+  `left out: ${other} of another stack, ${not} of a framework, a tool or a product this project does not show`;
 const BACKEND = join(pluginRoot(), "teams", "backend.md");
 
 function backend(): string {
@@ -95,11 +105,11 @@ test(`${ITEM} AC-2: a row that names no framework is the project's by its stack,
   ]);
   expect(rows.map((r) => [(r.cells[1] ?? "").slice(0, 14), r.mark])).toEqual([
     ...PHP_ROWS.map((opens) => [opens, "other stack"]),
-    ...NODE_ROWS.map((opens) => [opens, "by stack"]),
+    ...NODE_ROWS.map((opens) => [opens, "not this project's"]),
     ["FastAPI's skil", "framework"],
     ["Litestar's ski", "not this project's"],
-    ["Astral's plugi", "by stack"],
-    ["Pydantic's ski", "by stack"],
+    ["Astral's plugi", "not this project's"],
+    ["Pydantic's ski", "not this project's"],
     ["gopls's built-", "by stack"],
     ["none found", "by stack"],
   ]);
@@ -117,7 +127,7 @@ test(`${ITEM} AC-2: a row that names no framework is the project's by its stack,
     projectRows(backend(), [target("python"), target("python", "litestar")])
       .filter((r) => r.cells[0] === "Python")
       .map((r) => r.mark),
-  ).toEqual(["not this project's", "framework", "by stack", "by stack"]);
+  ).toEqual(["not this project's", "framework", "not this project's", "not this project's"]);
 });
 
 test(`${ITEM} AC-15: a name is matched as a whole phrase and a framework decides over WordPress, on a made table`, () => {
@@ -193,10 +203,15 @@ test(`${ITEM} AC-11: crew sources backend --project prints the project's stacks 
     rowLine("Laravel Boost:"),
     rowLine("Laravel Herd's"),
     rowLine("FastAPI's skill"),
+    FOR_TOOLS,
+    "  none",
     BY_STACK,
-    rowLine("Astral's plugin"),
-    rowLine("Pydantic's skills"),
-    "left out: 7 rows of another stack, 5 rows of a framework or a product this project does not show",
+    "  none",
+    ERRORS,
+    ERRORS_NOTE,
+    "  none",
+    leftOut("7 rows", "7 rows"),
+    NOT_TOLD,
     LAST_LINE,
   ];
   const run = await cliIo(root, testEnv())("sources", "backend", "--project");
@@ -254,13 +269,15 @@ test(`${ITEM} AC-16: a project with no target says so, a heading with no row say
     "this project: node (no framework of the table)",
     FOR_FRAMEWORKS,
     "  none",
+    FOR_TOOLS,
+    "  none",
     BY_STACK,
-    rowLine("Drizzle Kit's MCP"),
-    rowLine("Drizzle's skill"),
-    rowLine("Prisma's MCP"),
-    rowLine("Prisma's skills"),
-    rowLine("Deno's skills"),
-    "left out: 12 rows of another stack, 0 rows of a framework or a product this project does not show",
+    "  none",
+    ERRORS,
+    ERRORS_NOTE,
+    "  none",
+    leftOut("12 rows", "5 rows"),
+    NOT_TOLD,
     LAST_LINE,
   ]);
   // A folder in no project that holds a Laravel manifest: nothing of it is read.
@@ -369,9 +386,15 @@ test(`${ITEM} AC-6: crew sources backend --project writes nothing, with no .crew
     "this project: php (laravel); python (fastapi)",
     FOR_FRAMEWORKS,
     "| PHP | Laravel Boost | https://example.test | `composer [31mrequire x` |",
+    FOR_TOOLS,
+    "  none",
     BY_STACK,
     "  none",
-    "left out: 0 rows of another stack, 0 rows of a framework or a product this project does not show",
+    ERRORS,
+    ERRORS_NOTE,
+    "  none",
+    leftOut("0 rows", "0 rows"),
+    NOT_TOLD,
     LAST_LINE,
   ]);
 });

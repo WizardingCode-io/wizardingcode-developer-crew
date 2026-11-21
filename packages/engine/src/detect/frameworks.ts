@@ -130,8 +130,8 @@ const BY_IDENTIFIER: ReadonlyMap<string, ReadonlyMap<string, string>> = (() => {
   return stacks;
 })();
 
-/** The ids the names of a stack's manifest show, in the table's order, each once. */
-function idsOf(stack: string, names: Iterable<string>): string[] {
+/** The frameworks the names of a stack's manifest show: ids of the table in its order, each once. */
+export function frameworksIn(stack: string, names: Iterable<string>): string[] {
   const known = BY_IDENTIFIER.get(stack);
   if (!known) return [];
   const found = new Set<string>();
@@ -300,9 +300,20 @@ function tomlKey(trimmed: string): { key: string; rest: string } | null {
   return end === 0 ? null : { key: trimmed.slice(0, end), rest: trimmed.slice(end) };
 }
 
-/** The distributions `pyproject.toml` declares: the `[project]` table's `dependencies` array and Poetry's table's keys. */
-function pyprojectNames(text: string): string[] {
+/** The name a TOML header gives its table, a plain one or an array of tables; null where the line closes no bracket. */
+function headerName(trimmed: string): string | null {
+  const open = trimmed.startsWith("[[") ? 2 : 1;
+  const close = trimmed.indexOf("]");
+  return close < 0 ? null : trimmed.slice(open, close).trim();
+}
+
+/**
+ * What `pyproject.toml` declares: the distributions of the `[project]` table's `dependencies` array
+ * and of Poetry's table's keys, and the name of every table and array of tables the file opens.
+ */
+function pyprojectFacts(text: string): ManifestFacts {
   const names: string[] = [];
+  const tables: string[] = [];
   const take = (requirement: string) => {
     const name = requirementName(requirement);
     if (name !== null) names.push(name);
@@ -327,6 +338,8 @@ function pyprojectNames(text: string): string[] {
       const name = tableName(trimmed);
       table =
         name === "project" ? "project" : name === "tool.poetry.dependencies" ? "poetry" : "other";
+      const opened = headerName(trimmed);
+      if (opened !== null) tables.push(opened);
       continue;
     }
     if (table === "other") continue;
@@ -340,11 +353,11 @@ function pyprojectNames(text: string): string[] {
       if (opened.startsWith("[")) inArray = !arrayStrings(opened, 1, take);
     }
   }
-  return names;
+  return { names, tables };
 }
 
-/** The distributions a Python target declares: its requirements files and its `pyproject.toml`. */
-function pythonNames(dir: string): string[] {
+/** What a Python target declares: the distributions of its requirements files and of its `pyproject.toml`, and that file's tables. */
+function pythonFacts(dir: string): ManifestFacts {
   const names: string[] = [];
   for (const file of requirementsFiles(dir)) {
     const text = manifestText(join(dir, file));
@@ -355,8 +368,10 @@ function pythonNames(dir: string): string[] {
     }
   }
   const pyproject = manifestText(join(dir, "pyproject.toml"));
-  if (pyproject !== null) for (const name of pyprojectNames(pyproject)) names.push(name);
-  return names;
+  if (pyproject === null) return { names, tables: [] };
+  const facts = pyprojectFacts(pyproject);
+  for (const name of facts.names) names.push(name);
+  return { names, tables: facts.tables };
 }
 
 /** A Go module path without its major-version suffix `/v<digits>`, which is how Go names a module's major versions. */
@@ -441,31 +456,42 @@ function cargoCrates(text: string): string[] {
   return crates;
 }
 
+/** What a stack's manifest declares: its dependency names, and for Python the tables of `pyproject.toml`. */
+export interface ManifestFacts {
+  names: string[];
+  tables: string[];
+}
+
 /**
- * The frameworks a stack's manifest in a folder shows, ids of `FRAMEWORKS` in its order. Each
- * manifest is read here, as a regular file under the cap and never through a link, whatever the
- * stack's detector read of it.
+ * What a stack's manifest in a folder declares, read once. Each manifest is read here, as a
+ * regular file under the cap and never through a link, whatever the stack's detector read of it.
  */
-export function frameworksOf(dir: string, stack: string): string[] {
+export function manifestFacts(dir: string, stack: string): ManifestFacts {
+  const names = (found: string[]): ManifestFacts => ({ names: found, tables: [] });
   const text = (name: string) => manifestText(join(dir, name));
   switch (stack) {
     case "php":
-      return idsOf(stack, jsonKeys(join(dir, "composer.json"), ["require", "require-dev"]));
+      return names(jsonKeys(join(dir, "composer.json"), ["require", "require-dev"]));
     case "node":
-      return idsOf(stack, jsonKeys(join(dir, "package.json"), ["dependencies", "devDependencies"]));
+      return names(jsonKeys(join(dir, "package.json"), ["dependencies", "devDependencies"]));
     case "python":
-      return idsOf(stack, pythonNames(dir));
+      return pythonFacts(dir);
     case "go": {
       const manifest = text("go.mod");
-      return manifest === null ? [] : idsOf(stack, goModules(manifest));
+      return names(manifest === null ? [] : goModules(manifest));
     }
     case "rust": {
       const manifest = text("Cargo.toml");
-      return manifest === null ? [] : idsOf(stack, cargoCrates(manifest));
+      return names(manifest === null ? [] : cargoCrates(manifest));
     }
     default:
-      return [];
+      return names([]);
   }
+}
+
+/** The frameworks a stack's manifest in a folder shows, ids of `FRAMEWORKS` in its order. */
+export function frameworksOf(dir: string, stack: string): string[] {
+  return frameworksIn(stack, manifestFacts(dir, stack).names);
 }
 
 /** The ids of the table a list holds, in the list's order; none for a value that is no list. A saved profile's field is read through this, so a value changed by hand is never trusted for its shape. */

@@ -179,6 +179,8 @@ export interface Target {
   unset?: GateName[];
   /** The frameworks the target's own manifest shows, ids of `FRAMEWORKS` in its order (item 2026-11-21-003): the detection's, replaced at each one. */
   frameworks?: string[];
+  /** The tools of the engine's table the target's folder shows, ids of `TOOLS` in its order: the detection's, as `frameworks` is. */
+  tools?: string[];
 }
 
 /**

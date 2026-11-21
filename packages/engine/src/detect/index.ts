@@ -6,12 +6,12 @@ import { findBrowser, onPath } from "../pdf.ts";
 import { SKIP_DIRS } from "../skip-dirs.ts";
 import type { Environment, GateCommand, GateName, Profile, Target } from "../types.ts";
 import { confirmedEnvironment, detectEnvironment, environmentChanges } from "./environment.ts";
-import { frameworksOf } from "./frameworks.ts";
 import { goDetector } from "./go.ts";
 import { nodeDetector } from "./node.ts";
 import { phpDetector } from "./php.ts";
 import { pythonDetector } from "./python.ts";
 import { rustDetector } from "./rust.ts";
+import { shownOf } from "./tools.ts";
 import type { DetectedTarget, Detector, DetectorRule } from "./types.ts";
 
 export const DETECTORS: readonly Detector[] = [
@@ -165,8 +165,9 @@ export function detectTargets(root: string, rules: readonly PackRule[] = []): Ta
           : {}),
       };
       // What the target's own manifest shows of the frameworks the engine knows: the detection's, no person's.
-      const frameworks = frameworksOf(dir, found.stack);
-      if (frameworks.length) target.frameworks = frameworks;
+      const shown = shownOf(dir, found.stack);
+      if (shown.frameworks.length) target.frameworks = shown.frameworks;
+      if (shown.tools.length) target.tools = shown.tools;
       targets.push(target);
       if (found.workspaces) workspaces.set(target, found.workspaces);
     }
@@ -234,7 +235,7 @@ export function mergeProfile(
       const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
       if (!found && Object.values(old.gates).some(theirs)) {
         // Kept for the person's command; its manifest is gone, so nothing shows a framework any more.
-        const { frameworks: _gone, ...kept } = old;
+        const { frameworks: _gone, tools: _alsoGone, ...kept } = old;
         targets.push({ ...kept, gates: { ...old.gates } });
       }
     }
@@ -341,6 +342,9 @@ export function profileChanges(previous: Profile, next: Profile): string[] {
     const shown = target.frameworks ?? [];
     if (!levelWith(old.frameworks, shown))
       lines.push(`frameworks of ${target.path}: ${shown.length ? shown.join(", ") : "none"}`);
+    const tools = target.tools ?? [];
+    if (!levelWith(old.tools, tools))
+      lines.push(`tools of ${target.path}: ${tools.length ? tools.join(", ") : "none"}`);
   }
   for (const old of previous.targets)
     if (!next.targets.some((t) => same(t, old)))

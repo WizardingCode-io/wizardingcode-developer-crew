@@ -105,6 +105,7 @@ import {
 } from "./detect/environment.ts";
 import { frameworksLine } from "./detect/frameworks.ts";
 import { commandText, detectProfile, missingTestCommands } from "./detect/index.ts";
+import { toolsLine } from "./detect/tools.ts";
 import {
   checkHealth,
   type EnvStatus,
@@ -1098,7 +1099,7 @@ function profileView(env: Env, profile: Profile): Outcome {
     ];
     return `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${
       commands.join(", ") || "no commands"
-    }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}${frameworksLine(t)}`;
+    }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}${frameworksLine(t)}${toolsLine(t)}`;
   });
   if (profile.ui) lines.push(`  ${uiLine(profile.ui)}`);
   if (profile.browser) lines.push(`  ${shown("browser: devtools", profile.browser.devtools)}`);
