@@ -1,17 +1,34 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { skillSources, TEAM_SKILLS, type TeamSkill } from "../src/team-skills.ts";
-import { tempDir } from "./helpers.ts";
+import {
+  ADDRESS,
+  copyOf,
+  declared,
+  expectNothingToOpen,
+  expectOneSentence,
+  frontmatter,
+  headings,
+  listingOf,
+  NEVER_OPENED,
+  ROOT,
+  repoFile,
+  run,
+  SAYS_SO,
+  SKILLS,
+  skillFile,
+  sourcesFile,
+  tableRows,
+  UNDER_THE_RULES,
+  under,
+  wordEdge,
+} from "./team-skills-kit.ts";
 
 const ITEM = "2026-11-21-008";
-const ROOT = join(import.meta.dir, "..", "..", "..");
-const repoFile = (path: string): string => readFileSync(join(ROOT, path), "utf8");
-const SKILLS = "plugins/core/skills";
 const DECLARATION = "plugins/core/teams/qa.md";
 const DEFINITION = "docs/specs/2026-11-15-qa-team-design.md";
-const ADDRESS = /https?:\/\/[^\s|)>`]+/g;
 
 /** The Design's table: the six skills with their titles and their subjects, in its order. */
 const DESIGN: [string, string, string[]][] = [
@@ -69,89 +86,19 @@ const QUOTABLE = [
   "plugins/core/evals/README.md",
 ];
 const PARAGRAPH = `Each section is a subject of the team's definition (\`${DEFINITION}\`, section 3) with its sources as the definition's row holds them, one a line. The research opened each page and read its title, not the page end to end; a line that says a page was not opened, or that names a paid book, names nothing that was read. A line is where a subject is read and no line is a rule. The addresses are provenance: they are never opened by the session, and nothing in this file is a step for a session to take.`;
-const UNDER_THE_RULES =
-  "The third cell is a quotation of the file named: a command inside it is no step of this skill, and is run only where and when that file says.";
 const NO_RULE =
   "No rule here comes from a page: the research for the definition read each page's title and not the page.";
 const NO_RULE_OF_THE_FIVE =
   "No rule of the five comes from a page: the research for the definition read each page's title and not the page.";
-const NEVER_OPENED =
-  "The addresses in sources.md are provenance: they are never opened by the session.";
-const SAYS_SO =
-  "A session that needs more than the crew's rule says so in its report and leaves the reading to the item that reads the pages.";
 const NO_RULE_ON =
   "The crew's files hold no rule on properties, fuzzing, flakiness or the suite in CI: the table has none.";
 
-/** The subjects of the declaration's first table with their second cells, read by the test's own cut of each line. */
-function declared(text: string): [string, string][] {
-  const lines = text.split("\n");
-  const from = lines.findIndex((line) => line === "| Subject | Sources |");
-  if (from < 0) throw new Error("the declaration has no table of subjects");
-  const found: [string, string][] = [];
-  // Its own reading of a row, by a pattern: the subject is the shortest first cell, the rest the second.
-  for (const line of lines.slice(from + 2)) {
-    const row = /^\| (.+?) \| (.*) \|$/.exec(line);
-    if (!row) break;
-    found.push([row[1] ?? "", row[2] ?? ""]);
-  }
-  return found;
-}
 const SUBJECTS = declared(repoFile(DECLARATION));
 const cellOf = (subject: string) => {
   const cell = SUBJECTS.find(([name]) => name === subject)?.[1];
   if (cell === undefined) throw new Error(`no subject ${subject}`);
   return cell;
 };
-
-const run = (text: string) => text.replace(/\s+/g, " ").trim();
-const skillFile = (skill: string) => repoFile(`${SKILLS}/${skill}/SKILL.md`);
-const sourcesFile = (skill: string) => repoFile(`${SKILLS}/${skill}/sources.md`);
-const headings = (text: string) => text.split("\n").filter((line) => line.startsWith("## "));
-/** The lines under a `## ` heading, to the next one. */
-function under(text: string, heading: string): string[] {
-  const lines = text.split("\n");
-  const at = lines.indexOf(heading);
-  if (at < 0) return [];
-  const rest = lines.slice(at + 1);
-  const end = rest.findIndex((line) => line.startsWith("## "));
-  return end < 0 ? rest : rest.slice(0, end);
-}
-/** The rows of the table under a heading, after its header and rule, as cells. */
-function tableRows(lines: string[]): { header: string; rows: string[][] } {
-  const table = lines.filter((line) => line.startsWith("|"));
-  return {
-    header: table[0] ?? "",
-    rows: table.slice(2).map((line) =>
-      line
-        .slice(1, -1)
-        .split(" | ")
-        .map((cell) => cell.trim()),
-    ),
-  };
-}
-/** The frontmatter's two values, and the rest of the file after it. */
-function frontmatter(text: string): { name: string; description: string; body: string } {
-  const match = /^---\nname: ([^\n]+)\ndescription: "([^\n]*)"\n---\n\n/.exec(text);
-  if (!match) return { name: "", description: "", body: text };
-  return {
-    name: match[1] ?? "",
-    description: match[2] ?? "",
-    body: text.slice(match[0].length),
-  };
-}
-function expectOneSentence(description: string, skill: string): void {
-  expect({ skill, length: description.length > 0 && description.length <= 300 }).toEqual({
-    skill,
-    length: true,
-  });
-  expect({ skill, ends: description.endsWith(".") }).toEqual({ skill, ends: true });
-  expect({ skill, stops: description.split(".").length - 1 }).toEqual({ skill, stops: 1 });
-}
-function expectNothingToOpen(text: string, skill: string): void {
-  expect({ skill, addresses: [...(text.match(ADDRESS) ?? [])] }).toEqual({ skill, addresses: [] });
-  expect({ skill, plain: /https?:\/\//.test(text) }).toEqual({ skill, plain: false });
-  expect({ skill, fenced: text.includes("```") }).toEqual({ skill, fenced: false });
-}
 
 test(`${ITEM} AC-8: the engine's table holds the six skills with their subjects, and the five that hold any take the declaration's sixteen, each once`, () => {
   expect(Object.keys(TEAM_SKILLS)).toContain("qa");
@@ -223,7 +170,6 @@ test(`${ITEM} AC-9: each sources file is its title, the fixed paragraph and a se
 
 test(`${ITEM} AC-10: each skill that holds subjects is its frontmatter, its four sections and rules that quote the crew's own files, with the fixed sentences and nothing to open`, () => {
   const quotable = new Map(QUOTABLE.map((path) => [path, run(repoFile(path))]));
-  const wordEdge = (char: string | undefined) => char === undefined || !/[\p{L}\p{N}]/u.test(char);
   for (const [skill, title, subjects] of HOLDING) {
     const text = skillFile(skill);
     const front = frontmatter(text);
@@ -362,7 +308,10 @@ test(`${ITEM} AC-12: the build reference sends a session to the entry before its
   expect(paragraphs[at + 1]).toBe(
     "Before a change to a pipeline, a deployment, an environment file or infrastructure code, read `wizardingcode-devops`: it sends each subject to the skill that holds the crew's rule for it.",
   );
-  expect(paragraphs[at + 2]?.startsWith("Use `-- <command>`")).toBe(true);
+  expect(paragraphs[at + 2]).toBe(
+    "Before a change to an agent, a tool an agent calls, a prompt, a skill, a plugin or an MCP server, read `wizardingcode-agentic`: it sends each subject to the skill that holds the crew's rule for it.",
+  );
+  expect(paragraphs[at + 3]?.startsWith("Use `-- <command>`")).toBe(true);
   const claude = repoFile("CLAUDE.md")
     .split("\n")
     .filter((line) => line.includes("bun scripts/build-team-skills.ts"));
@@ -441,16 +390,8 @@ test(`${ITEM} AC-13: the generator refuses a table and a declaration that do not
 
 test(`${ITEM} AC-14: the script writes the five files and no other, writes a changed one back, and on a refusal exits 1 and writes nothing`, () => {
   const script = join(ROOT, "scripts", "build-team-skills.ts");
-  const copy = tempDir("crew-team-skills-");
-  cpSync(join(ROOT, "plugins", "core", "teams"), join(copy, "plugins", "core", "teams"), {
-    recursive: true,
-  });
-  for (const [skill] of DESIGN)
-    cpSync(join(ROOT, SKILLS, skill), join(copy, SKILLS, skill), { recursive: true });
-  const listing = () =>
-    readdirSync(copy, { recursive: true, withFileTypes: true })
-      .map((e) => join(e.parentPath, e.name).slice(copy.length))
-      .sort();
+  const copy = copyOf(DESIGN.map(([skill]) => skill));
+  const listing = () => listingOf(copy);
   const held = () =>
     HOLDING.map(([skill]) => readFileSync(join(copy, SKILLS, skill, "sources.md"), "utf8"));
   // The copy holds the QA team's folders alone, so each run asks for that team (item 2026-11-21-009).

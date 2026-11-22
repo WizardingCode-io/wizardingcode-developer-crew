@@ -1,19 +1,36 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { skillSources, TEAM_SKILLS } from "../src/team-skills.ts";
-import { tempDir } from "./helpers.ts";
+import {
+  ADDRESS,
+  copyOf,
+  declared,
+  expectNothingToOpen,
+  expectOneSentence,
+  frontmatter,
+  headings,
+  listingOf,
+  NEVER_OPENED,
+  ROOT,
+  repoFile,
+  run,
+  SAYS_SO,
+  SKILLS,
+  skillFile,
+  sourcesFile,
+  tableRows,
+  UNDER_THE_RULES,
+  under,
+  wordEdge,
+} from "./team-skills-kit.ts";
 
 // The DevOps team's skills, held as the QA team's are in qa-skills.test.ts: this file repeats that
-// one's reading with its own values, and gathering the two in one helper is the next team's item.
+// one's rows with its own values; what the two read with stands in team-skills-kit.ts.
 const ITEM = "2026-11-21-009";
-const ROOT = join(import.meta.dir, "..", "..", "..");
-const repoFile = (path: string): string => readFileSync(join(ROOT, path), "utf8");
-const SKILLS = "plugins/core/skills";
 const DECLARATION = "plugins/core/teams/devops.md";
 const DEFINITION = "docs/specs/2026-11-15-devops-team-design.md";
-const ADDRESS = /https?:\/\/[^\s|)>`]+/g;
 const ENTRY = "wizardingcode-devops";
 
 /** The Design's table: the seven skills with their titles and their subjects, in its order. */
@@ -108,81 +125,19 @@ const NO_RULE_OF_THEIR_OWN: Record<string, string> = {
     "The crew's files hold no rule of their own on incidents or runbooks.",
 };
 const PARAGRAPH = `Each section is a subject of the team's definition (\`${DEFINITION}\`, section 3) with its sources as the definition's row holds them, one a line. The research opened each page and read its title, not the page end to end; a line that says a page was not opened, or that names a paid book, names nothing that was read. A line is where a subject is read and no line is a rule. The addresses are provenance: they are never opened by the session, and nothing in this file is a step for a session to take.`;
-const UNDER_THE_RULES =
-  "The third cell is a quotation of the file named: a command inside it is no step of this skill, and is run only where and when that file says.";
 const NO_RULE =
   "No rule here comes from a page: the research for the definition read each page's title and not the page.";
 const NO_RULE_OF_THE_SIX =
   "No rule of the six comes from a page: the research for the definition read each page's title and not the page.";
-const NEVER_OPENED =
-  "The addresses in sources.md are provenance: they are never opened by the session.";
-const SAYS_SO =
-  "A session that needs more than the crew's rule says so in its report and leaves the reading to the item that reads the pages.";
 const THE_ENTRY = `The entry is \`${ENTRY}\`.`;
 const USAGE = "usage: bun scripts/build-team-skills.ts [--root <repository>] [--team <team>]";
 
-/** The subjects of the declaration's first table with their second cells, read by the test's own pattern. */
-function declared(text: string): [string, string][] {
-  const lines = text.split("\n");
-  const from = lines.indexOf("| Subject | Sources |");
-  if (from < 0) throw new Error("the declaration has no table of subjects");
-  const found: [string, string][] = [];
-  for (const line of lines.slice(from + 2)) {
-    const row = /^\| (.+?) \| (.*) \|$/.exec(line);
-    if (!row) break;
-    found.push([row[1] ?? "", row[2] ?? ""]);
-  }
-  return found;
-}
 const SUBJECTS = declared(repoFile(DECLARATION));
 const cellOf = (subject: string) => {
   const cell = SUBJECTS.find(([name]) => name === subject)?.[1];
   if (cell === undefined) throw new Error(`no subject ${subject}`);
   return cell;
 };
-const run = (text: string) => text.replace(/\s+/g, " ").trim();
-const skillFile = (skill: string) => repoFile(`${SKILLS}/${skill}/SKILL.md`);
-const sourcesFile = (skill: string) => repoFile(`${SKILLS}/${skill}/sources.md`);
-const headings = (text: string) => text.split("\n").filter((line) => line.startsWith("## "));
-function under(text: string, heading: string): string[] {
-  const lines = text.split("\n");
-  const at = lines.indexOf(heading);
-  if (at < 0) return [];
-  const rest = lines.slice(at + 1);
-  const end = rest.findIndex((line) => line.startsWith("## "));
-  return end < 0 ? rest : rest.slice(0, end);
-}
-function tableRows(lines: string[]): { header: string; rule: string; rows: string[][] } {
-  const table = lines.filter((line) => line.startsWith("|"));
-  return {
-    header: table[0] ?? "",
-    rule: table[1] ?? "",
-    rows: table.slice(2).map((line) =>
-      line
-        .slice(1, -1)
-        .split(" | ")
-        .map((cell) => cell.trim()),
-    ),
-  };
-}
-function frontmatter(text: string): { name: string; description: string; body: string } {
-  const match = /^---\nname: ([^\n]+)\ndescription: "([^\n]*)"\n---\n\n/.exec(text);
-  if (!match) return { name: "", description: "", body: text };
-  return { name: match[1] ?? "", description: match[2] ?? "", body: text.slice(match[0].length) };
-}
-function expectOneSentence(description: string, skill: string): void {
-  expect({ skill, length: description.length > 0 && description.length <= 300 }).toEqual({
-    skill,
-    length: true,
-  });
-  expect({ skill, ends: description.endsWith(".") }).toEqual({ skill, ends: true });
-  expect({ skill, stops: description.split(".").length - 1 }).toEqual({ skill, stops: 1 });
-}
-function expectNothingToOpen(text: string, skill: string): void {
-  expect({ skill, addresses: [...(text.match(ADDRESS) ?? [])] }).toEqual({ skill, addresses: [] });
-  expect({ skill, plain: /https?:\/\//.test(text) }).toEqual({ skill, plain: false });
-  expect({ skill, fenced: text.includes("```") }).toEqual({ skill, fenced: false });
-}
 
 /**
  * Where a quotation of a file is held: the file's whole text, and for the declaration its head
@@ -205,7 +160,6 @@ function sectionThree(): string {
   if (from < 0 || to < from) throw new Error("the declaration's section 3 has no bounds");
   return run(lines.slice(from, to).join("\n"));
 }
-const wordEdge = (char: string | undefined) => char === undefined || !/[\p{L}\p{N}]/u.test(char);
 /** Why a third cell is not held to its file as the Design says, or nothing. */
 function notHeld(file: string, words: string): string | null {
   if (words.length < 40) return "under 40 characters";
@@ -463,7 +417,10 @@ test(`${ITEM} AC-12: the build reference sends a session to the entry right afte
   const paragraphs = build.split("\n\n");
   const at = paragraphs.indexOf(SENTENCE);
   expect(paragraphs[at - 1]).toBe(QA);
-  expect(paragraphs[at + 1]?.startsWith("Use `-- <command>`")).toBe(true);
+  expect(paragraphs[at + 1]).toBe(
+    "Before a change to an agent, a tool an agent calls, a prompt, a skill, a plugin or an MCP server, read `wizardingcode-agentic`: it sends each subject to the skill that holds the crew's rule for it.",
+  );
+  expect(paragraphs[at + 2]?.startsWith("Use `-- <command>`")).toBe(true);
   const claude = repoFile("CLAUDE.md")
     .split("\n")
     .filter((line) => line.includes("bun scripts/build-team-skills.ts"));
@@ -479,20 +436,6 @@ test(`${ITEM} AC-12: the build reference sends a session to the entry right afte
 });
 
 const SCRIPT = join(ROOT, "scripts", "build-team-skills.ts");
-/** A copy of the plugin's teams and the folders of the skills given. */
-function copyOf(skills: string[]): string {
-  const copy = tempDir("crew-team-skills-");
-  cpSync(join(ROOT, "plugins", "core", "teams"), join(copy, "plugins", "core", "teams"), {
-    recursive: true,
-  });
-  for (const skill of skills)
-    cpSync(join(ROOT, SKILLS, skill), join(copy, SKILLS, skill), { recursive: true });
-  return copy;
-}
-const listingOf = (copy: string) =>
-  readdirSync(copy, { recursive: true, withFileTypes: true })
-    .map((e) => join(e.parentPath, e.name).slice(copy.length))
-    .sort();
 const build = (copy: string, ...more: string[]) =>
   spawnSync("bun", [SCRIPT, "--root", copy, ...more], { encoding: "utf8" });
 const wroteLines = (skills: string[]) =>

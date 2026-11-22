@@ -14,7 +14,7 @@ export interface TeamSkill {
 }
 
 /** Each team's own skills, in its definition's order. A subject stands in one skill. */
-export const TEAM_SKILLS: Readonly<Partial<Record<TeamName, readonly TeamSkill[]>>> = {
+export const TEAM_SKILLS = {
   qa: [
     { skill: "wizardingcode-qa-testing", title: "Testing", subjects: [] },
     {
@@ -90,7 +90,58 @@ export const TEAM_SKILLS: Readonly<Partial<Record<TeamName, readonly TeamSkill[]
       subjects: ["Observability and operation"],
     },
   ],
-};
+  "agentic-os": [
+    { skill: "wizardingcode-agentic", title: "Agentic", subjects: [] },
+    {
+      skill: "wizardingcode-agentic-routing-measurement",
+      title: "Routing and measurement",
+      subjects: ["Orchestration", "Evaluation"],
+    },
+    {
+      skill: "wizardingcode-agentic-agents-tools-prompts",
+      title: "Agents, tools and prompts",
+      subjects: [
+        "Agents and subagents",
+        "Tools for agents",
+        "Prompts",
+        "Prompt injection and excessive agency",
+        "Permissions and hooks",
+        "Context and cost",
+      ],
+    },
+    {
+      skill: "wizardingcode-agentic-skills-plugins",
+      title: "Skills and plugins",
+      subjects: ["Skills", "Plugins and distribution"],
+    },
+    { skill: "wizardingcode-agentic-mcp-servers", title: "MCP servers", subjects: ["MCP servers"] },
+    { skill: "wizardingcode-agentic-memory", title: "Memory", subjects: ["Memory"] },
+    { skill: "wizardingcode-agentic-knowledge", title: "Knowledge", subjects: ["Knowledge"] },
+    {
+      skill: "wizardingcode-agentic-improvement-loop",
+      title: "Improvement loop",
+      subjects: ["Learning and improvement"],
+    },
+    {
+      skill: "wizardingcode-agentic-proactivity-unattended",
+      title: "Proactivity and unattended work",
+      subjects: ["Unattended work", "Proactivity and responsiveness"],
+    },
+    {
+      skill: "wizardingcode-agentic-watch",
+      title: "Watch",
+      subjects: [
+        "Frameworks, SDKs, runtimes and models",
+        "Keeping current",
+        "The reference assistants' engineering",
+      ],
+    },
+  ],
+} satisfies Partial<Record<TeamName, readonly TeamSkill[]>>;
+
+/** The teams that have skills of their own: the table's keys, so the two cannot differ. */
+export type SkilledTeam = keyof typeof TEAM_SKILLS;
+const isSkilled = (team: TeamName): team is SkilledTeam => Object.hasOwn(TEAM_SKILLS, team);
 
 export type SkillSources =
   | { ok: true; files: { skill: string; text: string }[] }
@@ -118,13 +169,33 @@ function declaredSubjects(declaration: string): Map<string, string> | { twice: s
   return found;
 }
 
-/** The paragraph every file of sources opens with, after its title: what a line of the file is, and is not. */
-const PARAGRAPH = [
-  "Each section is a subject of the team's definition (`<definition>`, section 3) with its sources as the definition's row holds them, one a line.",
+/** The two sentences of the teams whose research read each page's title. */
+const TITLES_READ: readonly [string, string] = [
   "The research opened each page and read its title, not the page end to end; a line that says a page was not opened, or that names a paid book, names nothing that was read.",
   "A line is where a subject is read and no line is a rule.",
-  "The addresses are provenance: they are never opened by the session, and nothing in this file is a step for a session to take.",
-].join(" ");
+];
+/**
+ * What a team's research read, and what a line of its sources is: the second and third sentences
+ * of the paragraph. Keyed by the teams of `TEAM_SKILLS`, with no fallback, so a team added to one
+ * table and not to the other does not compile.
+ */
+const TEAM_RESEARCH: Readonly<Record<SkilledTeam, readonly [string, string]>> = {
+  qa: TITLES_READ,
+  devops: TITLES_READ,
+  "agentic-os": [
+    "The research read the content of some pages and only the answer of others; a line that says a page was not opened names nothing that was read.",
+    "A line is where a subject is read; where a line states a rule of the team's own, a session follows it only as a row of a skill gives it, and never from this file.",
+  ],
+};
+
+/** The paragraph a team's files of sources open with, after their title: what a line of the file is, and is not. */
+function paragraphOf(team: SkilledTeam): string {
+  return [
+    `Each section is a subject of the team's definition (\`docs/specs/${TEAM_DEFINITION_FILES[team]}\`, section 3) with its sources as the definition's row holds them, one a line.`,
+    ...TEAM_RESEARCH[team],
+    "The addresses are provenance: they are never opened by the session, and nothing in this file is a step for a session to take.",
+  ].join(" ");
+}
 
 /**
  * The file of sources of each skill of a team that holds subjects, from the team's declaration:
@@ -136,18 +207,18 @@ const PARAGRAPH = [
 export function skillSources(
   team: TeamName,
   declaration: string,
-  skills: readonly TeamSkill[] | undefined = TEAM_SKILLS[team],
+  given?: readonly TeamSkill[],
 ): SkillSources {
   const refuse = (refused: string): SkillSources => ({ ok: false, refused });
-  if (skills === undefined)
-    return refuse(`the team "${team}" has no skill of its own in the table`);
+  if (!isSkilled(team)) return refuse(`the team "${team}" has no skill of its own in the table`);
+  const skills = given ?? TEAM_SKILLS[team];
   const declared = declaredSubjects(declaration);
   if (declared === null) return refuse("the declaration has no table of subjects");
   if (!(declared instanceof Map))
     return refuse(`the declaration holds the subject "${declared.twice}" twice`);
   const taken = new Set<string>();
   const files: { skill: string; text: string }[] = [];
-  const paragraph = PARAGRAPH.replace("<definition>", `docs/specs/${TEAM_DEFINITION_FILES[team]}`);
+  const paragraph = paragraphOf(team);
   for (const skill of skills) {
     const sections: string[] = [];
     for (const subject of skill.subjects) {
