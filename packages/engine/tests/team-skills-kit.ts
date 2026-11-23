@@ -1,5 +1,5 @@
 // What the tests of the teams' own skills share (qa-skills, devops-skills, agentic-skills,
-// architects-skills): the reading of a declaration and of a SKILL.md, the checks every skill is
+// architects-skills, researchers-skills): the reading of a declaration and of a SKILL.md, the checks every skill is
 // held to, the sentences of the build reference, and the copy of the plugin the script's rows run
 // on. Each team's test keeps its own rows, values and limits.
 import { expect } from "bun:test";
@@ -19,10 +19,13 @@ export const NEVER_OPENED =
 export const SAYS_SO =
   "A session that needs more than the crew's rule says so in its report and leaves the reading to the item that reads the pages.";
 
-/** The subjects of a declaration's first table with their second cells, read by the tests' own pattern. */
-export function declared(text: string): [string, string][] {
+/**
+ * The subjects of a declaration's first table with their second cells, read by the tests' own
+ * pattern. The table is found by its header, which is the four teams' unless another is given.
+ */
+export function declared(text: string, header = "| Subject | Sources |"): [string, string][] {
   const lines = text.split("\n");
-  const from = lines.indexOf("| Subject | Sources |");
+  const from = lines.indexOf(header);
   if (from < 0) throw new Error("the declaration has no table of subjects");
   const found: [string, string][] = [];
   // Its own reading of a row, by a pattern: the subject is the shortest first cell, the rest the second.
@@ -116,6 +119,7 @@ export const ENTRY_SENTENCES = [
   "Before a change to a pipeline, a deployment, an environment file or infrastructure code, read `wizardingcode-devops`: it sends each subject to the skill that holds the crew's rule for it.",
   "Before a change to an agent, a tool an agent calls, a prompt, a skill, a plugin or an MCP server, read `wizardingcode-agentic`: it sends each subject to the skill that holds the crew's rule for it.",
   "Before a change to a boundary, a model, a contract or an integration, and before a decision on the architecture or on a technology, read `wizardingcode-architecture`: it sends each subject to the skill that holds the crew's rule for it.",
+  "Before research for an item is planned or run, and before its result is judged, read `wizardingcode-research`: it gives the method and sends a verification, an evidence map and a choice between candidates to the skill that holds the crew's rule for it.",
 ] as const;
 
 /**

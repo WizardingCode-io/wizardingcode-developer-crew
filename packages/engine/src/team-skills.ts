@@ -170,6 +170,26 @@ export const TEAM_SKILLS = {
     // Views holds no subject of section 3: C4 and the diagram tools are read under Decision's.
     { skill: "wizardingcode-architecture-views", title: "Views", subjects: [] },
   ],
+  researchers: [
+    // This team's entry holds the declaration's rows, the eight kinds of research.
+    {
+      skill: "wizardingcode-research",
+      title: "Research",
+      subjects: [
+        "Code and repository",
+        "Documentation",
+        "News and recent changes",
+        "Good practice and proven solutions",
+        "Product and market",
+        "Flows and frontend",
+        "The user's voice",
+        "Academic",
+      ],
+    },
+    { skill: "wizardingcode-research-verification", title: "Verification", subjects: [] },
+    { skill: "wizardingcode-research-evidence-map", title: "Evidence map", subjects: [] },
+    { skill: "wizardingcode-research-selection", title: "Selection", subjects: [] },
+  ],
 } satisfies Partial<Record<TeamName, readonly TeamSkill[]>>;
 
 /** The teams that have skills of their own: the table's keys, so the two cannot differ. */
@@ -181,14 +201,28 @@ export type SkillSources =
   | { ok: false; refused: string };
 
 const SUBJECTS_HEADER = "| Subject | Sources |";
+/**
+ * The header of the first table of each team's declaration, and what a row of it is called in the
+ * paragraph of a generated file. Keyed by the teams of `TEAM_SKILLS`, with no fallback.
+ */
+const TEAM_TABLE: Readonly<Record<SkilledTeam, readonly [header: string, row: string]>> = {
+  qa: [SUBJECTS_HEADER, "a subject"],
+  devops: [SUBJECTS_HEADER, "a subject"],
+  "agentic-os": [SUBJECTS_HEADER, "a subject"],
+  architects: [SUBJECTS_HEADER, "a subject"],
+  researchers: ["| Kind | Sources |", "a kind of research"],
+};
 
 /**
  * The subjects of a declaration's first table with their second cells, as the file holds them, or
  * the subject the table holds twice; null with no such table. A line that is no whole row ends the table.
  */
-function declaredSubjects(declaration: string): Map<string, string> | { twice: string } | null {
+function declaredSubjects(
+  declaration: string,
+  header: string,
+): Map<string, string> | { twice: string } | null {
   const lines = declaration.split("\n");
-  const from = lines.indexOf(SUBJECTS_HEADER);
+  const from = lines.indexOf(header);
   if (from < 0) return null;
   const found = new Map<string, string>();
   // The line after the header is the table's rule.
@@ -226,12 +260,16 @@ const TEAM_RESEARCH: Readonly<Record<SkilledTeam, readonly [string, string]>> = 
     "The research read each source that has an address at that address on 2026-11-15; a line that says a page was not opened, or that a source was read in a summary, names nothing more than it says.",
     RULE_ONLY_AS_A_ROW,
   ],
+  researchers: [
+    "The research opened most of the pages; a line that says a page was not opened, or was read in part, names no more than it says.",
+    RULE_ONLY_AS_A_ROW,
+  ],
 };
 
 /** The paragraph a team's files of sources open with, after their title: what a line of the file is, and is not. */
 function paragraphOf(team: SkilledTeam): string {
   return [
-    `Each section is a subject of the team's definition (\`docs/specs/${TEAM_DEFINITION_FILES[team]}\`, section 3) with its sources as the definition's row holds them, one a line.`,
+    `Each section is ${TEAM_TABLE[team][1]} of the team's definition (\`docs/specs/${TEAM_DEFINITION_FILES[team]}\`, section 3) with its sources as the definition's row holds them, one a line.`,
     ...TEAM_RESEARCH[team],
     "The addresses are provenance: they are never opened by the session, and nothing in this file is a step for a session to take.",
   ].join(" ");
@@ -252,7 +290,7 @@ export function skillSources(
   const refuse = (refused: string): SkillSources => ({ ok: false, refused });
   if (!isSkilled(team)) return refuse(`the team "${team}" has no skill of its own in the table`);
   const skills = given ?? TEAM_SKILLS[team];
-  const declared = declaredSubjects(declaration);
+  const declared = declaredSubjects(declaration, TEAM_TABLE[team][0]);
   if (declared === null) return refuse("the declaration has no table of subjects");
   if (!(declared instanceof Map))
     return refuse(`the declaration holds the subject "${declared.twice}" twice`);

@@ -256,7 +256,13 @@ function linkRows(skill: string): string[][] {
 }
 
 test(`${ITEM} AC-35: the engine's table holds the architects team's five skills after the other three teams', and the three that hold subjects take the declaration's thirteen, each once`, () => {
-  expect(Object.keys(TEAM_SKILLS)).toEqual(["qa", "devops", "agentic-os", "architects"]);
+  // The first four: the whole of the keys is held by the test of the team that came last.
+  expect(Object.keys(TEAM_SKILLS).slice(0, 4)).toEqual([
+    "qa",
+    "devops",
+    "agentic-os",
+    "architects",
+  ]);
   expect(tabled().map((s) => [s.skill, s.title, [...s.subjects]])).toEqual(DESIGN);
   expect(SUBJECTS).toHaveLength(13);
   const taken = tabled().flatMap((s) => [...s.subjects]);
@@ -766,6 +772,6 @@ test(`${ITEM} AC-43: with --team the script writes this team's three files alone
   const all = build(copyOf(every));
   expect({ status: all.status, err: all.stderr }).toEqual({ status: 0, err: "" });
   const lines = all.stdout.trimEnd().split("\n");
-  expect(lines).toHaveLength(23);
-  expect(lines.slice(20)).toEqual(WROTE);
+  expect(lines).toHaveLength(24);
+  expect(lines.slice(20, 23)).toEqual(WROTE);
 });

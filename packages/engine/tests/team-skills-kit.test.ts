@@ -101,25 +101,27 @@ test("2026-11-21-010 the kit: each helper of the teams' skills tests answers as 
   ).toEqual([`/${SKILLS}/wizardingcode-qa-testing/SKILL.md`]);
 });
 
-// The check of the build reference's four sentences, on texts written here: the four in order pass,
-// and each of six texts that departs in one thing fails (item 2026-11-22-001).
-test("2026-11-22-001 AC-42: the check of the build reference's sentences passes on the four in order and fails on an order changed, a sentence missing, one twice, a paragraph between two, a wrong paragraph before and a wrong one after", () => {
-  const [qa, devops, agentic, architects] = ENTRY_SENTENCES;
-  const text = (...paragraphs: string[]) => `${paragraphs.join("\n\n")}\n`;
+// The check of the build reference's five sentences, on texts written here: the five in order pass,
+// and each of six texts that departs in one thing fails (items 2026-11-22-001 and 2026-11-23-001).
+test("2026-11-22-001 AC-42: the check of the build reference's sentences passes on the five in order and fails on an order changed, a sentence missing, one twice, a paragraph between two, a wrong paragraph before and a wrong one after", () => {
+  const [qa, devops, agentic, architects, researchers] = ENTRY_SENTENCES;
+  const text = (...paragraphs: (string | undefined)[]) => `${paragraphs.join("\n\n")}\n`;
   const BEFORE = "4. A fourth step.\n5. A fifth step.";
   const AFTER = "Use `-- <command>` after the criterion.";
-  expectEntrySentences(
-    text("# Build", BEFORE, qa, devops, agentic, architects, AFTER, "A last one."),
-  );
+  const five = [qa, devops, agentic, architects, researchers];
+  expectEntrySentences(text("# Build", BEFORE, ...five, AFTER, "A last one."));
   const wrong: [string, string][] = [
-    // The two in the middle, so that the first and the last still stand beside their neighbours.
-    ["an order changed", text(BEFORE, qa, agentic, devops, architects, AFTER)],
-    ["a sentence missing", text(BEFORE, qa, devops, architects, AFTER)],
-    ["one twice", text(BEFORE, qa, devops, agentic, architects, AFTER, agentic)],
-    ["a paragraph between two", text(BEFORE, qa, devops, "Between.", agentic, architects, AFTER)],
-    ["a wrong paragraph before", text("4. A fourth step.", qa, devops, agentic, architects, AFTER)],
-    ["a wrong paragraph after", text(BEFORE, qa, devops, agentic, architects, "Another.", AFTER)],
+    // Two in the middle, so that the first and the last still stand beside their neighbours.
+    ["an order changed", text(BEFORE, qa, agentic, devops, architects, researchers, AFTER)],
+    ["a sentence missing", text(BEFORE, qa, devops, architects, researchers, AFTER)],
+    ["one twice", text(BEFORE, ...five, AFTER, agentic)],
+    [
+      "a paragraph between two",
+      text(BEFORE, qa, devops, agentic, architects, "Between.", researchers, AFTER),
+    ],
+    ["a wrong paragraph before", text("4. A fourth step.", ...five, AFTER)],
+    ["a wrong paragraph after", text(BEFORE, ...five, "Another.", AFTER)],
   ];
   for (const [why, build] of wrong) expect(() => expectEntrySentences(build), why).toThrow();
-  expect(ENTRY_SENTENCES).toHaveLength(4);
+  expect(ENTRY_SENTENCES).toHaveLength(5);
 });

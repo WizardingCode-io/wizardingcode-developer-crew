@@ -120,6 +120,36 @@
    "name": "dandgabr-architect",
    "licence": "GPL-3.0",
    "commit": "b23ec7f"
+  },
+  {
+   "name": "bmad-deep-recon",
+   "licence": "MIT",
+   "commit": "e435a22"
+  },
+  {
+   "name": "awesome-copilot-research",
+   "licence": "MIT",
+   "commit": "f10fdb8"
+  },
+  {
+   "name": "deer-flow-deep-research",
+   "licence": "MIT",
+   "commit": "fc0d4bd"
+  },
+  {
+   "name": "knowledge-work-plugins-research",
+   "licence": "Apache-2.0",
+   "commit": "2baf6d1"
+  },
+  {
+   "name": "nature-skills-reviewer",
+   "licence": "Apache-2.0",
+   "commit": "c6701db"
+  },
+  {
+   "name": "last30days-skill",
+   "licence": "MIT",
+   "commit": "331025e"
   }
  ],
  "unread": [
@@ -3690,6 +3720,258 @@
    "text": "A diagram can be read without its author: nothing on it is unlabelled, and no arrow leaves the reader to guess what passes along it.",
    "proof": "architects-skills.test.ts",
    "note": "read at b23ec7f, skills/engineering-practices/c4-model-architecture/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "last30days-skill",
+   "rule": "research: A source that failed, was cut short or was never set up is reported as such, and",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "A source that failed, was cut short or was never set up is reported as such, and only a source that answered with nothing is called quiet.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at 331025e, skills/last30days/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "deer-flow-deep-research",
+   "rule": "research: A source that matters is read whole before it is relied on, since the lines a se",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "A source that matters is read whole before it is relied on, since the lines a search returns are not the source.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at fc0d4bd, skills/public/deep-research/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: Whoever researches for another is kept from the project's own papers, so that wh",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "Whoever researches for another is kept from the project's own papers, so that what the project believes cannot come back as a finding.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/SKILL.md and skills/core-tools/bmad-deep-recon/references/run.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "deer-flow-deep-research",
+   "rule": "research: What speaks against the subject is searched for on purpose, not left to turn up.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "What speaks against the subject is searched for on purpose, not left to turn up.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at fc0d4bd, skills/public/deep-research/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "knowledge-work-plugins-research",
+   "rule": "research: Every place a finding was met is cited, and the finding itself is told once.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "Every place a finding was met is cited, and the finding itself is told once.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at 2baf6d1, enterprise-search/skills/knowledge-synthesis/SKILL.md and enterprise-search/skills/search/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: No further round is run once a round has brought nothing new.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "No further round is run once a round has brought nothing new.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/run.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "deer-flow-deep-research",
+   "rule": "research: A query is as exact in time as the question it serves, so that a question about ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "A query is as exact in time as the question it serves, so that a question about this week is not answered by a search of the whole year.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at fc0d4bd, skills/public/deep-research/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "knowledge-work-plugins-research",
+   "rule": "research: Where a current state is claimed from a source, the age of that source is said w",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research/SKILL.md",
+   "text": "Where a current state is claimed from a source, the age of that source is said with it.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at 2baf6d1, enterprise-search/skills/knowledge-synthesis/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: A text is verified as separate claims, each small enough to be checked alone.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "A text is verified as separate claims, each small enough to be checked alone.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/doublecheck/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "nature-skills-reviewer",
+   "rule": "research: What the readers of one text are given holds the text and no conclusion of whoev",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "What the readers of one text are given holds the text and no conclusion of whoever arranged the review.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at c6701db, skills/nature-reviewer/SKILL.md and skills/nature-reviewer/references/reviewer-workflow.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: A check belongs to the moment a claim comes in, not to a last pass over the whol",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "A check belongs to the moment a claim comes in, not to a last pass over the whole.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/verification.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: The checker gives the reader the sources to judge by, and does not rule on what ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "The checker gives the reader the sources to judge by, and does not rule on what is true.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/doublecheck/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "nature-skills-reviewer",
+   "rule": "research: Agreement or disagreement between separate readings is left as it fell, each rea",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "Agreement or disagreement between separate readings is left as it fell, each reading being closed before any comparison.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at c6701db, skills/nature-reviewer/SKILL.md and skills/nature-reviewer/references/reviewer-workflow.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: A claim nobody could check is reported as unchecked, which is not the same as wr",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "A claim nobody could check is reported as unchecked, which is not the same as wrong.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/doublecheck/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: What a check finds is recorded on the claim, and the finding itself is rewritten",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "What a check finds is recorded on the claim, and the finding itself is rewritten only as far as the new evidence goes.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/verification.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "nature-skills-reviewer",
+   "rule": "research: Where the exact place of a concern cannot be pointed to, the report says the pla",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "Where the exact place of a concern cannot be pointed to, the report says the place is not given, and none is made up.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at c6701db, skills/nature-reviewer/SKILL.md and skills/nature-reviewer/references/reviewer-workflow.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: A check run on the same model that wrote the text catches some errors and cannot",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "A check run on the same model that wrote the text catches some errors and cannot be trusted to catch all.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/doublecheck/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: A conclusion that matters is handed to a sceptic who is given the conclusion alo",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-verification/SKILL.md",
+   "text": "A conclusion that matters is handed to a sceptic who is given the conclusion alone and looks for what would overturn it.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/verification.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: An edge is drawn for what one node does to another, and neither a shared subject",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-evidence-map/SKILL.md",
+   "text": "An edge is drawn for what one node does to another, and neither a shared subject nor a difference of setting is by itself such a relation.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/build-evidence-map/SKILL.md and skills/build-evidence-map/references/evidence-ladder.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: A map is about one question a reader could act on, with the answer it favours fo",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-evidence-map/SKILL.md",
+   "text": "A map is about one question a reader could act on, with the answer it favours for now given as provisional.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/build-evidence-map/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: Evidence against the answer stays on the map when the answer survives it, as a c",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-evidence-map/SKILL.md",
+   "text": "Evidence against the answer stays on the map when the answer survives it, as a contradiction or as a qualification.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/build-evidence-map/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: A node of evidence says what one located passage of a source says and no more, a",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-evidence-map/SKILL.md",
+   "text": "A node of evidence says what one located passage of a source says and no more, and a passage that cannot be located gives an unknown and not evidence.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/build-evidence-map/SKILL.md and skills/build-evidence-map/references/evidence-ladder.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: A map whose shape is sound is traceable, and is not thereby true.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-evidence-map/SKILL.md",
+   "text": "A map whose shape is sound is traceable, and is not thereby true.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/build-evidence-map/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "awesome-copilot-research",
+   "rule": "research: A gap is written as the one fact whose absence leaves the answer open, not as a ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-evidence-map/SKILL.md",
+   "text": "A gap is written as the one fact whose absence leaves the answer open, not as a call for more research.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at f10fdb8, skills/build-evidence-map/references/evidence-ladder.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: Whatever the choice between the two leading candidates turns on, a cell of the c",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-selection/SKILL.md",
+   "text": "Whatever the choice between the two leading candidates turns on, a cell of the comparison, a price or a measured figure, is confirmed by a second source.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/selection.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: The scores behind a verdict are shown, so that a reader who weighs the requireme",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-selection/SKILL.md",
+   "text": "The scores behind a verdict are shown, so that a reader who weighs the requirements differently can reach a verdict of their own.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/selection.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: What a winner must do is settled with those who decide, not found by searching, ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-selection/SKILL.md",
+   "text": "What a winner must do is settled with those who decide, not found by searching, and before any candidate is looked at.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/selection.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "bmad-deep-recon",
+   "rule": "research: A vendor's account of its own product is set beside what independent users repor",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-research-selection/SKILL.md",
+   "text": "A vendor's account of its own product is set beside what independent users report, and where the two differ the report shows both.",
+   "proof": "researchers-skills.test.ts",
+   "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/selection.md; the crew's sentence, written from the passage the item's pairs set beside it"
   }
  ]
 }
