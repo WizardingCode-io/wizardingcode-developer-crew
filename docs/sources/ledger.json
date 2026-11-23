@@ -105,6 +105,21 @@
    "name": "gsap-skills",
    "licence": "MIT",
    "commit": "aed9cfd"
+  },
+  {
+   "name": "45ck-architecture",
+   "licence": "MIT",
+   "commit": "14966b2"
+  },
+  {
+   "name": "davila7-architecture",
+   "licence": "MIT",
+   "commit": "1deb97c"
+  },
+  {
+   "name": "dandgabr-architect",
+   "licence": "GPL-3.0",
+   "commit": "b23ec7f"
   }
  ],
  "unread": [
@@ -3342,6 +3357,339 @@
    "text": "The drag below commits after 10 px, and dismisses past 0.4 of the element's size",
    "proof": "frontend-motion.test.ts",
    "note": "read at 64eb3de, apple-design/SKILL.md and gestures/SKILL.md; the formula and the figure kept as the source's, which gives them at second hand; inside D-1 of item 2026-11-19-001, the session's reading"
+  },
+  {
+   "source": "davila7-architecture",
+   "rule": "architects: A business rule does not depend on the framework the project is built with.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture/SKILL.md",
+   "text": "A business rule does not depend on the framework the project is built with.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 1deb97c, cli-tool/components/skills/development/software-architecture/SKILL.md; the rule is the crew's sentence on the file's idea, the file's text having first appeared in a repository under GPL-3.0; no run of six words is shared, by the item's probe (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "davila7-architecture",
+   "rule": "architects: The entities of the domain are kept apart from the code that stores, sends or se",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture/SKILL.md",
+   "text": "The entities of the domain are kept apart from the code that stores, sends or serves them.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 1deb97c, cli-tool/components/skills/development/software-architecture/SKILL.md; the rule is the crew's sentence on the file's idea, the file's text having first appeared in a repository under GPL-3.0; no run of six words is shared, by the item's probe (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: How personal data is kept private is weighed while a component is designed, not ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-decision/SKILL.md",
+   "text": "How personal data is kept private is weighed while a component is designed, not once it is built.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/roles/software-architect/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A decision record lets a later reader see why the choice was made and what else ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-decision/SKILL.md",
+   "text": "A decision record lets a later reader see why the choice was made and what else was on the table, not only what was chosen.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/adr-writer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A style is chosen among alternatives that were really considered, each with what",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-decision/SKILL.md",
+   "text": "A style is chosen among alternatives that were really considered, each with what it would cost, and never by default or by fashion.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/architecture-option-generator/SKILL.md and skills/tradeoff-analysis-writer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: In the reasoning for a decision, what is known, what is assumed and what is stil",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-decision/SKILL.md",
+   "text": "In the reasoning for a decision, what is known, what is assumed and what is still open are kept apart.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/adr-writer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: How far a system is split is decided by the people and the pressures it has toda",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-decision/SKILL.md",
+   "text": "How far a system is split is decided by the people and the pressures it has today, not by the size it might one day reach.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/monolith-vs-modular-monolith-reviewer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A boundary between services is drawn where the data has one clear owner, and a s",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-decision/SKILL.md",
+   "text": "A boundary between services is drawn where the data has one clear owner, and a split that is not worth what it costs to run is named as such.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/service-decomposition-advisor/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: A new component is decided from the outside in: what constrains it first, then i",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-decision/SKILL.md",
+   "text": "A new component is decided from the outside in: what constrains it first, then its interfaces, and a pattern or code only after both.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/roles/software-architect/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A boundary is sound when what sits inside it has one job and what crosses it is ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "A boundary is sound when what sits inside it has one job and what crosses it is a stated promise, not a reach into another part's insides.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/component-boundary-reviewer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A boundary is reviewed against the changes the system is expected to take, and a",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "A boundary is reviewed against the changes the system is expected to take, and against the dependency graph where there is one.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/component-boundary-reviewer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: Where two parts meet, someone owns the meeting point and what passes through it ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "Where two parts meet, someone owns the meeting point and what passes through it is written down.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/integration-boundary-mapper/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: Integrations with outside systems and those between the project's own parts are ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "Integrations with outside systems and those between the project's own parts are mapped together, each with the risk of coordination it carries.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/integration-boundary-mapper/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: In a layered design a dependency points one way only, and a concern every layer ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "In a layered design a dependency points one way only, and a concern every layer needs has a stated home instead of a copy in each.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/layered-architecture-designer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "davila7-architecture",
+   "rule": "architects: A module is named for the one thing it does in the domain, and a name that could",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "A module is named for the one thing it does in the domain, and a name that could hold anything is a sign that it has no single purpose.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 1deb97c, cli-tool/components/skills/development/software-architecture/SKILL.md; the rule is the crew's sentence on the file's idea, the file's text having first appeared in a repository under GPL-3.0; no run of six words is shared, by the item's probe (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "davila7-architecture",
+   "rule": "architects: A controller holds no database query, and a component of the interface holds no ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "A controller holds no database query, and a component of the interface holds no business rule.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 1deb97c, cli-tool/components/skills/development/software-architecture/SKILL.md; the rule is the crew's sentence on the file's idea, the file's text having first appeared in a repository under GPL-3.0; no run of six words is shared, by the item's probe (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: An error answer has one standard shape across the whole HTTP interface, the prob",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "An error answer has one standard shape across the whole HTTP interface, the problem-details format, in place of a shape for each route.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/framework/framework-rest-api/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: An operation that fits none of create, read, update and delete is modelled as a ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "An operation that fits none of create, read, update and delete is modelled as a named action on its resource.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/framework/framework-rest-api/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: A list is paged by a cursor, so that its paging is deterministic.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "A list is paged by a cursor, so that its paging is deterministic.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/framework/framework-rest-api/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: A mutation that may be retried is designed to be idempotent, the server recognis",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "A mutation that may be retried is designed to be idempotent, the server recognising a repeat by a key the client sends.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/framework/framework-rest-api/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: A process that finishes after its request is answered is given the contract of a",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-boundaries-contracts/SKILL.md",
+   "text": "A process that finishes after its request is answered is given the contract of a long-running operation, not that of an ordinary call.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/framework/framework-rest-api/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A quality goal counts once it is written as a situation the system must handle a",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "A quality goal counts once it is written as a situation the system must handle and a figure it must meet.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/quality-attribute-scenario-writer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: Each architectural risk is ranked, and the worst get a way to reduce them or a s",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "Each architectural risk is ranked, and the worst get a way to reduce them or a small trial that would settle the doubt.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/architecture-risk-assessor/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: Risks and open unknowns are looked for while the design is still cheap to change",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "Risks and open unknowns are looked for while the design is still cheap to change.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/architecture-risk-assessor/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A review for availability asks, for the journeys that matter most, what one fail",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "A review for availability asks, for the journeys that matter most, what one failure would take down and how the system carries on and comes back.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/availability-strategy-reviewer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: Where the system will first run out under load is guessed early from its shape a",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "Where the system will first run out under load is guessed early from its shape and its expected use, and is written down as a guess.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/scalability-hotspot-detector/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: The load and the storage a design must carry are estimated in figures before its",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "The load and the storage a design must carry are estimated in figures before its structure is drawn.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/system-design-scalability/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: A failing dependency is isolated, so that its failure costs its callers little a",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "A failing dependency is isolated, so that its failure costs its callers little and does not reach the parts that do not use it.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/system-design-scalability/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: What a store does when its nodes cannot reach each other is a property the desig",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "What a store does when its nodes cannot reach each other is a property the design chooses the store by, not one it discovers in production.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/system-design-scalability/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: Where a single writer feeds replicas that lag behind it, the design says what a ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "Where a single writer feeds replicas that lag behind it, the design says what a user who has just written sees when reading from a replica.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/system-design-scalability/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: A cache is a second copy with failure modes of its own, and the design says whic",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-quality-risk/SKILL.md",
+   "text": "A cache is a second copy with failure modes of its own, and the design says which of them it accepts.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/system-design-scalability/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: The widest diagram shows the system whole among the people and the systems aroun",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-views/SKILL.md",
+   "text": "The widest diagram shows the system whole among the people and the systems around it, and each narrower one opens a single part of the one before.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/c4-model-architecture/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A runtime view is told as what happens over time in the flows that matter, the u",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-views/SKILL.md",
+   "text": "A runtime view is told as what happens over time in the flows that matter, the unhappy paths among them.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/runtime-view-writer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A deployment view says where each piece of software runs and what that placement",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-views/SKILL.md",
+   "text": "A deployment view says where each piece of software runs and what that placement makes possible or puts at risk.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/deployment-view-writer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "45ck-architecture",
+   "rule": "architects: A diagram answers a question someone has, and says which.",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-views/SKILL.md",
+   "text": "A diagram answers a question someone has, and says which.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at 14966b2, skills/runtime-view-writer/SKILL.md; the crew's sentence written from the file, with no list of it given whole or in its order"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: Detail is added to a diagram only where a reader would otherwise be lost, and a ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-views/SKILL.md",
+   "text": "Detail is added to a diagram only where a reader would otherwise be lost, and a drawing a tool can generate from the code is not kept by hand.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/c4-model-architecture/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
+  },
+  {
+   "source": "dandgabr-architect",
+   "rule": "architects: A diagram can be read without its author: nothing on it is unlabelled, and no ar",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-architecture-views/SKILL.md",
+   "text": "A diagram can be read without its author: nothing on it is unlabelled, and no arrow leaves the reader to guess what passes along it.",
+   "proof": "architects-skills.test.ts",
+   "note": "read at b23ec7f, skills/engineering-practices/c4-model-architecture/SKILL.md; a file in Brazilian Portuguese under GPL-3.0; the rule is the crew's sentence on the file's idea, read beside its passage for a rendering, which no test can look for (ADR 0017's note of 2026-11-22)"
   }
  ]
 }

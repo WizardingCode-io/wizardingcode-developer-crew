@@ -7,6 +7,8 @@ import {
   ADDRESS,
   copyOf,
   declared,
+  ENTRY_SENTENCES,
+  expectEntrySentences,
   expectNothingToOpen,
   expectOneSentence,
   frontmatter,
@@ -303,7 +305,8 @@ function notHeld(file: string, words: string): string | null {
 }
 
 test(`${ITEM} AC-9: the engine's table holds the agentic-os team's ten skills after the other two teams', and the nine that hold subjects take the declaration's nineteen, each once`, () => {
-  expect(Object.keys(TEAM_SKILLS)).toEqual(["qa", "devops", "agentic-os"]);
+  // The first three: the whole of the keys is held by the test of the team that came last.
+  expect(Object.keys(TEAM_SKILLS).slice(0, 3)).toEqual(["qa", "devops", "agentic-os"]);
   expect(TEAM_SKILLS["agentic-os"].map((s) => [s.skill, s.title, [...s.subjects]])).toEqual(DESIGN);
   expect(TEAM_SKILLS.qa.map((s) => [s.skill, s.title, s.subjects.length])).toEqual([
     ["wizardingcode-qa-testing", "Testing", 0],
@@ -655,16 +658,13 @@ test(`${ITEM} AC-13: the entry sends each of the nineteen subjects to its skill 
 });
 
 test(`${ITEM} AC-14: the build reference sends a session to the entry right after the DevOps team's sentence, and CLAUDE.md's one line names the three teams' folders and tests`, () => {
-  const DEVOPS =
-    "Before a change to a pipeline, a deployment, an environment file or infrastructure code, read `wizardingcode-devops`: it sends each subject to the skill that holds the crew's rule for it.";
   const SENTENCE =
     "Before a change to an agent, a tool an agent calls, a prompt, a skill, a plugin or an MCP server, read `wizardingcode-agentic`: it sends each subject to the skill that holds the crew's rule for it.";
   const build = repoFile("plugins/core/skills/crew/references/build.md");
   expect(build.split(SENTENCE).length - 1).toBe(1);
-  const paragraphs = build.split("\n\n");
-  const at = paragraphs.indexOf(SENTENCE);
-  expect(paragraphs[at - 1]).toBe(DEVOPS);
-  expect(paragraphs[at + 1]?.startsWith("Use `-- <command>`")).toBe(true);
+  // The paragraphs beside it are held once for every team, by the kit's check (item 2026-11-22-001).
+  expect(ENTRY_SENTENCES[2]).toBe(SENTENCE);
+  expectEntrySentences(build);
   const claude = repoFile("CLAUDE.md")
     .split("\n")
     .filter((line) => line.includes("bun scripts/build-team-skills.ts"));
@@ -715,13 +715,13 @@ test(`${ITEM} AC-15: with --team the script writes this team's nine files alone,
     err: `team skills not built: no folder ${SKILLS}/${WATCH}`,
   });
   expect(readFileSync(byHand, "utf8")).toBe("changed by hand\n");
-  // Every team's, in the table's order: five, six, nine.
+  // Every team's, in the table's order: five, six, nine, and the architects team's three after them.
   const every = Object.values(TEAM_SKILLS).flatMap((skills) => skills.map((s) => s.skill));
   const all = build(copyOf(every));
   expect({ status: all.status, err: all.stderr }).toEqual({ status: 0, err: "" });
   const lines = all.stdout.trimEnd().split("\n");
-  expect(lines).toHaveLength(20);
+  expect(lines).toHaveLength(23);
   expect(lines.slice(0, 5).every((l) => l.includes("wizardingcode-qa-"))).toBe(true);
   expect(lines.slice(5, 11).every((l) => l.includes("wizardingcode-devops-"))).toBe(true);
-  expect(lines.slice(11)).toEqual(WROTE);
+  expect(lines.slice(11, 20)).toEqual(WROTE);
 });

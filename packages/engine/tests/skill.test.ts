@@ -1606,6 +1606,36 @@ interface LedgerRow {
   reason?: string;
 }
 
+/**
+ * Whether a source's licence lets it into the ledger: MIT or Apache-2.0 and nothing beside the
+ * name (ADR 0017, decision 5), or
+ * the one source that decision's note of 2026-11-22 names, under the licence it names, and no other.
+ */
+function licenceLetsIn(source: { name: string; licence: string }): boolean {
+  if (source.name === "dandgabr-architect" && source.licence === "GPL-3.0") return true;
+  return /^(MIT|Apache-2\.0)$/.test(source.licence);
+}
+
+test("2026-11-22-001 AC-44: a source enters the ledger under MIT or Apache-2.0, and under GPL-3.0 only the one source ADR 0017's note of 2026-11-22 names", () => {
+  const lets = (name: string, licence: string) => licenceLetsIn({ name, licence });
+  expect(lets("a-source", "MIT")).toBe(true);
+  expect(lets("a-source", "Apache-2.0")).toBe(true);
+  expect(lets("dandgabr-architect", "GPL-3.0")).toBe(true);
+  expect(lets("a-source", "GPL-3.0")).toBe(false);
+  expect(lets("davila7-architecture", "GPL-3.0")).toBe(false);
+  expect(lets("dandgabr-architect-two", "GPL-3.0")).toBe(false);
+  expect(lets("dandgabr-architect", "LGPL-3.0")).toBe(false);
+  expect(lets("dandgabr-architect", "AGPL-3.0")).toBe(false);
+  expect(lets("dandgabr-architect", "GPL-2.0")).toBe(false);
+  expect(lets("a-source", "")).toBe(false);
+  // The licence's name whole: a string that merely holds one of the two is no such licence.
+  expect(lets("a-source", "GPL-3.0, examples MIT")).toBe(false);
+  expect(lets("a-source", "LIMITED")).toBe(false);
+  expect(lets("a-source", "MIT or GPL-3.0")).toBe(false);
+  expect(lets("a-source", "Apache-2.0-with-exceptions")).toBe(false);
+  expect(lets("a-source", "Apache-2x0")).toBe(false);
+});
+
 test("AC-16: every row of the coverage ledger holds its text at its file or a refusal with a decision, and every source has rows", () => {
   const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as {
     sources: { name: string; licence: string; commit: string }[];
@@ -1630,7 +1660,10 @@ test("AC-16: every row of the coverage ledger holds its text at its file or a re
   const names = new Set(ledger.rows.map((r) => r.source));
   for (const source of ledger.sources) {
     expect(source.commit.length, source.name).toBeGreaterThan(0);
-    expect(source.licence, source.name).toMatch(/MIT|Apache-2\.0/);
+    expect({ source: source.name, lets: licenceLetsIn(source) }).toEqual({
+      source: source.name,
+      lets: true,
+    });
     expect(names.has(source.name), source.name).toBe(true);
   }
   for (const name of [

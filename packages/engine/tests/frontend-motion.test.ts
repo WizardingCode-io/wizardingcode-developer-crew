@@ -474,7 +474,10 @@ test("motion AC-8: no author's name outside the sources file, and the sources fi
     expect(row[0]?.decision, rule).toBe("D-6");
   }
   const adr = repoFile("docs/adr/0017-outside-sources-enter-the-core-distilled.md");
-  const note = adr.slice(adr.indexOf("## Note of 2026-11-19 (item 2026-11-19-001"));
+  // The note of that item alone: to the next note of the ADR, or to the file's end.
+  const from = adr.indexOf("## Note of 2026-11-19 (item 2026-11-19-001");
+  const next = adr.indexOf("\n## Note of", from + 1);
+  const note = adr.slice(from, next < 0 ? undefined : next);
   for (const words of ["seventeenth skill", "`wizardingcode-frontend-motion`", "D-1", "2026-11-18"])
     expect(note, words).toContain(words);
 });

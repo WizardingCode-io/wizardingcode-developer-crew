@@ -7,6 +7,8 @@ import {
   ADDRESS,
   copyOf,
   declared,
+  ENTRY_SENTENCES,
+  expectEntrySentences,
   expectNothingToOpen,
   expectOneSentence,
   frontmatter,
@@ -301,17 +303,9 @@ test(`${ITEM} AC-12: the build reference sends a session to the entry before its
     "Before the first test of an item, and before judging one, read `wizardingcode-qa-testing`: it sends each subject to the skill that holds the crew's rule for it.";
   const build = repoFile("plugins/core/skills/crew/references/build.md");
   expect(build.split(SENTENCE).length - 1).toBe(1);
-  const paragraphs = build.split("\n\n");
-  const at = paragraphs.indexOf(SENTENCE);
-  expect(at).toBeGreaterThan(0);
-  expect(paragraphs[at - 1]?.split("\n").at(-1)?.startsWith("5. ")).toBe(true);
-  expect(paragraphs[at + 1]).toBe(
-    "Before a change to a pipeline, a deployment, an environment file or infrastructure code, read `wizardingcode-devops`: it sends each subject to the skill that holds the crew's rule for it.",
-  );
-  expect(paragraphs[at + 2]).toBe(
-    "Before a change to an agent, a tool an agent calls, a prompt, a skill, a plugin or an MCP server, read `wizardingcode-agentic`: it sends each subject to the skill that holds the crew's rule for it.",
-  );
-  expect(paragraphs[at + 3]?.startsWith("Use `-- <command>`")).toBe(true);
+  // The paragraphs beside it are held once for every team, by the kit's check (item 2026-11-22-001).
+  expect(ENTRY_SENTENCES[0]).toBe(SENTENCE);
+  expectEntrySentences(build);
   const claude = repoFile("CLAUDE.md")
     .split("\n")
     .filter((line) => line.includes("bun scripts/build-team-skills.ts"));

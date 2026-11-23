@@ -1,6 +1,7 @@
-// What the tests of the teams' own skills share (qa-skills, devops-skills, agentic-skills): the
-// reading of a declaration and of a SKILL.md, the checks every skill is held to, and the copy of
-// the plugin the script's rows run on. Each team's test keeps its own rows, values and limits.
+// What the tests of the teams' own skills share (qa-skills, devops-skills, agentic-skills,
+// architects-skills): the reading of a declaration and of a SKILL.md, the checks every skill is
+// held to, the sentences of the build reference, and the copy of the plugin the script's rows run
+// on. Each team's test keeps its own rows, values and limits.
 import { expect } from "bun:test";
 import { cpSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -108,3 +109,30 @@ export const listingOf = (copy: string) =>
   readdirSync(copy, { recursive: true, withFileTypes: true })
     .map((e) => join(e.parentPath, e.name).slice(copy.length))
     .sort();
+
+/** The sentences of the build reference that send a session to a team's entry, in the table's order. */
+export const ENTRY_SENTENCES = [
+  "Before the first test of an item, and before judging one, read `wizardingcode-qa-testing`: it sends each subject to the skill that holds the crew's rule for it.",
+  "Before a change to a pipeline, a deployment, an environment file or infrastructure code, read `wizardingcode-devops`: it sends each subject to the skill that holds the crew's rule for it.",
+  "Before a change to an agent, a tool an agent calls, a prompt, a skill, a plugin or an MCP server, read `wizardingcode-agentic`: it sends each subject to the skill that holds the crew's rule for it.",
+  "Before a change to a boundary, a model, a contract or an integration, and before a decision on the architecture or on a technology, read `wizardingcode-architecture`: it sends each subject to the skill that holds the crew's rule for it.",
+] as const;
+
+/**
+ * The build reference holds the teams' sentences as consecutive paragraphs in the table's order,
+ * each once in the whole text, after the paragraph whose last line is the fifth step and before
+ * the paragraph on a single test file.
+ */
+export function expectEntrySentences(build: string): void {
+  for (const sentence of ENTRY_SENTENCES)
+    expect({ sentence, times: build.split(sentence).length - 1 }).toEqual({ sentence, times: 1 });
+  const paragraphs = build.split("\n\n");
+  const at = paragraphs.indexOf(ENTRY_SENTENCES[0]);
+  expect(paragraphs.slice(at, at + ENTRY_SENTENCES.length)).toEqual([...ENTRY_SENTENCES]);
+  expect({ before: paragraphs[at - 1]?.split("\n").at(-1)?.startsWith("5. ") }).toEqual({
+    before: true,
+  });
+  expect({
+    after: paragraphs[at + ENTRY_SENTENCES.length]?.startsWith("Use `-- <command>`"),
+  }).toEqual({ after: true });
+}

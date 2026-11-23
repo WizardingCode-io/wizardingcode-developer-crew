@@ -137,6 +137,39 @@ export const TEAM_SKILLS = {
       ],
     },
   ],
+  architects: [
+    { skill: "wizardingcode-architecture", title: "Architecture", subjects: [] },
+    {
+      skill: "wizardingcode-architecture-decision",
+      title: "Decision",
+      subjects: [
+        "Choosing the architecture style",
+        "Decisions and documentation",
+        "Evolution and debt",
+        "Technology and dependencies",
+        "AI and agents",
+      ],
+    },
+    {
+      skill: "wizardingcode-architecture-boundaries-contracts",
+      title: "Boundaries and contracts",
+      subjects: [
+        "Layers and boundaries",
+        "Data and domain model",
+        "Contracts",
+        "Integrations",
+        "The spec's Design",
+        "Consistency with neighbours",
+      ],
+    },
+    {
+      skill: "wizardingcode-architecture-quality-risk",
+      title: "Quality attributes and risk",
+      subjects: ["Risk in production", "Quality attributes"],
+    },
+    // Views holds no subject of section 3: C4 and the diagram tools are read under Decision's.
+    { skill: "wizardingcode-architecture-views", title: "Views", subjects: [] },
+  ],
 } satisfies Partial<Record<TeamName, readonly TeamSkill[]>>;
 
 /** The teams that have skills of their own: the table's keys, so the two cannot differ. */
@@ -174,6 +207,9 @@ const TITLES_READ: readonly [string, string] = [
   "The research opened each page and read its title, not the page end to end; a line that says a page was not opened, or that names a paid book, names nothing that was read.",
   "A line is where a subject is read and no line is a rule.",
 ];
+/** What a line is for the teams whose declaration states rules of their own among its sources. */
+const RULE_ONLY_AS_A_ROW =
+  "A line is where a subject is read; where a line states a rule of the team's own, a session follows it only as a row of a skill gives it, and never from this file.";
 /**
  * What a team's research read, and what a line of its sources is: the second and third sentences
  * of the paragraph. Keyed by the teams of `TEAM_SKILLS`, with no fallback, so a team added to one
@@ -184,7 +220,11 @@ const TEAM_RESEARCH: Readonly<Record<SkilledTeam, readonly [string, string]>> = 
   devops: TITLES_READ,
   "agentic-os": [
     "The research read the content of some pages and only the answer of others; a line that says a page was not opened names nothing that was read.",
-    "A line is where a subject is read; where a line states a rule of the team's own, a session follows it only as a row of a skill gives it, and never from this file.",
+    RULE_ONLY_AS_A_ROW,
+  ],
+  architects: [
+    "The research read each source that has an address at that address on 2026-11-15; a line that says a page was not opened, or that a source was read in a summary, names nothing more than it says.",
+    RULE_ONLY_AS_A_ROW,
   ],
 };
 

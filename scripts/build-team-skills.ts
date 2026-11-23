@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // Writes `plugins/core/skills/<skill>/sources.md` for each of the teams' own skills that holds
-// subjects (items 2026-11-21-008 and 009), from the team's declaration under `plugins/core/teams/`:
+// subjects (items 2026-11-21-008 to 010 and 2026-11-22-001), from the team's declaration under `plugins/core/teams/`:
 // the subjects' rows, cut and never rewritten. Run by hand after a definition changes and its
 // declaration is built again; nothing here runs at install or at runtime. Every text is computed,
 // and every skill's folder seen, for every team asked for, before any file is written, so a refusal
