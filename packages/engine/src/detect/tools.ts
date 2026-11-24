@@ -144,19 +144,20 @@ const IDS: ReadonlySet<string> = new Set(TOOLS.map((tool) => tool.id));
 const tableShows = (found: string, named: string) =>
   found === named || found.startsWith(`${named}.`);
 
+/** Whether a folder shows one of a tool's signs: a name its manifest declares, a table of its `pyproject.toml`, or a regular file of the name in the folder itself, seen and never read. */
+export function signsShown(dir: string, facts: ManifestFacts, signs: ToolSigns): boolean {
+  return (
+    (signs.dependencies ?? []).some((name) => facts.names.includes(name)) ||
+    (signs.tables ?? []).some((named) => facts.tables.some((found) => tableShows(found, named))) ||
+    (signs.files ?? []).some((file) => isRegularFile(join(dir, file)))
+  );
+}
+
 /** The tools a stack's facts and a folder's files show, in the table's order. */
 function toolsIn(dir: string, stack: string, facts: ManifestFacts): string[] {
-  const declared = new Set(facts.names);
   return TOOLS.filter((tool) => {
     const signs = Object.hasOwn(tool.stacks, stack) ? tool.stacks[stack] : undefined;
-    if (!signs) return false;
-    return (
-      (signs.dependencies ?? []).some((name) => declared.has(name)) ||
-      (signs.tables ?? []).some((named) =>
-        facts.tables.some((found) => tableShows(found, named)),
-      ) ||
-      (signs.files ?? []).some((file) => isRegularFile(join(dir, file)))
-    );
+    return signs !== undefined && signsShown(dir, facts, signs);
   }).map((tool) => tool.id);
 }
 

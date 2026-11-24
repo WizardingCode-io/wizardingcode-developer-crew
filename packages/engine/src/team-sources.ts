@@ -6,6 +6,7 @@
 import { join } from "node:path";
 import { FRAMEWORKS, frameworkIds, NOT_IN_A_MANIFEST } from "./detect/frameworks.ts";
 import { detectTargets } from "./detect/index.ts";
+import { rowProjectLine } from "./detect/row-tools.ts";
 import { TOOLS, toolIds } from "./detect/tools.ts";
 import { readRegular } from "./fs.ts";
 import { findRoot } from "./paths.ts";
@@ -237,7 +238,7 @@ export const INSTALL_FORMS: readonly InstallForm[] = [
 /** Why a row of the error services' section is held, whatever its line. */
 export const ERROR_SERVICE_HOLD = "it reaches production data with a credential";
 
-/** Why a row of the per-stack table is held, by the order of ADR 0025's table. */
+/** Why a row is held by its own cells, by the order of ADR 0025's table. */
 const HOLD = {
   noCommand: "its row gives no command",
   notStable: "not stable by its own row",
@@ -591,7 +592,7 @@ const TEAM_HOLD = {
   otherTeam: "another team's declaration holds a row at its page",
 } as const;
 const NOT_TOLD_OF_A_TEAM =
-  "not told: whether this project uses the tool or the service of a row, which nothing detects for this team; the heading over a row says when it applies";
+  "not told: whether this project uses the tool or the service of a held row, and of a ready row save where the line under it says; the heading over a row says when it applies";
 
 /** A row of an install table of a team's declaration, with the section it stands in and its state. */
 interface TeamRow extends StatedRow {
@@ -672,17 +673,20 @@ function teamProjectLines(
   declaration: string,
   cwd: string,
 ): string[] | { refused: string } {
-  const projectRoot = findRoot(cwd);
-  if (projectRoot === null) return [NO_PROJECT];
+  const project = detectedProject(cwd);
+  if (project === null) return [NO_PROJECT];
   const rows = teamRows(root, team, declaration);
   if ("refused" in rows) return rows;
-  const record = readSourcesRecord(projectRoot);
+  const record = readSourcesRecord(project.root);
   const lines: string[] = [];
   let section = 0;
   for (const row of rows) {
     if (row.section !== section) lines.push(`${declarationLine(row.heading.replace(/^#+ /, ""))}:`);
     section = row.section;
     lines.push(declarationLine(row.line), ...stateLines(row, record.entries, team));
+    // Whether the project shows the row's tool is said of a row a session may install, and of no other.
+    if (row.install.state === "ready")
+      lines.push(rowProjectLine(row.cells[2] ?? "", project.root, project.targets));
   }
   const ready = rows.filter((row) => row.install.state === "ready").length;
   return [

@@ -29,7 +29,9 @@ type Team = (typeof OTHERS)[number];
 const HEADER = "| Tool or service | Server or skills | Read at | How it is installed |";
 const RULE = "| :- | :- | :- | :- |";
 const NOT_TOLD =
-  "not told: whether this project uses the tool or the service of a row, which nothing detects for this team; the heading over a row says when it applies";
+  // 2026-11-24-002: a line under a ready row says it where a manifest or a file can.
+  "not told: whether this project uses the tool or the service of a held row, and of a ready row save where the line under it says; the heading over a row says when it applies";
+const NO_ENTRY = "  project: not told, nothing in a manifest or a file shows what this row is for";
 const NO_PROJECT =
   "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 const USAGE =
@@ -204,6 +206,7 @@ test(`${ITEM} AC-11: a heading of two hashes, a table of another header, an esca
     row("Red[0m", "https://a.test/one", READY),
     "  install: ready",
     SKILLS_NOTE,
+    NO_ENTRY,
     "Three hashes:",
     row("Hosted", "https://a.test/two", READY, "a server, hosted"),
     heldLine(HOSTED),
@@ -503,7 +506,14 @@ test(`${ITEM} AC-14: a ready row of any team is recorded by its page, and the re
   const after = linesOf(form(root, "qa", project));
   expect(stateOf(after, "| Mine |")).toBe("  install: installed, recorded on 2026-11-24");
   expect(after.at(-3)).toBe("ready: 2 rows; held: 4 rows");
-  expect(after.length).toBe(before.length - 1);
+  // 2026-11-24-002: the lines under the recorded row, where a comparison of lengths stood.
+  const underMine = after.slice(after.indexOf(mine) + 1, after.indexOf(mine) + 3);
+  expect(underMine).toEqual(["  install: installed, recorded on 2026-11-24", NO_ENTRY]);
+  expect(before.slice(before.indexOf(mine) + 1, before.indexOf(mine) + 4)).toEqual([
+    "  install: ready",
+    SKILLS_NOTE,
+    NO_ENTRY,
+  ]);
   // Another team's row at the same page is not shown the entry.
   expect(stateOf(linesOf(form(root, "etl", project)), "| Theirs |")).toBe("  install: ready");
   // A changed line prints ready again, said.
@@ -574,8 +584,9 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
     .split("\n")
     .filter((line) => line.includes("crew sources"));
   expect(reference).toHaveLength(1);
+  // 2026-11-24-002: the sentence says what the line under a ready row is.
   expect(reference[0]).toContain(
-    "For another team, crew sources <team> --project prints every row of its install tables with its state, and tells nothing of whether the project uses a row's tool: the heading over the row says when it applies.",
+    "For another team, crew sources <team> --project prints every row of its install tables with its state, and under a ready row whether the project's manifests and files show its tool; present a ready row the project does not show only where the person asked for it.",
   );
   const adr = readFileSync(
     join(
@@ -591,7 +602,11 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
   );
   const parts = adr.split("\n## Amendment of 2026-11-24 (item 2026-11-24-001)\n");
   expect(parts).toHaveLength(2);
-  expect(parts[1]).not.toContain("\n## ");
+  // 2026-11-24-002: this amendment runs to the next item's heading and to no other.
+  const [amendment = "", ...later] = (parts[1] ?? "").split("\n## ");
+  expect(later.map((part) => part.split("\n")[0])).toEqual([
+    "Amendment of 2026-11-24 (item 2026-11-24-002)",
+  ]);
   for (const phrase of [
     "every team",
     "--project",
@@ -603,5 +618,5 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
     "one file",
     "the other seven",
   ])
-    expect(parts[1], phrase).toContain(phrase);
+    expect(amendment, phrase).toContain(phrase);
 });
