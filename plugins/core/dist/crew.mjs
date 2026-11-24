@@ -24990,8 +24990,8 @@ function recordSourceRow(root, row, at) {
 
 // packages/engine/src/team-sources.ts
 var DECLARATION_MAX_BYTES = 1024 * 1024;
-var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources backend --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
-var USAGE = "usage: crew sources [<team> [<n>]] | crew sources backend --project | crew sources backend --installed <page> | crew sources backend --declined <page>";
+var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
+var USAGE = "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
 var PROJECT_TEAM = "backend";
 var NO_PROJECT = "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 function cells(line) {
@@ -25099,10 +25099,19 @@ var HOLD = {
   hosted: "hosted, so what a session asks leaves the machine",
   value: "its line takes a value of the machine, a token or a key",
   prompt: "its line is typed at Claude Code's prompt, which a session cannot do",
+  wordy: "its last cell says more than its lines",
   noForm: "its line is not one of the engine's install forms"
 };
 var COMPOSER_REQUIRE = "composer require";
-var NOT_STABLE_PHRASES = ["experimental", "release candidate"];
+var NOT_STABLE_PHRASES = [
+  "experimental",
+  "release candidate",
+  "beta",
+  "preview",
+  "pre-release",
+  "alpha"
+];
+var JOINING_WORDS = ["then", "and", "or"];
 var NOT_STABLE_TAG = /.@(?:rc|beta|alpha|next|canary)$/;
 var VALUE_MARKS = [
   "$",
@@ -25124,6 +25133,9 @@ function installSpans(cells) {
 function formOf(line) {
   return INSTALL_FORMS.find(({ form }) => line === form || line.startsWith(`${form} `));
 }
+function wordsBeside(cells) {
+  return (cells.at(-1) ?? "").replace(/`[^`]*`/g, " ").split(/[\s,;:.]+/).filter((word) => word !== "" && !JOINING_WORDS.includes(word));
+}
 function holdOf(cells, lines) {
   if (lines.length === 0)
     return HOLD.noCommand;
@@ -25137,6 +25149,8 @@ function holdOf(cells, lines) {
     return HOLD.value;
   if (some((line) => line.startsWith("/")))
     return HOLD.prompt;
+  if (wordsBeside(cells).length > 0)
+    return HOLD.wordy;
   return null;
 }
 function formsOf(lines) {
@@ -25272,14 +25286,15 @@ function describedProject(targets) {
     ...tools.length ? [`tools: ${tools.join("; ")}`] : []
   ];
 }
+var UNREAD_RECORD = `the record of installs (${SOURCES_RECORD_NAME}) could not be read as the engine writes it and was not read`;
 var rowsCount = (count) => `${count} row${count === 1 ? "" : "s"}`;
 var dayOf = (entry) => entry.at.slice(0, 10);
 var sameLines = (a, b) => a.length === b.length && a.every((line, at) => line === b[at]);
-function entryOf(entries, row) {
-  return entries.find((entry) => entry.team === PROJECT_TEAM && entry.page === row.cells[2]);
+function entryOf(entries, team, row) {
+  return entries.find((entry) => entry.team === team && entry.page === row.cells[2]);
 }
-function stateLines(row, entries) {
-  const entry = row.install.state === "ready" ? entryOf(entries, row) : undefined;
+function stateLines(row, entries, team = PROJECT_TEAM) {
+  const entry = row.install.state === "ready" ? entryOf(entries, team, row) : undefined;
   if (entry === undefined)
     return installLines(row.install);
   if (sameLines(entry.lines, installSpans(row.cells)))
@@ -25322,9 +25337,86 @@ function projectLines(declaration, cwd) {
   return [
     ...describedProject(project.targets),
     ...projectRowLines(declaration, project.targets, record.entries),
-    ...record.unread ? [
-      `the record of installs (${SOURCES_RECORD_NAME}) could not be read as the engine writes it and was not read`
-    ] : []
+    ...record.unread ? [UNREAD_RECORD] : []
+  ];
+}
+var INSTALL_HEADER = "How it is installed";
+var HELD_HEADINGS = ["### Left out", "### Held"];
+var OWED_PHRASES = ["still owed", "to be checked"];
+var TEAM_HOLD = {
+  heading: "its table is left out or held by the definition",
+  owed: "its row says what is still owed or to be checked before it enters",
+  otherTeam: "another team's declaration holds a row at its page"
+};
+var NOT_TOLD_OF_A_TEAM = "not told: whether this project uses the tool or the service of a row, which nothing detects for this team; the heading over a row says when it applies";
+function ownInstall(heading, row) {
+  if (HELD_HEADINGS.some((opening) => heading.startsWith(opening)))
+    return { state: "held", reason: TEAM_HOLD.heading };
+  if (row.some((cell) => OWED_PHRASES.some((phrase) => names2(cell.toLowerCase(), phrase))))
+    return { state: "held", reason: TEAM_HOLD.owed };
+  return rowInstall(row, new Set);
+}
+function installRows(declaration) {
+  const found = [];
+  for (const section of declarationSections(declaration)) {
+    let header = null;
+    for (const line of section.lines) {
+      if (!line.startsWith("|"))
+        header = null;
+      else if (header === null)
+        header = cells(line);
+      else if (isRow(line) && header.at(-1) === INSTALL_HEADER) {
+        const row = cells(line);
+        found.push({
+          section: section.number,
+          heading: section.heading,
+          line,
+          cells: row,
+          install: ownInstall(section.heading, row)
+        });
+      }
+    }
+  }
+  return found;
+}
+function teamRows(root, team, declaration) {
+  const heldPages = new Set;
+  for (const other of teamNames()) {
+    if (other === team || other === PROJECT_TEAM)
+      continue;
+    const read = readTeamDeclaration(root, other);
+    if ("refused" in read)
+      return read;
+    for (const row of installRows(read.text)) {
+      const page = row.cells[2] ?? "";
+      if (row.install.state === "held" && page !== "")
+        heldPages.add(page);
+    }
+  }
+  return installRows(declaration).map((row) => row.install.state === "ready" && heldPages.has(row.cells[2] ?? "") ? { ...row, install: { state: "held", reason: TEAM_HOLD.otherTeam } } : row);
+}
+function teamProjectLines(root, team, declaration, cwd) {
+  const projectRoot = findRoot(cwd);
+  if (projectRoot === null)
+    return [NO_PROJECT];
+  const rows = teamRows(root, team, declaration);
+  if ("refused" in rows)
+    return rows;
+  const record = readSourcesRecord(projectRoot);
+  const lines = [];
+  let section = 0;
+  for (const row of rows) {
+    if (row.section !== section)
+      lines.push(`${declarationLine(row.heading.replace(/^#+ /, ""))}:`);
+    section = row.section;
+    lines.push(declarationLine(row.line), ...stateLines(row, record.entries, team));
+  }
+  const ready = rows.filter((row) => row.install.state === "ready").length;
+  return [
+    ...lines,
+    `ready: ${rowsCount(ready)}; held: ${rowsCount(rows.length - ready)}`,
+    NOT_TOLD_OF_A_TEAM,
+    ...record.unread ? [UNREAD_RECORD] : []
   ];
 }
 var OWN_MARKS = ["framework", "tool", "by stack"];
@@ -25332,6 +25424,24 @@ var NOT_RECORDED = {
   place: ".crew/local is not a folder of this project",
   bounds: "the row does not fit the record's bounds"
 };
+function recordedRow(root, team, declaration, targets, page) {
+  const noRow = {
+    refused: `no row of this project is read at that page: crew sources ${team} --project prints the rows and their pages`
+  };
+  if (team === PROJECT_TEAM)
+    return projectRows(declaration, targets).find((candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page) ?? noRow;
+  const rows = teamRows(root, team, declaration);
+  if ("refused" in rows)
+    return rows;
+  const [row, second] = rows.filter((candidate) => candidate.cells[2] === page);
+  if (row === undefined)
+    return noRow;
+  if (second !== undefined)
+    return {
+      refused: "more than one row of this team is read at that page, so a record by its page would not say which"
+    };
+  return row;
+}
 function recordSourcesCommand(root, args, flags, cwd, at) {
   const refuse = (text) => ({ code: 1, text });
   if (flags.installed === undefined === (flags.declined === undefined))
@@ -25342,9 +25452,8 @@ function recordSourcesCommand(root, args, flags, cwd, at) {
     return refuse(USAGE);
   if (args.length !== 1 || flags.project !== undefined)
     return refuse(USAGE);
-  if (args[0] !== PROJECT_TEAM)
-    return refuse("only the backend's declaration has a project form");
-  const read = readTeamDeclaration(root, PROJECT_TEAM);
+  const team = args[0] ?? "";
+  const read = readTeamDeclaration(root, team);
   if ("refused" in read)
     return refuse(read.refused);
   const project = detectedProject(cwd);
@@ -25352,14 +25461,15 @@ function recordSourcesCommand(root, args, flags, cwd, at) {
     return refuse(NO_PROJECT);
   if (sourcesPlaceRefused(project.root))
     return refuse(`not recorded: ${NOT_RECORDED.place}`);
-  const row = projectRows(read.text, project.targets).find((candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page);
-  if (row === undefined)
-    return refuse("no row of this project is read at that page: crew sources backend --project prints the rows and their pages");
+  const found = recordedRow(root, team, read.text, project.targets, page);
+  if ("refused" in found)
+    return refuse(found.refused);
+  const row = found;
   if (row.install.state === "held")
     return refuse(`not recorded: the row is held, ${row.install.reason}`);
   if (row.install.state === "in the project already")
     return refuse("not recorded: the row is in the project already");
-  const recorded = recordSourceRow(project.root, { team: PROJECT_TEAM, page, decision, lines: installSpans(row.cells) }, at);
+  const recorded = recordSourceRow(project.root, { team, page, decision, lines: installSpans(row.cells) }, at);
   if (!recorded.ok)
     return refuse(`not recorded: ${NOT_RECORDED[recorded.why]}`);
   return {
@@ -25399,9 +25509,10 @@ function sourcesCommand(root, args, options = {}) {
   if ("refused" in read)
     return refuse(read.refused);
   if (options.project) {
-    if (team !== "backend")
-      return refuse("only the backend's declaration has rows by stack: crew sources backend --project");
-    return done([read.path, ...projectLines(read.text, options.project.cwd)]);
+    if (team === PROJECT_TEAM)
+      return done([read.path, ...projectLines(read.text, options.project.cwd)]);
+    const lines = teamProjectLines(root, team, read.text, options.project.cwd);
+    return "refused" in lines ? refuse(lines.refused) : done([read.path, ...lines]);
   }
   const sections = declarationSections(read.text);
   if (n === undefined)
@@ -30818,9 +30929,9 @@ var HELP = `crew ${VERSION}
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   sources [<team> [<n>]]                what each team was given (its sources, tools, servers and skills): the teams and their files, a team's index, or one section; installs nothing
-  sources backend --project             the rows of the backend's per-stack table that are this project's, by the frameworks its manifests show; reads the project, writes nothing
-  sources backend --installed <page>    record that the person said yes to a ready row and its lines ran (asks the user; never with --mode or --validator)
-  sources backend --declined <page>     record that the person said no to a ready row (asks the user; never with --mode or --validator)
+  sources <team> --project              for the backend, the rows of its per-stack table that are this project's, by the frameworks its manifests show; for another team, every row of its install tables with its state; reads the project, writes nothing
+  sources <team> --installed <page>     record that the person said yes to a ready row and its lines ran (asks the user; never with --mode or --validator)
+  sources <team> --declined <page>      record that the person said no to a ready row (asks the user; never with --mode or --validator)
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

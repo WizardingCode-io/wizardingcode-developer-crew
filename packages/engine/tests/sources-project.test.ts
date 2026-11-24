@@ -18,7 +18,7 @@ import { cliIo, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.t
 const ITEM = "2026-11-21-004";
 // 2026-11-21-007 edits this literal: the usage gained the two forms that record a row.
 const USAGE =
-  "usage: crew sources [<team> [<n>]] | crew sources backend --project | crew sources backend --installed <page> | crew sources backend --declined <page>";
+  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
 const NO_PROJECT =
   "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 const NO_TARGET =
@@ -320,14 +320,14 @@ test(`${ITEM} AC-16: a project with no target says so, a heading with no row say
   expect(atCrew.text.split("\n")[1]).toBe("this project: php (laravel)");
 });
 
-test(`${ITEM} AC-13: --project is the backend's alone, takes no value and goes with no section number`, async () => {
+test(`${ITEM} AC-13: --project takes a team, no value and no section number (2026-11-24-001: every team has the form)`, async () => {
   const run = cliIo(laravelAndFastapi(), testEnv());
   const said = (answer: { out: string; err: string }) => `${answer.out}${answer.err}`.trim();
   const qa = await run("sources", "qa", "--project");
-  expect(qa.code).toBe(1);
-  expect(said(qa)).toBe(
-    "only the backend's declaration has rows by stack: crew sources backend --project",
-  );
+  // 2026-11-24-001: the QA team's form, where a refusal stood.
+  expect(qa.code).toBe(0);
+  expect(qa.out.split("\n")[0]).toBe(join(pluginRoot(), "teams", "qa.md"));
+  expect(qa.out).toContain("\nready: 1 row; held: 26 rows\n");
   for (const args of [
     ["sources", "backend", "5", "--project"],
     ["sources", "backend", "--project", "5"],
@@ -348,7 +348,7 @@ test(`${ITEM} AC-13: --project is the backend's alone, takes no value and goes w
   const notATeam = await run("sources", "cobol", "--project");
   expect(notATeam.code).toBe(1);
   expect(said(notATeam)).toContain("not a team:");
-  for (const answer of [qa, unknown, notATeam]) expect(said(answer)).not.toContain("| ");
+  for (const answer of [unknown, notATeam]) expect(said(answer)).not.toContain("| ");
 });
 
 const listing = (dir: string): string[] =>
@@ -444,7 +444,7 @@ test(`${ITEM} AC-7: understand.md sends a change to backend code to crew sources
   const help = await cliIo(makeRepo(), testEnv())("help");
   const line = help.out.split("\n").find((l) => l.startsWith("  sources ")) ?? "";
   expect(line).toContain("sources [<team> [<n>]]");
-  expect(help.out).toContain("sources backend --project");
+  expect(help.out).toContain("sources <team> --project");
 });
 
 test(`${ITEM} AC-8: a pyproject.toml array that closes on a line past the reader's length ends there, and nothing after it is taken for an entry`, () => {

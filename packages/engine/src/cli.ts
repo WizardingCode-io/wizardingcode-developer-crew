@@ -7704,9 +7704,9 @@ const HELP = `crew ${VERSION}
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   sources [<team> [<n>]]                what each team was given (its sources, tools, servers and skills): the teams and their files, a team's index, or one section; installs nothing
-  sources backend --project             the rows of the backend's per-stack table that are this project's, by the frameworks its manifests show; reads the project, writes nothing
-  sources backend --installed <page>    record that the person said yes to a ready row and its lines ran (asks the user; never with --mode or --validator)
-  sources backend --declined <page>     record that the person said no to a ready row (asks the user; never with --mode or --validator)
+  sources <team> --project              for the backend, the rows of its per-stack table that are this project's, by the frameworks its manifests show; for another team, every row of its install tables with its state; reads the project, writes nothing
+  sources <team> --installed <page>     record that the person said yes to a ready row and its lines ran (asks the user; never with --mode or --validator)
+  sources <team> --declined <page>      record that the person said no to a ready row (asks the user; never with --mode or --validator)
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

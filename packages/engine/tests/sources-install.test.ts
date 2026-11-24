@@ -29,7 +29,7 @@ const AT_THE_PROMPT = "its line is typed at Claude Code's prompt, which a sessio
 const NO_FORM = "its line is not one of the engine's install forms";
 const CREDENTIAL = "it reaches production data with a credential";
 const LAST =
-  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources backend --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
+  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
 
 /** The forms and their notes, as the spec's table gives them. */
 const NOTES: Record<string, string> = {
@@ -190,7 +190,8 @@ test(`${ITEM} AC-10: a made row is ready only where no condition holds it, each 
   expect(state(line, { second: "a self-hostedness note" })).toEqual(ready("composer require"));
   // The word is the second cell's: elsewhere it holds nothing.
   expect(state(line, { stack: "PHP, hosted", third: "hosted" })).toEqual(ready("composer require"));
-  expect(state(`${line}, hosted`)).toEqual(ready("composer require"));
+  // 2026-11-24-001: a word beside the line holds the row, and not as hosted.
+  expect(state(`${line}, hosted`)).toEqual(held("its last cell says more than its lines"));
   expect(state(line, { second: "see `https://a.test`", third: "https://a.test/page" })).toEqual(
     ready("composer require"),
   );
@@ -268,7 +269,11 @@ test(`${ITEM} AC-10: a made row is ready only where no condition holds it, each 
   expect(state("`vendor/bin/mate init` and `vendor/bin/mate discover`")).toEqual(
     ready("vendor/bin/mate"),
   );
-  const two = state("`claude plugin install a@b`, after `claude plugin marketplace add a/b`");
+  // 2026-11-24-001: the two lines are joined by `then`; `after` is a word beside them, and holds.
+  const two = state("`claude plugin install a@b`, then `claude plugin marketplace add a/b`");
+  expect(state("`claude plugin install a@b`, after `claude plugin marketplace add a/b`")).toEqual(
+    held("its last cell says more than its lines"),
+  );
   expect(two).toEqual(ready("claude plugin install", "claude plugin marketplace add"));
   expect(installLines(two)).toEqual(
     readyLines("claude plugin install", "claude plugin marketplace add"),

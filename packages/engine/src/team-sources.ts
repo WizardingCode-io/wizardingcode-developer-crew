@@ -36,11 +36,11 @@ export const TEAM_DEFINITION_FILES: Record<TeamName, string> = {
 export const DECLARATION_MAX_BYTES = 1024 * 1024;
 
 export const LAST_LINE =
-  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources backend --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
+  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
 
 const USAGE =
-  "usage: crew sources [<team> [<n>]] | crew sources backend --project | crew sources backend --installed <page> | crew sources backend --declined <page>";
-/** The one team whose declaration has a project form, and so a record. */
+  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
+/** The one team whose project form reads the project: its rows are keyed by stack. */
 const PROJECT_TEAM = "backend";
 /** What a form of a project answers where the folder is in none. */
 const NO_PROJECT =
@@ -244,11 +244,21 @@ const HOLD = {
   hosted: "hosted, so what a session asks leaves the machine",
   value: "its line takes a value of the machine, a token or a key",
   prompt: "its line is typed at Claude Code's prompt, which a session cannot do",
+  wordy: "its last cell says more than its lines",
   noForm: "its line is not one of the engine's install forms",
 } as const;
 
 const COMPOSER_REQUIRE = "composer require";
-const NOT_STABLE_PHRASES: readonly string[] = ["experimental", "release candidate"];
+const NOT_STABLE_PHRASES: readonly string[] = [
+  "experimental",
+  "release candidate",
+  "beta",
+  "preview",
+  "pre-release",
+  "alpha",
+];
+/** The words that only join the lines of a last cell, in lower case alone. */
+const JOINING_WORDS: readonly string[] = ["then", "and", "or"];
 const NOT_STABLE_TAG = /.@(?:rc|beta|alpha|next|canary)$/;
 const VALUE_MARKS: readonly string[] = [
   "$",
@@ -274,7 +284,15 @@ function formOf(line: string): InstallForm | undefined {
   return INSTALL_FORMS.find(({ form }) => line === form || line.startsWith(`${form} `));
 }
 
-/** Why a row is held before its lines' forms are asked, by orders 1 to 5 of ADR 0025's table; null where none holds. */
+/** What a row's last cell holds beside its lines: its words outside the spans, the joining words left out. */
+function wordsBeside(cells: readonly string[]): string[] {
+  return (cells.at(-1) ?? "")
+    .replace(/`[^`]*`/g, " ")
+    .split(/[\s,;:.]+/)
+    .filter((word) => word !== "" && !JOINING_WORDS.includes(word));
+}
+
+/** Why a row is held before its lines' forms are asked, by orders 1 to 5 of ADR 0025's table and then by what its last cell says beside its lines; null where none holds. */
 function holdOf(cells: readonly string[], lines: readonly string[]): string | null {
   if (lines.length === 0) return HOLD.noCommand;
   const some = (test: (line: string) => boolean) => lines.some(test);
@@ -292,6 +310,7 @@ function holdOf(cells: readonly string[], lines: readonly string[]): string | nu
     return HOLD.hosted;
   if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark)))) return HOLD.value;
   if (some((line) => line.startsWith("/"))) return HOLD.prompt;
+  if (wordsBeside(cells).length > 0) return HOLD.wordy;
   return null;
 }
 
@@ -470,6 +489,8 @@ function describedProject(targets: readonly Target[]): string[] {
   ];
 }
 
+const UNREAD_RECORD = `the record of installs (${SOURCES_RECORD_NAME}) could not be read as the engine writes it and was not read`;
+
 /** A count with its word: `0 rows`, `1 row`, `2 rows`. */
 const rowsCount = (count: number) => `${count} row${count === 1 ? "" : "s"}`;
 
@@ -479,9 +500,16 @@ const dayOf = (entry: SourceEntry) => entry.at.slice(0, 10);
 const sameLines = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((line, at) => line === b[at]);
 
-/** The entry a record holds for a row of the project team's, by the row's page. */
-function entryOf(entries: readonly SourceEntry[], row: ProjectRow): SourceEntry | undefined {
-  return entries.find((entry) => entry.team === PROJECT_TEAM && entry.page === row.cells[2]);
+/** A row as a form prints it: its cells and its state. */
+type StatedRow = Pick<ProjectRow, "cells" | "install">;
+
+/** The entry a record holds for a row of a team's, by the row's page. */
+function entryOf(
+  entries: readonly SourceEntry[],
+  team: string,
+  row: StatedRow,
+): SourceEntry | undefined {
+  return entries.find((entry) => entry.team === team && entry.page === row.cells[2]);
 }
 
 /**
@@ -489,8 +517,12 @@ function entryOf(entries: readonly SourceEntry[], row: ProjectRow): SourceEntry 
  * the entry's decision and day where its lines are the row's, and ready again, said, where they
  * changed. A held row and a row in the project already print their state whatever the record holds.
  */
-function stateLines(row: ProjectRow, entries: readonly SourceEntry[]): string[] {
-  const entry = row.install.state === "ready" ? entryOf(entries, row) : undefined;
+function stateLines(
+  row: StatedRow,
+  entries: readonly SourceEntry[],
+  team: string = PROJECT_TEAM,
+): string[] {
+  const entry = row.install.state === "ready" ? entryOf(entries, team, row) : undefined;
   if (entry === undefined) return installLines(row.install);
   if (sameLines(entry.lines, installSpans(row.cells)))
     return [`  install: ${entry.decision}, recorded on ${dayOf(entry)}`];
@@ -542,11 +574,122 @@ function projectLines(declaration: string, cwd: string): string[] {
   return [
     ...describedProject(project.targets),
     ...projectRowLines(declaration, project.targets, record.entries),
-    ...(record.unread
-      ? [
-          `the record of installs (${SOURCES_RECORD_NAME}) could not be read as the engine writes it and was not read`,
-        ]
-      : []),
+    ...(record.unread ? [UNREAD_RECORD] : []),
+  ];
+}
+
+/** The last cell of the header of a table whose rows are installs. */
+const INSTALL_HEADER = "How it is installed";
+/** How the heading opens of a section whose tables the definition leaves out or holds. */
+const HELD_HEADINGS: readonly string[] = ["### Left out", "### Held"];
+/** What a row says, in any cell, where something is owed before it enters. */
+const OWED_PHRASES: readonly string[] = ["still owed", "to be checked"];
+/** Why a row of a team other than the project team is held, beside the reasons of its own cells. */
+const TEAM_HOLD = {
+  heading: "its table is left out or held by the definition",
+  owed: "its row says what is still owed or to be checked before it enters",
+  otherTeam: "another team's declaration holds a row at its page",
+} as const;
+const NOT_TOLD_OF_A_TEAM =
+  "not told: whether this project uses the tool or the service of a row, which nothing detects for this team; the heading over a row says when it applies";
+
+/** A row of an install table of a team's declaration, with the section it stands in and its state. */
+interface TeamRow extends StatedRow {
+  section: number;
+  heading: string;
+  line: string;
+}
+
+/**
+ * The state of a row from its own declaration alone: held by its section's heading, then by what
+ * it says is owed, then by its cells with no tool shown, since nothing detects a tool for it.
+ */
+function ownInstall(heading: string, row: readonly string[]): RowInstall {
+  if (HELD_HEADINGS.some((opening) => heading.startsWith(opening)))
+    return { state: "held", reason: TEAM_HOLD.heading };
+  if (row.some((cell) => OWED_PHRASES.some((phrase) => names(cell.toLowerCase(), phrase))))
+    return { state: "held", reason: TEAM_HOLD.owed };
+  return rowInstall(row, new Set());
+}
+
+/** The rows of a declaration's install tables in its order, each with its state from the declaration alone. */
+function installRows(declaration: string): TeamRow[] {
+  const found: TeamRow[] = [];
+  for (const section of declarationSections(declaration)) {
+    // A table is a run of lines that open with a pipe, its first line the header.
+    let header: string[] | null = null;
+    for (const line of section.lines) {
+      if (!line.startsWith("|")) header = null;
+      else if (header === null) header = cells(line);
+      else if (isRow(line) && header.at(-1) === INSTALL_HEADER) {
+        const row = cells(line);
+        found.push({
+          section: section.number,
+          heading: section.heading,
+          line,
+          cells: row,
+          install: ownInstall(section.heading, row),
+        });
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * The rows of a team's install tables with their states, for a team other than the project team: a
+ * row ready by its own declaration is held where another of those teams' declarations holds a row
+ * at its page, since an install is the project's and not a team's. A declaration that cannot be
+ * read refuses: the hold does not pass over it. An empty page is no page, and equals no other.
+ */
+function teamRows(
+  root: string,
+  team: string,
+  declaration: string,
+): TeamRow[] | { refused: string } {
+  const heldPages = new Set<string>();
+  for (const other of teamNames()) {
+    if (other === team || other === PROJECT_TEAM) continue;
+    const read = readTeamDeclaration(root, other);
+    if ("refused" in read) return read;
+    for (const row of installRows(read.text)) {
+      const page = row.cells[2] ?? "";
+      if (row.install.state === "held" && page !== "") heldPages.add(page);
+    }
+  }
+  return installRows(declaration).map(
+    (row): TeamRow =>
+      row.install.state === "ready" && heldPages.has(row.cells[2] ?? "")
+        ? { ...row, install: { state: "held", reason: TEAM_HOLD.otherTeam } }
+        : row,
+  );
+}
+
+/** The lines of `crew sources <team> --project` for a team other than the project team, after the declaration's path. */
+function teamProjectLines(
+  root: string,
+  team: string,
+  declaration: string,
+  cwd: string,
+): string[] | { refused: string } {
+  const projectRoot = findRoot(cwd);
+  if (projectRoot === null) return [NO_PROJECT];
+  const rows = teamRows(root, team, declaration);
+  if ("refused" in rows) return rows;
+  const record = readSourcesRecord(projectRoot);
+  const lines: string[] = [];
+  let section = 0;
+  for (const row of rows) {
+    if (row.section !== section) lines.push(`${declarationLine(row.heading.replace(/^#+ /, ""))}:`);
+    section = row.section;
+    lines.push(declarationLine(row.line), ...stateLines(row, record.entries, team));
+  }
+  const ready = rows.filter((row) => row.install.state === "ready").length;
+  return [
+    ...lines,
+    `ready: ${rowsCount(ready)}; held: ${rowsCount(rows.length - ready)}`,
+    NOT_TOLD_OF_A_TEAM,
+    ...(record.unread ? [UNREAD_RECORD] : []),
   ];
 }
 
@@ -558,7 +701,41 @@ const NOT_RECORDED = {
 } as const;
 
 /**
- * `crew sources backend --installed <page> | --declined <page>`: one row of the project's recorded
+ * The one row of a team's form that is read at a page, with its line and the state the form prints
+ * for it: the project team's among the rows that are the project's, another team's among the rows
+ * of its install tables, where two rows at one page refuse since a record by its page would not
+ * say which.
+ */
+function recordedRow(
+  root: string,
+  team: string,
+  declaration: string,
+  targets: readonly Target[],
+  page: string,
+): (StatedRow & { line: string }) | { refused: string } {
+  const noRow = {
+    refused: `no row of this project is read at that page: crew sources ${team} --project prints the rows and their pages`,
+  };
+  if (team === PROJECT_TEAM)
+    return (
+      projectRows(declaration, targets).find(
+        (candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page,
+      ) ?? noRow
+    );
+  const rows = teamRows(root, team, declaration);
+  if ("refused" in rows) return rows;
+  const [row, second] = rows.filter((candidate) => candidate.cells[2] === page);
+  if (row === undefined) return noRow;
+  if (second !== undefined)
+    return {
+      refused:
+        "more than one row of this team is read at that page, so a record by its page would not say which",
+    };
+  return row;
+}
+
+/**
+ * `crew sources <team> --installed <page> | --declined <page>`: one row of the project's recorded
  * by its page, at the time given. It refuses by the first case of the spec's table that holds, and
  * a refusal prints no row and no character of the page given. `root` is the plugin's folder and
  * `cwd` a folder of the project.
@@ -577,27 +754,23 @@ export function recordSourcesCommand(
   const page = flags[decision];
   if (typeof page !== "string" || page === "") return refuse(USAGE);
   if (args.length !== 1 || flags.project !== undefined) return refuse(USAGE);
-  if (args[0] !== PROJECT_TEAM) return refuse("only the backend's declaration has a project form");
-  const read = readTeamDeclaration(root, PROJECT_TEAM);
+  const team = args[0] ?? "";
+  const read = readTeamDeclaration(root, team);
   if ("refused" in read) return refuse(read.refused);
   const project = detectedProject(cwd);
   // The command reaches here in a project; a caller with a folder in none is told so.
   if (project === null) return refuse(NO_PROJECT);
   if (sourcesPlaceRefused(project.root)) return refuse(`not recorded: ${NOT_RECORDED.place}`);
-  const row = projectRows(read.text, project.targets).find(
-    (candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page,
-  );
-  if (row === undefined)
-    return refuse(
-      "no row of this project is read at that page: crew sources backend --project prints the rows and their pages",
-    );
+  const found = recordedRow(root, team, read.text, project.targets, page);
+  if ("refused" in found) return refuse(found.refused);
+  const row = found;
   if (row.install.state === "held")
     return refuse(`not recorded: the row is held, ${row.install.reason}`);
   if (row.install.state === "in the project already")
     return refuse("not recorded: the row is in the project already");
   const recorded = recordSourceRow(
     project.root,
-    { team: PROJECT_TEAM, page, decision, lines: installSpans(row.cells) },
+    { team, page, decision, lines: installSpans(row.cells) },
     at,
   );
   if (!recorded.ok) return refuse(`not recorded: ${NOT_RECORDED[recorded.why]}`);
@@ -621,8 +794,8 @@ export function recordSourcesCommand(
 
 /**
  * `crew sources [<team> [<n>]]`: the teams with their files, a team's index, or one section's own
- * lines; `crew sources backend --project`: the rows of the backend's per-stack table that are the
- * project's at `cwd`. Each ends with the fixed last line. A refusal carries no line of a declaration.
+ * lines; `crew sources <team> --project`: for the backend, the rows of its per-stack table that are
+ * the project's at `cwd`; for another team, every row of its install tables with its state. Each ends with the fixed last line. A refusal carries no line of a declaration.
  */
 export function sourcesCommand(
   root: string,
@@ -648,11 +821,10 @@ export function sourcesCommand(
   const read = readTeamDeclaration(root, team);
   if ("refused" in read) return refuse(read.refused);
   if (options.project) {
-    if (team !== "backend")
-      return refuse(
-        "only the backend's declaration has rows by stack: crew sources backend --project",
-      );
-    return done([read.path, ...projectLines(read.text, options.project.cwd)]);
+    if (team === PROJECT_TEAM)
+      return done([read.path, ...projectLines(read.text, options.project.cwd)]);
+    const lines = teamProjectLines(root, team, read.text, options.project.cwd);
+    return "refused" in lines ? refuse(lines.refused) : done([read.path, ...lines]);
   }
   const sections = declarationSections(read.text);
   if (n === undefined) return done([read.path, ...sections.map(indexLine)]);

@@ -24,10 +24,14 @@ const ITEM = "2026-11-21-007";
 const BACKEND = join(pluginRoot(), "teams", "backend.md");
 const NAME = ".crew/local/sources.json";
 const USAGE =
-  "usage: crew sources [<team> [<n>]] | crew sources backend --project | crew sources backend --installed <page> | crew sources backend --declined <page>";
+  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
 const NO_MODE =
   "an install is recorded on a person's own yes or no: crew sources takes no --mode or --validator";
-const NO_FORM = "only the backend's declaration has a project form";
+// 2026-11-24-001: every team has a project form, so another team is refused by its own rows, and a name that is no team as crew sources refuses one.
+const NO_ROW_FRONTEND =
+  "no row of this project is read at that page: crew sources frontend --project prints the rows and their pages";
+const NOT_A_TEAM =
+  "not a team: the teams are researchers, qa, security, architects, etl, devops, backend, frontend, agentic-os";
 const NO_PLACE = "not recorded: .crew/local is not a folder of this project";
 const NO_ROW =
   "no row of this project is read at that page: crew sources backend --project prints the rows and their pages";
@@ -322,8 +326,8 @@ test(`${ITEM} AC-11: the form records a ready row of the project by its page, an
   await refused(USAGE, "--installed", FASTAPI);
   await refused(USAGE, "backend", "1", "--installed", FASTAPI);
   await refused(USAGE, "backend", "--project", "--installed", FASTAPI);
-  await refused(NO_FORM, "frontend", "--installed", FASTAPI);
-  await refused(NO_FORM, "nothing", "--declined", FASTAPI);
+  await refused(NO_ROW_FRONTEND, "frontend", "--installed", FASTAPI);
+  await refused(NOT_A_TEAM, "nothing", "--declined", FASTAPI);
   await refused(NO_ROW, "backend", "--installed", "https://example.test/no-row");
   await refused(NO_ROW, "backend", "--installed", pageOf("gopls's built-in"));
   await refused(NO_ROW, "backend", "--installed", pageOf("Litestar's skills"));
@@ -342,7 +346,7 @@ test(`${ITEM} AC-11: the form records a ready row of the project by its page, an
     "--mode",
     "auto",
   );
-  await refused(NO_FORM, "frontend", "--installed", "https://example.test/no-row");
+  await refused(NO_ROW_FRONTEND, "frontend", "--installed", "https://example.test/no-row");
   // A flag written with an equals sign is no flag of the command, and neither is another.
   for (const flag of ["--mode=auto", "--first"]) {
     const unknown = await run("sources", "backend", "--installed", FASTAPI, flag);
@@ -714,7 +718,11 @@ test(`${ITEM} AC-14: the reference, the ADR's amendment, the help and the usage 
   );
   const parts = adr.split("\n## Amendment: the record (2026-11-21)\n");
   expect(parts).toHaveLength(2);
-  expect(parts[1]).not.toContain("\n## ");
+  // 2026-11-24-001: the record's amendment runs to the next amendment's heading and to no other.
+  const [recordPart = "", ...later] = (parts[1] ?? "").split("\n## ");
+  expect(later.map((part) => part.split("\n")[0])).toEqual([
+    "Amendment of 2026-11-24 (item 2026-11-24-001)",
+  ]);
   for (const phrase of [
     NAME,
     "not committed",
@@ -728,11 +736,11 @@ test(`${ITEM} AC-14: the reference, the ADR's amendment, the help and the usage 
     "crew sources backend --installed <page>",
     "crew sources backend --declined <page>",
   ])
-    expect(parts[1], phrase).toContain(phrase);
+    expect(recordPart, phrase).toContain(phrase);
   const run = cliIo(repo(), testEnv());
   const help = (await run("help")).out.split("\n").filter((l) => l.startsWith("  sources "));
-  expect(help.some((l) => l.includes("sources backend --installed <page>"))).toBe(true);
-  expect(help.some((l) => l.includes("sources backend --declined <page>"))).toBe(true);
+  expect(help.some((l) => l.includes("sources <team> --installed <page>"))).toBe(true);
+  expect(help.some((l) => l.includes("sources <team> --declined <page>"))).toBe(true);
   const usage = await run("sources", "backend", "1", "2");
   expect(`${usage.out}${usage.err}`.trim()).toBe(USAGE);
 });
