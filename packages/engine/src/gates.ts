@@ -35,7 +35,7 @@ import { decisionCounts, type StandingState, standingState, standingWhy } from "
 import { namedFiles } from "./problems.ts";
 import { runProse } from "./prose.ts";
 import { reviewSignals } from "./review-signals.ts";
-import { runCommand, shellWord } from "./run.ts";
+import { gaveNoResult, runCommand, shellWord } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
 import { changedDesignRecords, removedItemRecords } from "./store.ts";
 import { plannedSeats, primaryTeam, teamsFor } from "./team.ts";
@@ -49,6 +49,7 @@ import type {
   Policy,
   Profile,
   Route,
+  Stack,
   Target,
   WorkItem,
 } from "./types.ts";
@@ -316,13 +317,25 @@ function wantsE2e(policy: Policy, changed: string[]): boolean {
   );
 }
 
-export function plannedGates(
+/** An audit the standard route left out of a plan: its target, its stack where two targets share the path, and why it cannot run. */
+export interface AuditLeftOut {
+  target: string;
+  stack?: Stack;
+  reason: string;
+}
+
+/**
+ * The gates a change plans, and beside them the audits the standard route left out because they
+ * cannot run. One function makes both, so the plan and what is said of it come from one answer.
+ */
+function planOf(
   route: Route,
   profile: Profile,
   policy: Policy,
   changed: string[],
   root: string,
-): PlannedGate[] {
+): { planned: PlannedGate[]; leftOut: AuditLeftOut[] } {
+  const leftOut: AuditLeftOut[] = [];
   // The prose scan right after the secret scan, on every item and route (2026-10-29-001, D-2).
   const planned: PlannedGate[] = [
     { gate: "secrets", target: "." },
@@ -350,9 +363,19 @@ export function plannedGates(
     for (const gate of gatesForTarget(target, policy, changed)) {
       // A workspace member runs only the gates it defines; the package that lists it runs the rest once.
       if (member && !target.gates[gate]) continue;
-      // On the standard route the audit is required only when a tool exists; on the full route it must be skipped explicitly.
-      if (gate === "deps" && route === "standard" && "reason" in depsAuditCommand(target, root))
-        continue;
+      // On the standard route the audit is required only when a tool exists, unless the policy
+      // requires it; on the full route it must be skipped explicitly.
+      if (gate === "deps" && route === "standard" && !policy.requiredGates.includes("deps")) {
+        const audit = depsAuditCommand(target, root);
+        if ("reason" in audit) {
+          leftOut.push({
+            target: target.path,
+            ...(shared ? { stack: target.stack } : {}),
+            reason: audit.reason,
+          });
+          continue;
+        }
+      }
       planned.push({ gate, target: target.path, ...(shared ? { stack: target.stack } : {}) });
     }
   }
@@ -375,7 +398,59 @@ export function plannedGates(
       ...(shared && runner ? { stack: runner.stack } : {}),
     });
   }
-  return planned;
+  return { planned, leftOut };
+}
+
+export function plannedGates(
+  route: Route,
+  profile: Profile,
+  policy: Policy,
+  changed: string[],
+  root: string,
+): PlannedGate[] {
+  return planOf(route, profile, policy, changed, root).planned;
+}
+
+/** The audits the standard route leaves out of a change's plan; empty on the other routes and where the policy requires `deps`. */
+export function auditsLeftOut(
+  route: Route,
+  profile: Profile,
+  policy: Policy,
+  changed: string[],
+  root: string,
+): AuditLeftOut[] {
+  return planOf(route, profile, policy, changed, root).leftOut;
+}
+
+/** One audit left out, as the gate run and the report say it. */
+function planNote(entry: AuditLeftOut): string {
+  const where = `${entry.target}${entry.stack ? `, ${entry.stack}` : ""}`;
+  return `deps (${where}) not planned: ${entry.reason}; no audit ran for this change, and on the standard route the verdict does not wait for it (the policy's requiredGates can require it)`;
+}
+
+/** The lines on the audits an item's change leaves out, as it stands now: worked out, never stored. */
+export function planNotesFor(
+  paths: CrewPaths,
+  work: WorkItem,
+  profile: Profile,
+  policy: Policy,
+): string[] {
+  const changed = changedWatchedPaths(paths.root, profile, work);
+  return auditsLeftOut(work.route, profile, policy, changed, paths.root).map(planNote);
+}
+
+/** Why a gate whose command gave no result is unavailable: fixed sentences, never a line of the command's output. */
+export const NOT_FOUND_REASON =
+  "its command did not run (exit 127, not found); the log holds the shell's message";
+export const NOT_EXECUTABLE_REASON =
+  "its command did not run (exit 126, not executable); the log holds the shell's message";
+export const NO_EXIT_REASON =
+  "its command ended with no exit status (not started, or ended by a signal); the log holds its output";
+
+function noResultReason(exit: number | null): string {
+  if (exit === 127) return NOT_FOUND_REASON;
+  if (exit === 126) return NOT_EXECUTABLE_REASON;
+  return NO_EXIT_REASON;
 }
 
 /** The target a planned gate belongs to: by path, and by stack where the plan names one. */
@@ -623,6 +698,9 @@ export async function runOneGate(
   };
   // The audit is judged against the item's base commit, not by its exit code alone (ADR 0006).
   if (result.timedOut) return run;
+  // A command that gave no result is read neither as an audit's report nor for the files it names.
+  if (gaveNoResult(result))
+    return { ...run, status: "unavailable", reason: noResultReason(result.exit) };
   if (audit) return judgeAudit(run, audit, paths, work, target, where, env);
   // Lint and typecheck are judged by the files they name (ADR 0006).
   if ((gate === "lint" || gate === "typecheck") && run.status === "fail")
@@ -633,7 +711,8 @@ export async function runOneGate(
 /**
  * A failing lint or typecheck read for the files it names: problems only in files the item never
  * changed are the repository's standing debt, counted and not failing; a problem in a file the item
- * changed fails, named. A run that names no file is judged by its exit code as before.
+ * changed fails, named. A run that names no file is judged by its exit code as before. A run whose
+ * command gave no result never reaches here.
  */
 function judgeProblems(
   run: GateRun,
@@ -679,6 +758,8 @@ export interface GateOutcome {
   reviewNote: string | null;
   /** Lines the run prints about the project's standing e2e skip (finding 223): why it no longer holds. */
   standingNotes: string[];
+  /** Lines the run prints about its plan: an audit the standard route left out, and why. */
+  planNotes: string[];
   /** Set when the evidence could not be saved (edited outside the engine during the run, or the lock held): nothing recorded, the verdict unproven on the in-memory evidence (finding 81). */
   saveRefused?: string;
 }
@@ -772,7 +853,7 @@ export async function runGates(
   }
   const personal = notePersonalData(paths.root, work, changed, policy);
   if (raiseForPersonalData(work, personal) && !raised) raised = "standard";
-  const planned = plannedGates(work.route, profile, policy, changed, paths.root);
+  const { planned, leftOut } = planOf(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const evidence = read.evidence;
   // The caller knows about the work item and the profile; the evidence and the ledger are checked here.
@@ -928,6 +1009,7 @@ export async function runGates(
     review: reviewInputs?.dir ?? null,
     reviewNote: reviewInputs?.note ?? null,
     standingNotes,
+    planNotes: leftOut.map(planNote),
     ...("refused" in saved ? { saveRefused: saved.refused } : {}),
   };
 }

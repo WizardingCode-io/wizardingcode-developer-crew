@@ -5961,6 +5961,9 @@ function wrapperTakesNext(wrapper, option) {
     return false;
   return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
 }
+function gaveNoResult(result) {
+  return !result.timedOut && (result.exit === 126 || result.exit === 127 || result.exit === null);
+}
 var TAIL_LINES = 40;
 var TAIL_WINDOW = 256 * 1024;
 var LOG_FLAGS = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_APPEND;
@@ -15889,7 +15892,8 @@ function covers(target, path) {
 function wantsE2e(policy, changed) {
   return policy.requiredGates.includes("e2e") || changed.some(isFrontendPath) || riskAreasForPaths(changed, policy).includes("public-api");
 }
-function plannedGates(route, profile, policy, changed, root) {
+function planOf(route, profile, policy, changed, root) {
+  const leftOut = [];
   const planned = [
     { gate: "secrets", target: "." },
     { gate: "prose", target: "." }
@@ -15908,8 +15912,17 @@ function plannedGates(route, profile, policy, changed, root) {
     for (const gate of gatesForTarget(target, policy, changed)) {
       if (member && !target.gates[gate])
         continue;
-      if (gate === "deps" && route === "standard" && "reason" in depsAuditCommand(target, root))
-        continue;
+      if (gate === "deps" && route === "standard" && !policy.requiredGates.includes("deps")) {
+        const audit = depsAuditCommand(target, root);
+        if ("reason" in audit) {
+          leftOut.push({
+            target: target.path,
+            ...shared ? { stack: target.stack } : {},
+            reason: audit.reason
+          });
+          continue;
+        }
+      }
       planned.push({ gate, target: target.path, ...shared ? { stack: target.stack } : {} });
     }
   }
@@ -15925,7 +15938,31 @@ function plannedGates(route, profile, policy, changed, root) {
       ...shared && runner ? { stack: runner.stack } : {}
     });
   }
-  return planned;
+  return { planned, leftOut };
+}
+function plannedGates(route, profile, policy, changed, root) {
+  return planOf(route, profile, policy, changed, root).planned;
+}
+function auditsLeftOut(route, profile, policy, changed, root) {
+  return planOf(route, profile, policy, changed, root).leftOut;
+}
+function planNote(entry) {
+  const where = `${entry.target}${entry.stack ? `, ${entry.stack}` : ""}`;
+  return `deps (${where}) not planned: ${entry.reason}; no audit ran for this change, and on the standard route the verdict does not wait for it (the policy's requiredGates can require it)`;
+}
+function planNotesFor(paths, work, profile, policy) {
+  const changed = changedWatchedPaths(paths.root, profile, work);
+  return auditsLeftOut(work.route, profile, policy, changed, paths.root).map(planNote);
+}
+var NOT_FOUND_REASON = "its command did not run (exit 127, not found); the log holds the shell's message";
+var NOT_EXECUTABLE_REASON = "its command did not run (exit 126, not executable); the log holds the shell's message";
+var NO_EXIT_REASON = "its command ended with no exit status (not started, or ended by a signal); the log holds its output";
+function noResultReason(exit) {
+  if (exit === 127)
+    return NOT_FOUND_REASON;
+  if (exit === 126)
+    return NOT_EXECUTABLE_REASON;
+  return NO_EXIT_REASON;
 }
 function targetOf(profile, planned) {
   return profile.targets.find((t) => t.path === planned.target && (planned.stack === undefined || t.stack === planned.stack));
@@ -16090,6 +16127,8 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, p
   };
   if (result.timedOut)
     return run;
+  if (gaveNoResult(result))
+    return { ...run, status: "unavailable", reason: noResultReason(result.exit) };
   if (audit)
     return judgeAudit(run, audit, paths, work, target, where, env);
   if ((gate === "lint" || gate === "typecheck") && run.status === "fail")
@@ -16170,7 +16209,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   const personal = notePersonalData(paths.root, work, changed, policy);
   if (raiseForPersonalData(work, personal) && !raised)
     raised = "standard";
-  const planned = plannedGates(work.route, profile, policy, changed, paths.root);
+  const { planned, leftOut } = planOf(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const evidence = read.evidence;
   const tampered = !!options.tampered || read.tampered || loadLedger(paths, work.id).tampered;
@@ -16279,6 +16318,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     review: reviewInputs?.dir ?? null,
     reviewNote: reviewInputs?.note ?? null,
     standingNotes,
+    planNotes: leftOut.map(planNote),
     ..."refused" in saved ? { saveRefused: saved.refused } : {}
   };
 }
@@ -17205,7 +17245,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
         record
       };
     }
-    if (result.timedOut || result.exit === null || result.exit === 126 || result.exit === 127) {
+    if (result.timedOut || gaveNoResult(result)) {
       return {
         ok: false,
         message: `the red run did not fail for the right reason (exit ${result.exit ?? "none"}${result.timedOut ? ", timed out" : ""}): fix the command before recording`,
@@ -17994,7 +18034,8 @@ function renderReport(work, evidence, policy, options = {}) {
     knowledge,
     ctoPlan,
     uiEvidence,
-    designScore
+    designScore,
+    planNotes
   } = options;
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -18086,6 +18127,8 @@ function renderReport(work, evidence, policy, options = {}) {
     const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(`| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
   }
+  for (const note of planNotes ?? [])
+    lines.push("", note);
   if (uiEvidence)
     lines.push("", ...uiEvidenceLines(uiEvidence));
   if (designScore)
@@ -26560,7 +26603,8 @@ function reportOf(env, work, evidence) {
     knowledge: readText(join78(workDir(env.paths, work.id), "knowledge.md")),
     ctoPlan: env.mail.self.workspace ? latestPlan(env.paths.userDir, env.mail.self.workspace) : null,
     uiEvidence: readUiEvidence(env.paths, work.id),
-    designScore: readScore(env.paths, work.id)
+    designScore: readScore(env.paths, work.id),
+    planNotes: planNotesFor(env.paths, work, env.profile, env.policy)
   });
 }
 function auditViewOf(env, work) {
@@ -29787,6 +29831,7 @@ ${said}` : "";
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
         text: picked + raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) + outcome.standingNotes.map((n) => `
+${n}`).join("") + outcome.planNotes.map((n) => `
 ${n}`).join("") + judgementNote + reviewLine + capturesNote + (outcome.saveRefused ? `
 ${outcome.saveRefused}` : "") + (workNotSaved ? `
 ${workNotSaved}` : ""),
@@ -29800,7 +29845,8 @@ ${workNotSaved}` : ""),
           judgement: outcome.judgement,
           review,
           reviewNote: outcome.reviewNote,
-          standing: outcome.standingNotes
+          standing: outcome.standingNotes,
+          planNotes: outcome.planNotes
         }
       };
     }

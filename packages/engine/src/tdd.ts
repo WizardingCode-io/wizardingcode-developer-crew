@@ -6,7 +6,7 @@ import { nowIso } from "./fs.ts";
 import { gateTimeoutMs } from "./gates.ts";
 import { matchesAny } from "./glob.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { joinWords, runCommand, shellRefusal } from "./run.ts";
+import { gaveNoResult, joinWords, runCommand, shellRefusal } from "./run.ts";
 import { testRunRefusal } from "./test-run.ts";
 import type { CriterionKind, Evidence, Profile, RunRecord, TddRecord, WorkItem } from "./types.ts";
 
@@ -357,7 +357,7 @@ export async function recordTdd(
     }
     // A timeout, a command the shell could not find (127) or could not run (126) failed before any
     // test ran, so it says nothing about the missing behaviour.
-    if (result.timedOut || result.exit === null || result.exit === 126 || result.exit === 127) {
+    if (result.timedOut || gaveNoResult(result)) {
       return {
         ok: false,
         message: `the red run did not fail for the right reason (exit ${result.exit ?? "none"}${result.timedOut ? ", timed out" : ""}): fix the command before recording`,

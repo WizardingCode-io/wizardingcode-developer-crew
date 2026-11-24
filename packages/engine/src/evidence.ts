@@ -509,6 +509,8 @@ export interface ReportOptions {
   uiEvidence?: UiEvidence | null;
   /** The design review's score, when a new site has one (item 2026-10-30-005). */
   designScore?: ScoreRecord | null;
+  /** Lines on what the plan leaves out as the report is written (an audit the standard route cannot run), printed under the Gates table. */
+  planNotes?: string[];
 }
 
 /** A table cell from a string a file may have written: one safe line, the bar escaped. */
@@ -590,6 +592,7 @@ export function renderReport(
     ctoPlan,
     uiEvidence,
     designScore,
+    planNotes,
   } = options;
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -781,6 +784,8 @@ export function renderReport(
       `| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
     );
   }
+  // What the plan left out, as it stands when the report is written: said under the gates' rows.
+  for (const note of planNotes ?? []) lines.push("", note);
   // The UI evidence the e2e run graded (SP9 Task 4), between the gates and the judgement that reads it.
   if (uiEvidence) lines.push("", ...uiEvidenceLines(uiEvidence));
   if (designScore) lines.push("", ...designScoreLines(designScore));

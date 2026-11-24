@@ -140,7 +140,7 @@ import {
   writeJson,
   writeText,
 } from "./fs.ts";
-import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
+import { assess, planNotesFor, reassess, runGates, runTaskGate } from "./gates.ts";
 import { buildContext } from "./hooks/context.ts";
 import { handleHook } from "./hooks/index.ts";
 import { leaveNotice } from "./hooks/notices.ts";
@@ -1837,6 +1837,7 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
       : null,
     uiEvidence: readUiEvidence(env.paths, work.id),
     designScore: readScore(env.paths, work.id),
+    planNotes: planNotesFor(env.paths, work, env.profile, env.policy),
   });
 }
 
@@ -6053,6 +6054,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) +
           // Why the project's standing e2e skip no longer holds, said where the gate run is read (finding 223).
           outcome.standingNotes.map((n) => `\n${n}`).join("") +
+          // An audit the standard route left out of the plan, said where the gate run is read.
+          outcome.planNotes.map((n) => `\n${n}`).join("") +
           judgementNote +
           reviewLine +
           capturesNote +
@@ -6069,6 +6072,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           review,
           reviewNote: outcome.reviewNote,
           standing: outcome.standingNotes,
+          planNotes: outcome.planNotes,
         },
       };
     }

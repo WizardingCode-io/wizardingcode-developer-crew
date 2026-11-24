@@ -53,6 +53,16 @@ export interface RunResult {
   timedOut: boolean;
 }
 
+/**
+ * Whether a command gave no result to judge: the shell could not find it (127) or could not
+ * execute it (126), or it ended with no exit status, which is a shell that never started and also a
+ * command ended by a signal. A run past its time bound has no exit status either and is not this
+ * case: it has its own answer.
+ */
+export function gaveNoResult(result: Pick<RunResult, "exit" | "timedOut">): boolean {
+  return !result.timedOut && (result.exit === 126 || result.exit === 127 || result.exit === null);
+}
+
 const TAIL_LINES = 40;
 /** How much of a log's end the tail is read from, so a log of any size costs the same to finish. */
 const TAIL_WINDOW = 256 * 1024;

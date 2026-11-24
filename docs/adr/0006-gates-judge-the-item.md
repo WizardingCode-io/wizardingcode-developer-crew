@@ -30,3 +30,5 @@ What does not change: the test gate runs the team's own flow in full; nothing is
 - A pip-audit baseline needs an environment, not a lockfile: Python keeps today's behaviour (every advisory counts) until a Python project reaches real use.
 - The first deps run of an item costs two audits (base and tree). Seconds.
 - A report that says Proven can carry known advisories; it says how many, every time.
+
+Note of 2026-11-24 (item `2026-11-24-003`): a gate whose command did not run (exit 126 or 127) or ended with no exit status is unavailable, with a fixed reason, and is read neither for the files it names nor as an audit's report. This narrows three sentences of the Decision: "the gate is judged by its exit code as before", "reported, not failing" and "A tool that names no files is judged as today".
