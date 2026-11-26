@@ -20109,6 +20109,19 @@ var ACTING_TOOLS = [
     names: ["docker"],
     valued: ["--context", "-c", "--config", "-H", "--host", "-l", "--log-level"],
     acts: [["push"], ["image", "push"], ["compose", "push"], ["manifest", "push"]],
+    images: [
+      "ghcr.io/zaproxy/zaproxy",
+      "zaproxy/zap-stable",
+      "zaproxy/zap-weekly",
+      "zaproxy/zap-nightly",
+      "zaproxy/zap-bare",
+      "projectdiscovery/nuclei",
+      "drwetter/testssl.sh",
+      "ghcr.io/testssl/testssl.sh",
+      "ghcr.io/schemathesis/schemathesis",
+      "schemathesis/schemathesis",
+      "grafana/k6"
+    ],
     flagged: [
       { path: ["build"], flags: ["--push"] },
       { path: ["buildx", "build"], flags: ["--push"] }
@@ -20154,8 +20167,23 @@ var ACTING_TOOLS = [
   {
     names: ["promptfoo"],
     valued: [],
-    acts: verbs("share"),
+    acts: [...verbs("share"), ["redteam", "run"], ["redteam", "eval"], ["redteam", "discover"]],
     flagged: [{ path: ["eval"], flags: ["--share", "--remote"] }]
+  },
+  { names: ["zap-baseline.py", "zap-full-scan.py", "zap-api-scan.py"], valued: [], whole: true },
+  { names: ["zap.sh", "zap-x.sh"], valued: [], whole: true },
+  { names: ["nuclei"], valued: [], whole: true },
+  {
+    names: ["schemathesis", "st"],
+    valued: ["--config-file"],
+    acts: verbs("run", "fuzz", "replay")
+  },
+  { names: ["testssl.sh", "testssl"], valued: [], whole: true },
+  { names: ["sqlmap", "sqlmap.py"], valued: [], whole: true },
+  {
+    names: ["k6"],
+    valued: ["-c", "--config", "--log-output", "-f", "--log-format", "-a", "--address"],
+    acts: [["run"], ["cloud", "run"]]
   }
 ];
 var TOOL_BY_NAME = new Map(ACTING_TOOLS.flatMap((row) => row.names.map((name) => [name, row])));
@@ -20199,11 +20227,36 @@ function throughRunner(words, from, runner, viaXargs) {
     return viaXargs ? cannot : null;
   return { words: [packageOf(words[end] ?? ""), ...words.slice(end + 1)] };
 }
+function imageName(word) {
+  let name = word.split("@")[0] ?? "";
+  const colon = name.lastIndexOf(":");
+  if (colon > name.lastIndexOf("/"))
+    name = name.slice(0, colon);
+  for (const hub of ["docker.io/", "index.docker.io/"])
+    if (name.startsWith(hub))
+      return name.slice(hub.length);
+  return name;
+}
+function imageRun(row, words) {
+  const [first, second] = positionals(words, row.valued);
+  const run = first?.word === "run" ? first : first?.word === "container" && second?.word === "run" ? second : undefined;
+  if (run === undefined)
+    return;
+  for (const word of words.slice(run.index + 1)) {
+    const name = imageName(word);
+    if (row.images?.includes(name))
+      return name;
+  }
+  return;
+}
 function readRow(program, row, words, viaXargs) {
   const read = positionals(words, row.valued).map((p) => p.word);
   const cannot = `${program} with a verb the guard cannot read`;
   if (row.whole)
     return program;
+  const image = row.images ? imageRun(row, words) : undefined;
+  if (image !== undefined)
+    return `${program} run ${image}`;
   if (row.reads) {
     const [first] = read;
     if (first === undefined) {
@@ -20297,7 +20350,7 @@ function actingDeny(list, nobody) {
   return `Crew: ${list} is a person's decision in this project (policy actingCommands) and nobody is here to give it (${nobody}): stop, and do not run it in another form (a script, a package's script, another runner); say so to the user, who runs it themselves or asks again from a session that can be asked`;
 }
 function actingAsk(list) {
-  return `Crew: ${list} is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, and the guard cannot tell an act from a read for it, nor production from a preview. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.`;
+  return `Crew: ${list} is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, or send requests to a running application, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.`;
 }
 
 // packages/engine/src/hooks/powershell.ts

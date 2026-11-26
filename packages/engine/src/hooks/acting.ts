@@ -5,7 +5,8 @@ import { EXPANSION_CHARS, PATTERN_CHARS, runnerOptions } from "../shell-words.ts
  * options that take the next word as their value, and what acts. `acts` are paths of subcommand
  * words, `*` standing for any one word; `anyWord` acts at any position among the words read;
  * `reads` are the first words that do not act, for a tool that acts with no subcommand; `whole`
- * means every use acts; `flagged` is a path with the flags that make it act.
+ * means every use acts; `flagged` is a path with the flags that make it act; `images` are the
+ * container images whose `run` acts, read in every word after it (item 2026-11-26-006).
  */
 export interface ActingTool {
   names: string[];
@@ -15,6 +16,7 @@ export interface ActingTool {
   reads?: string[];
   whole?: true;
   flagged?: { path: string[]; flags: string[] }[];
+  images?: string[];
 }
 
 /** Paths of one word each. */
@@ -183,6 +185,20 @@ export const ACTING_TOOLS: readonly ActingTool[] = [
     names: ["docker"],
     valued: ["--context", "-c", "--config", "-H", "--host", "-l", "--log-level"],
     acts: [["push"], ["image", "push"], ["compose", "push"], ["manifest", "push"]],
+    // The images of the tools that send requests to a running application, as their pages name them (2026-11-26).
+    images: [
+      "ghcr.io/zaproxy/zaproxy",
+      "zaproxy/zap-stable",
+      "zaproxy/zap-weekly",
+      "zaproxy/zap-nightly",
+      "zaproxy/zap-bare",
+      "projectdiscovery/nuclei",
+      "drwetter/testssl.sh",
+      "ghcr.io/testssl/testssl.sh",
+      "ghcr.io/schemathesis/schemathesis",
+      "schemathesis/schemathesis",
+      "grafana/k6",
+    ],
     flagged: [
       { path: ["build"], flags: ["--push"] },
       { path: ["buildx", "build"], flags: ["--push"] },
@@ -228,8 +244,24 @@ export const ACTING_TOOLS: readonly ActingTool[] = [
   {
     names: ["promptfoo"],
     valued: [],
-    acts: verbs("share"),
+    acts: [...verbs("share"), ["redteam", "run"], ["redteam", "eval"], ["redteam", "discover"]],
     flagged: [{ path: ["eval"], flags: ["--share", "--remote"] }],
+  },
+  // The tools that send requests to a running application (item 2026-11-26-006, pages read on 2026-11-26).
+  { names: ["zap-baseline.py", "zap-full-scan.py", "zap-api-scan.py"], valued: [], whole: true },
+  { names: ["zap.sh", "zap-x.sh"], valued: [], whole: true },
+  { names: ["nuclei"], valued: [], whole: true },
+  {
+    names: ["schemathesis", "st"],
+    valued: ["--config-file"],
+    acts: verbs("run", "fuzz", "replay"),
+  },
+  { names: ["testssl.sh", "testssl"], valued: [], whole: true },
+  { names: ["sqlmap", "sqlmap.py"], valued: [], whole: true },
+  {
+    names: ["k6"],
+    valued: ["-c", "--config", "--log-output", "-f", "--log-format", "-a", "--address"],
+    acts: [["run"], ["cloud", "run"]],
   },
 ];
 
@@ -295,6 +327,33 @@ function throughRunner(
   return { words: [packageOf(words[end] ?? ""), ...words.slice(end + 1)] };
 }
 
+/** A word as an image's name: its digest, its tag and a leading Docker Hub host left out. */
+function imageName(word: string): string {
+  let name = word.split("@")[0] ?? "";
+  const colon = name.lastIndexOf(":");
+  if (colon > name.lastIndexOf("/")) name = name.slice(0, colon);
+  for (const hub of ["docker.io/", "index.docker.io/"])
+    if (name.startsWith(hub)) return name.slice(hub.length);
+  return name;
+}
+
+/** The listed image a `run` or `container run` of the row names in any word after it, or undefined. */
+function imageRun(row: ActingTool, words: readonly string[]): string | undefined {
+  const [first, second] = positionals(words, row.valued);
+  const run =
+    first?.word === "run"
+      ? first
+      : first?.word === "container" && second?.word === "run"
+        ? second
+        : undefined;
+  if (run === undefined) return undefined;
+  for (const word of words.slice(run.index + 1)) {
+    const name = imageName(word);
+    if (row.images?.includes(name)) return name;
+  }
+  return undefined;
+}
+
 /** One row read against a command's positional words. */
 function readRow(
   program: string,
@@ -305,6 +364,8 @@ function readRow(
   const read = positionals(words, row.valued).map((p) => p.word);
   const cannot = `${program} with a verb the guard cannot read`;
   if (row.whole) return program;
+  const image = row.images ? imageRun(row, words) : undefined;
+  if (image !== undefined) return `${program} run ${image}`;
   if (row.reads) {
     const [first] = read;
     if (first === undefined) {
@@ -404,5 +465,5 @@ export function actingDeny(list: string, nobody: string): string {
 
 /** The reason of the ask where a person is present. */
 export function actingAsk(list: string): string {
-  return `Crew: ${list} is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, and the guard cannot tell an act from a read for it, nor production from a preview. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.`;
+  return `Crew: ${list} is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, or send requests to a running application, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.`;
 }

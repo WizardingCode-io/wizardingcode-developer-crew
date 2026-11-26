@@ -35,6 +35,20 @@ const CANNOT = "with a verb the guard cannot read";
 
 /** Every acting form of every row: the command line and the text it gives. */
 const ACTING: [string, string][] = [
+  // 2026-11-26-006: the tools that send requests to a running application, one line a name.
+  ["zap-baseline.py -t x", "zap-baseline.py"],
+  ["zap-full-scan.py -t x", "zap-full-scan.py"],
+  ["zap-api-scan.py -t x", "zap-api-scan.py"],
+  ["zap.sh -cmd", "zap.sh"],
+  ["zap-x.sh -daemon", "zap-x.sh"],
+  ["nuclei -u x", "nuclei"],
+  ["schemathesis run x", "schemathesis run"],
+  ["st run x", "st run"],
+  ["testssl.sh x", "testssl.sh"],
+  ["testssl x", "testssl"],
+  ["sqlmap -u x", "sqlmap"],
+  ["sqlmap.py -u x", "sqlmap.py"],
+  ["k6 run x", "k6 run"],
   ["terraform apply", "terraform apply"],
   ["terraform destroy", "terraform destroy"],
   ["tofu apply", "tofu apply"],
@@ -239,6 +253,8 @@ test("AC-10: every valued option of every row takes its value with it", () => {
     uv: "--directory --project",
     poetry: "-C --directory -P --project",
     gh: "-R --repo",
+    schemathesis: "--config-file",
+    k6: "-c --config --log-output -f --log-format -a --address",
   };
   expect(m.ACTING_TOOLS.filter((row) => row.valued.length).map((row) => row.names[0])).toEqual(
     Object.keys(VALUED),
@@ -318,7 +334,7 @@ test("AC-10: the table's rows are well formed, and each name has an acting line"
       expect([name, ACTING.some(([line]) => words(line)[0] === name)]).toEqual([name, true]);
     }
   }
-  expect(m.ACTING_TOOLS).toHaveLength(27);
+  expect(m.ACTING_TOOLS).toHaveLength(34);
 });
 
 test("AC-14: a verb that cannot be read, at a position the row reads", () => {
@@ -378,7 +394,7 @@ const powershell = (ctx: HookContext, command: string, permission_mode = "defaul
 const HIDDEN = "terraform apply; iex $cmd";
 
 const ASK_TERRAFORM =
-  "Crew: terraform apply is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, and the guard cannot tell an act from a read for it, nor production from a preview. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.";
+  "Crew: terraform apply is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, or send requests to a running application, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.";
 
 test("AC-19: the key is off by default, loads as off for any other word, and is the person's to set", async () => {
   expect(keyOf(DEFAULT_POLICY)).toBe("off");
@@ -611,7 +627,7 @@ test("AC-16: a command of 20,000 option words before its verb is read in under a
 });
 
 const RULE_2 =
-  "; where a project's policy sets `actingCommands` to `ask`, the hook asks the person before a command that deploys, applies, destroys or publishes, and denies it where nobody is present, a reminder and not a boundary (ADR 0026)";
+  "; where a project's policy sets `actingCommands` to `ask`, the hook asks the person before a command that deploys, applies, destroys or publishes, or sends requests to a running application, and denies it where nobody is present, a reminder and not a boundary (ADR 0026)";
 const LIMITS = [
   "reminder",
   "yarn <bin>",
@@ -642,6 +658,7 @@ test("AC-21: the ADR says the rule and its twelve limits, and rule 2 names the k
     "## Decision",
     "## What the rule does not hold",
     "## Consequences",
+    "## Amendment of 2026-11-26 (item 2026-11-26-006)",
   ]);
   const section = (heading: string) => (adr.split(`${heading}\n`)[1] ?? "").split("\n## ")[0] ?? "";
   expect(section("## Decision")).toContain("not read on a page");
