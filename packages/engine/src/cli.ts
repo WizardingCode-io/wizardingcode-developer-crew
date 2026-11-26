@@ -657,7 +657,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   ],
   mode: [],
   // `--mode` and `--validator` are known so that the command can refuse them in its own words.
-  sources: ["project", "installed", "declined", "mode", "validator"],
+  sources: ["project", "installed", "declined", "consented", "mode", "validator"],
   config: [],
   version: [],
   help: [],
@@ -4591,7 +4591,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return refuse(
         "an install is recorded on a person's own yes or no: crew sources takes no --mode or --validator",
       );
-    if (parsed.flags.installed === undefined && parsed.flags.declined === undefined) {
+    if (
+      parsed.flags.installed === undefined &&
+      parsed.flags.declined === undefined &&
+      parsed.flags.consented === undefined
+    ) {
       const answer = sourcesCommand(
         pluginRoot(),
         args,
@@ -7729,6 +7733,7 @@ const HELP = `crew ${VERSION}
   sources <team> --project              for the backend, the rows of its per-stack table that are this project's, by the frameworks its manifests show; for another team, every row of its install tables with its state; reads the project, writes nothing
   sources <team> --installed <page>     record that the person said yes to a ready row and its lines ran (asks the user; never with --mode or --validator)
   sources <team> --declined <page>      record that the person said no to a ready row (asks the user; never with --mode or --validator)
+  sources <team> --consented <page>     record the person's consent that the hosted server of a row held for being hosted may receive what a session asks in this project (asks the user in every policy; never with --mode or --validator)
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

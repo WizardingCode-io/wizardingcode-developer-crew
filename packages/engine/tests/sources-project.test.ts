@@ -18,7 +18,7 @@ import { cliIo, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.t
 const ITEM = "2026-11-21-004";
 // 2026-11-21-007 edits this literal: the usage gained the two forms that record a row.
 const USAGE =
-  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
+  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page> | crew sources <team> --consented <page>";
 const NO_PROJECT =
   "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 const NO_TARGET =

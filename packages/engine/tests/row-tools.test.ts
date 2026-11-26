@@ -351,6 +351,8 @@ test(`${ITEM} AC-6: the line under a ready row, by the first of its five cases t
     expect(under(lines, CYPRESS).at(-1)?.startsWith("  project: ")).toBe(true);
     expect(under(lines, PRISMA)).toEqual([
       "  install: held, hosted, so what a session asks leaves the machine",
+      // 2026-11-26-001: a hosted row a consent would lift says how the consent is given.
+      `    a person's consent for this project lifts this hold: crew sources qa --consented ${PRISMA}`,
     ]);
     expect(under(lines, APOLLO)).toEqual([
       "  install: held, its table is left out or held by the definition",
@@ -455,7 +457,11 @@ test(`${ITEM} AC-8: the form's not told line, the reference's bullet and the ADR
   );
   const parts = adr.split("\n## Amendment of 2026-11-24 (item 2026-11-24-002)\n");
   expect(parts).toHaveLength(2);
-  expect(parts[1]).not.toContain("\n## ");
+  // 2026-11-26-001: this amendment runs to the next item's heading and to no other.
+  const later = (parts[1] ?? "").split("\n## ").slice(1);
+  expect(later.map((part) => part.split("\n")[0])).toEqual([
+    "Amendment of 2026-11-26 (item 2026-11-26-001)",
+  ]);
   for (const phrase of [
     "under a ready row",
     "a held row is not marked",

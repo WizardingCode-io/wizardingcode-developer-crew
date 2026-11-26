@@ -14,6 +14,7 @@ import {
   readSourcesRecord,
   recordSourceRow,
   SOURCES_RECORD_NAME,
+  type SourceDecision,
   type SourceEntry,
   sourcesPlaceRefused,
 } from "./sources-record.ts";
@@ -37,10 +38,10 @@ export const TEAM_DEFINITION_FILES: Record<TeamName, string> = {
 export const DECLARATION_MAX_BYTES = 1024 * 1024;
 
 export const LAST_LINE =
-  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
+  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; a row held for being hosted, after the person's own consent recorded with crew sources <team> --consented <page>; with nobody present, nothing (ADR 0025).";
 
 const USAGE =
-  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
+  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page> | crew sources <team> --consented <page>";
 /** The one team whose project form reads the project: its rows are keyed by stack. */
 const PROJECT_TEAM = "backend";
 /** What a form of a project answers where the folder is in none. */
@@ -199,12 +200,20 @@ export type RowInstall =
   | { state: "in the project already" }
   | { state: "held"; reason: string };
 
+/** What a row held for being hosted is with that hold left out, and the entry of the record that lifts the hold. */
+export interface HostedLift {
+  lifted: RowInstall;
+  by?: SourceEntry;
+}
+
 export interface ProjectRow {
   mark: RowMark;
   cells: string[];
   /** The row as the declaration holds it. */
   line: string;
   install: RowInstall;
+  /** Set on a row whose first hold by its own cells is the hosted one. */
+  hosted?: HostedLift;
 }
 
 /**
@@ -293,8 +302,12 @@ function wordsBeside(cells: readonly string[]): string[] {
     .filter((word) => word !== "" && !JOINING_WORDS.includes(word));
 }
 
-/** Why a row is held before its lines' forms are asked, by orders 1 to 5 of ADR 0025's table and then by what its last cell says beside its lines; null where none holds. */
-function holdOf(cells: readonly string[], lines: readonly string[]): string | null {
+/** Why a row is held before its lines' forms are asked, by orders 1 to 5 of ADR 0025's table and then by what its last cell says beside its lines; null where none holds. `hostedLifted` leaves the hosted order out. */
+function holdOf(
+  cells: readonly string[],
+  lines: readonly string[],
+  hostedLifted: boolean,
+): string | null {
   if (lines.length === 0) return HOLD.noCommand;
   const some = (test: (line: string) => boolean) => lines.some(test);
   const said = (cell: string | undefined, phrase: string) =>
@@ -305,8 +318,9 @@ function holdOf(cells: readonly string[], lines: readonly string[]): string | nu
   )
     return HOLD.notStable;
   if (
-    some((line) => line.includes("http://") || line.includes("https://")) ||
-    said(cells[1], "hosted")
+    !hostedLifted &&
+    (some((line) => line.includes("http://") || line.includes("https://")) ||
+      said(cells[1], "hosted"))
   )
     return HOLD.hosted;
   if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark)))) return HOLD.value;
@@ -345,10 +359,15 @@ function requiresShown(line: string, stack: string, shown: ReadonlySet<string>):
  * The state of a row of the per-stack table, from its own cells and the ids of `TOOLS` that the
  * project's targets of the row's stack show: held with the reason of the first order that holds,
  * in the project already, or ready with the forms of its lines, each once, in their order.
+ * `hostedLifted` reads the row with the hosted hold left out, as a person's consent leaves it.
  */
-export function rowInstall(cells: readonly string[], shown: ReadonlySet<string>): RowInstall {
+export function rowInstall(
+  cells: readonly string[],
+  shown: ReadonlySet<string>,
+  hostedLifted = false,
+): RowInstall {
   const lines = installSpans(cells);
-  const reason = holdOf(cells, lines);
+  const reason = holdOf(cells, lines, hostedLifted);
   if (reason !== null) return { state: "held", reason };
   const forms = formsOf(lines);
   if (forms === null) return { state: "held", reason: HOLD.noForm };
@@ -407,6 +426,8 @@ function shownTools(targets: readonly Pick<Target, "tools">[]): Set<string> {
 export function projectRows(
   declaration: string,
   targets: readonly Pick<Target, "stack" | "frameworks" | "tools">[],
+  /** The project's record: an entry of the backend's lifts the hosted hold of its row. */
+  entries: readonly SourceEntry[] = [],
 ): ProjectRow[] {
   const section = declarationSections(declaration).find((s) => s.heading === PER_STACK);
   // The table's lines after its header: the rows, as the file holds them.
@@ -420,7 +441,7 @@ export function projectRows(
       mark,
       cells: row,
       line,
-      install: rowInstall(row, tools),
+      ...recordedInstall(row, tools, PROJECT_TEAM, entries),
     });
     if (stack === undefined || mine.length === 0) return marked("other stack");
     const said = row[1] ?? "";
@@ -501,8 +522,47 @@ const dayOf = (entry: SourceEntry) => entry.at.slice(0, 10);
 const sameLines = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((line, at) => line === b[at]);
 
-/** A row as a form prints it: its cells and its state. */
-type StatedRow = Pick<ProjectRow, "cells" | "install">;
+/** A row as a form prints it: its cells, its state and what its hosted hold is. */
+type StatedRow = Pick<ProjectRow, "cells" | "install" | "hosted">;
+
+/** The decisions of an entry that lift a row's hosted hold: a consent, and an install, whose lines already ran at a person's yes. */
+const LIFTING: readonly SourceDecision[] = ["consented", "installed"];
+
+/**
+ * A row's state with the project's record. A row whose first hold is the hosted one is read again
+ * with that hold left out: where an entry of the row's own team at its page holds the row's lines
+ * and a lifting decision, that second reading is the row's state; else the row stays held as hosted
+ * and keeps the second reading, which says whether a consent would lift it.
+ */
+function recordedInstall(
+  cells: readonly string[],
+  shown: ReadonlySet<string>,
+  team: string,
+  entries: readonly SourceEntry[],
+): Pick<ProjectRow, "install" | "hosted"> {
+  const install = rowInstall(cells, shown);
+  if (install.state !== "held" || install.reason !== HOLD.hosted) return { install };
+  const lifted = rowInstall(cells, shown, true);
+  const by = entries.find(
+    (entry) =>
+      entry.team === team &&
+      entry.page === cells[2] &&
+      LIFTING.includes(entry.decision) &&
+      sameLines(entry.lines, installSpans(cells)),
+  );
+  if (by === undefined) return { install, hosted: { lifted } };
+  return { install: lifted, hosted: { lifted, by } };
+}
+
+/** Whether a row is held as hosted and a consent would lift it: no entry lifts it, its page can be given, and nothing else holds it. */
+function consentOffered(row: StatedRow): boolean {
+  return (
+    row.hosted !== undefined &&
+    row.hosted.by === undefined &&
+    row.hosted.lifted.state !== "held" &&
+    (row.cells[2] ?? "") !== ""
+  );
+}
 
 /** The entry a record holds for a row of a team's, by the row's page. */
 function entryOf(
@@ -517,13 +577,28 @@ function entryOf(
  * The lines printed after a row for its state, with the record: a ready row with an entry prints
  * the entry's decision and day where its lines are the row's, and ready again, said, where they
  * changed. A held row and a row in the project already print their state whatever the record holds.
+ * A row held as hosted that a consent would lift prints how the consent is given, and a row a
+ * consent made ready prints that it is hosted and the consent's day.
  */
 function stateLines(
   row: StatedRow,
   entries: readonly SourceEntry[],
   team: string = PROJECT_TEAM,
 ): string[] {
-  const entry = row.install.state === "ready" ? entryOf(entries, team, row) : undefined;
+  if (consentOffered(row))
+    return [
+      ...installLines(row.install),
+      `    a person's consent for this project lifts this hold: crew sources ${team} --consented ${declarationLine(row.cells[2] ?? "")}`,
+    ];
+  const by = row.hosted?.by;
+  if (by?.decision === "consented" && row.install.state === "ready")
+    return [
+      ...installLines(row.install),
+      `    hosted: consented on ${dayOf(by)}; what a session asks of this server leaves the machine`,
+    ];
+  // A consent is no decision on an install: a row it did not make ready prints as a row with no entry.
+  const recorded = row.install.state === "ready" ? entryOf(entries, team, row) : undefined;
+  const entry = recorded?.decision === "consented" ? undefined : recorded;
   if (entry === undefined) return installLines(row.install);
   if (sameLines(entry.lines, installSpans(row.cells)))
     return [`  install: ${entry.decision}, recorded on ${dayOf(entry)}`];
@@ -540,7 +615,7 @@ function projectRowLines(
   targets: readonly Target[],
   entries: readonly SourceEntry[],
 ): string[] {
-  const rows = projectRows(declaration, targets);
+  const rows = projectRows(declaration, targets, entries);
   const of = (mark: RowMark) => rows.filter((row) => row.mark === mark);
   const orNone = (lines: string[]) => (lines.length ? lines : ["  none"]);
   const printed = (mark: RowMark) =>
@@ -603,18 +678,28 @@ interface TeamRow extends StatedRow {
 
 /**
  * The state of a row from its own declaration alone: held by its section's heading, then by what
- * it says is owed, then by its cells with no tool shown, since nothing detects a tool for it.
+ * it says is owed, then by its cells with no tool shown, since nothing detects a tool for it, and
+ * with the record's entries of its team, which lift the hosted hold and no other.
  */
-function ownInstall(heading: string, row: readonly string[]): RowInstall {
+function ownInstall(
+  heading: string,
+  row: readonly string[],
+  team: string,
+  entries: readonly SourceEntry[],
+): Pick<ProjectRow, "install" | "hosted"> {
   if (HELD_HEADINGS.some((opening) => heading.startsWith(opening)))
-    return { state: "held", reason: TEAM_HOLD.heading };
+    return { install: { state: "held", reason: TEAM_HOLD.heading } };
   if (row.some((cell) => OWED_PHRASES.some((phrase) => names(cell.toLowerCase(), phrase))))
-    return { state: "held", reason: TEAM_HOLD.owed };
-  return rowInstall(row, new Set());
+    return { install: { state: "held", reason: TEAM_HOLD.owed } };
+  return recordedInstall(row, new Set(), team, entries);
 }
 
-/** The rows of a declaration's install tables in its order, each with its state from the declaration alone. */
-function installRows(declaration: string): TeamRow[] {
+/** The rows of a team's declaration's install tables in its order, each with its state from the declaration and the team's entries. */
+function installRows(
+  declaration: string,
+  team: string,
+  entries: readonly SourceEntry[],
+): TeamRow[] {
   const found: TeamRow[] = [];
   for (const section of declarationSections(declaration)) {
     // A table is a run of lines that open with a pipe, its first line the header.
@@ -629,7 +714,7 @@ function installRows(declaration: string): TeamRow[] {
           heading: section.heading,
           line,
           cells: row,
-          install: ownInstall(section.heading, row),
+          ...ownInstall(section.heading, row, team, entries),
         });
       }
     }
@@ -642,23 +727,26 @@ function installRows(declaration: string): TeamRow[] {
  * row ready by its own declaration is held where another of those teams' declarations holds a row
  * at its page, since an install is the project's and not a team's. A declaration that cannot be
  * read refuses: the hold does not pass over it. An empty page is no page, and equals no other.
+ * Each team's rows are read with its own entries first, so a hosted row a consent lifted holds no
+ * other team's row, and a row lifted in one team is still held by another team's row at its page.
  */
 function teamRows(
   root: string,
   team: string,
   declaration: string,
+  entries: readonly SourceEntry[],
 ): TeamRow[] | { refused: string } {
   const heldPages = new Set<string>();
   for (const other of teamNames()) {
     if (other === team || other === PROJECT_TEAM) continue;
     const read = readTeamDeclaration(root, other);
     if ("refused" in read) return read;
-    for (const row of installRows(read.text)) {
+    for (const row of installRows(read.text, other, entries)) {
       const page = row.cells[2] ?? "";
       if (row.install.state === "held" && page !== "") heldPages.add(page);
     }
   }
-  return installRows(declaration).map(
+  return installRows(declaration, team, entries).map(
     (row): TeamRow =>
       row.install.state === "ready" && heldPages.has(row.cells[2] ?? "")
         ? { ...row, install: { state: "held", reason: TEAM_HOLD.otherTeam } }
@@ -675,9 +763,9 @@ function teamProjectLines(
 ): string[] | { refused: string } {
   const project = detectedProject(cwd);
   if (project === null) return [NO_PROJECT];
-  const rows = teamRows(root, team, declaration);
-  if ("refused" in rows) return rows;
   const record = readSourcesRecord(project.root);
+  const rows = teamRows(root, team, declaration, record.entries);
+  if ("refused" in rows) return rows;
   const lines: string[] = [];
   let section = 0;
   for (const row of rows) {
@@ -708,7 +796,7 @@ const NOT_RECORDED = {
  * The one row of a team's form that is read at a page, with its line and the state the form prints
  * for it: the project team's among the rows that are the project's, another team's among the rows
  * of its install tables, where two rows at one page refuse since a record by its page would not
- * say which.
+ * say which. `entries` are the record's, or none where the row is judged by the declaration alone.
  */
 function recordedRow(
   root: string,
@@ -716,17 +804,18 @@ function recordedRow(
   declaration: string,
   targets: readonly Target[],
   page: string,
+  entries: readonly SourceEntry[],
 ): (StatedRow & { line: string }) | { refused: string } {
   const noRow = {
     refused: `no row of this project is read at that page: crew sources ${team} --project prints the rows and their pages`,
   };
   if (team === PROJECT_TEAM)
     return (
-      projectRows(declaration, targets).find(
+      projectRows(declaration, targets, entries).find(
         (candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page,
       ) ?? noRow
     );
-  const rows = teamRows(root, team, declaration);
+  const rows = teamRows(root, team, declaration, entries);
   if ("refused" in rows) return rows;
   const [row, second] = rows.filter((candidate) => candidate.cells[2] === page);
   if (row === undefined) return noRow;
@@ -738,9 +827,14 @@ function recordedRow(
   return row;
 }
 
+/** The flags that record a row, each named after the decision it records. */
+const RECORDING: readonly SourceDecision[] = ["installed", "declined", "consented"];
+
 /**
- * `crew sources <team> --installed <page> | --declined <page>`: one row of the project's recorded
- * by its page, at the time given. It refuses by the first case of the spec's table that holds, and
+ * `crew sources <team> --installed <page> | --declined <page> | --consented <page>`: one row of the
+ * project's recorded by its page, at the time given. A consent is recorded for a row the
+ * declaration alone holds as hosted and nothing else holds, whatever the record says of it; an
+ * install and a refusal for a row the form calls ready, a hosted row a consent lifted among them. It refuses by the first case of the spec's table that holds, and
  * a refusal prints no row and no character of the page given. `root` is the plugin's folder and
  * `cwd` a folder of the project.
  */
@@ -752,9 +846,10 @@ export function recordSourcesCommand(
   at: string,
 ): { code: number; text: string } {
   const refuse = (text: string) => ({ code: 1, text });
-  // One of the two flags, and no more: which one is the decision, and its value the page.
-  if ((flags.installed === undefined) === (flags.declined === undefined)) return refuse(USAGE);
-  const decision = flags.installed === undefined ? "declined" : "installed";
+  // One of the three flags, and no more: which one is the decision, and its value the page.
+  const given = RECORDING.filter((flag) => flags[flag] !== undefined);
+  const [decision] = given;
+  if (decision === undefined || given.length !== 1) return refuse(USAGE);
   const page = flags[decision];
   if (typeof page !== "string" || page === "") return refuse(USAGE);
   if (args.length !== 1 || flags.project !== undefined) return refuse(USAGE);
@@ -765,12 +860,21 @@ export function recordSourcesCommand(
   // The command reaches here in a project; a caller with a folder in none is told so.
   if (project === null) return refuse(NO_PROJECT);
   if (sourcesPlaceRefused(project.root)) return refuse(`not recorded: ${NOT_RECORDED.place}`);
-  const found = recordedRow(root, team, read.text, project.targets, page);
+  // A consent is judged with no entry read, so one that stands does not hide the hold it answers.
+  const entries = decision === "consented" ? [] : readSourcesRecord(project.root).entries;
+  const found = recordedRow(root, team, read.text, project.targets, page, entries);
   if ("refused" in found) return refuse(found.refused);
   const row = found;
-  if (row.install.state === "held")
+  if (decision === "consented") {
+    if (row.hosted === undefined)
+      return refuse("not recorded: the row is not held for being hosted");
+    if (row.hosted.lifted.state === "held")
+      return refuse(
+        `not recorded: with the hosted hold lifted the row is still held, ${row.hosted.lifted.reason}`,
+      );
+  } else if (row.install.state === "held")
     return refuse(`not recorded: the row is held, ${row.install.reason}`);
-  if (row.install.state === "in the project already")
+  else if (row.install.state === "in the project already")
     return refuse("not recorded: the row is in the project already");
   const recorded = recordSourceRow(
     project.root,

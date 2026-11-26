@@ -780,26 +780,35 @@ function knowledgeUnmark(
 }
 
 /**
- * Whether a `sources` command records a person's yes or no to an install (ADR 0025): its words hold
- * one of the two recording flags, or a word after the verb the hook cannot read (a positional, a
- * flag's name or a flag's value), which may be either flag.
+ * What a `sources` command records of a person's (ADR 0025), null where it only prints: a consent
+ * that a hosted server may receive what a session asks, or a yes or no to an install. A word after
+ * the verb the hook cannot read (a positional, a flag's name or a flag's value) may be the consent's
+ * flag, so the command is read as a consent, save where the one such word is the value of a
+ * readable `--installed` or `--declined`.
  */
-function recordsSources(parsed: Parsed): boolean {
-  if (parsed.flags.installed !== undefined || parsed.flags.declined !== undefined) return true;
-  const unreadable = (word: string) => UNREADABLE_VERB.test(word);
-  return (
-    parsed.positional.slice(1).some(unreadable) ||
-    Object.entries(parsed.flags).some(
-      ([name, value]) => unreadable(name) || (typeof value === "string" && unreadable(value)),
-    )
-  );
+function sourcesRecording(parsed: Parsed): "consent" | "install" | null {
+  const { installed, declined, consented } = parsed.flags;
+  if (consented !== undefined) return "consent";
+  const unreadable = (word: unknown) => typeof word === "string" && UNREADABLE_VERB.test(word);
+  const flags = Object.entries(parsed.flags);
+  const unread =
+    parsed.positional.slice(1).filter(unreadable).length +
+    flags.filter(([name]) => unreadable(name)).length +
+    flags.filter(([, value]) => unreadable(value)).length;
+  if (unread === 0) return installed !== undefined || declined !== undefined ? "install" : null;
+  return unread === 1 && [installed, declined].some(unreadable) ? "install" : "consent";
 }
+
+/** Whether a `sources` command records a person's decision, of either kind. */
+const recordsSources = (parsed: Parsed) => sourcesRecording(parsed) !== null;
 
 /**
  * `crew sources … --installed|--declined <page>` has no unattended form (ADR 0025: with nobody
  * present nothing is installed, so nothing is recorded): where nobody watches it is denied whatever
  * the flags, and with a person present the attended policy decides, `--validator` exempting
- * nothing. Null for every other command.
+ * nothing. `--consented <page>`, and a command that may hold it, is asked of the person in every
+ * policy, `relay` included: the prompt is where their own word is taken that a project's data may
+ * leave the machine. Null for every other command.
  */
 function sourcesRecorded(
   parsed: Parsed,
@@ -807,7 +816,21 @@ function sourcesRecorded(
   headless: boolean,
   policy: Policy,
 ): Decision | null {
-  if (parsed.positional[0] !== "sources" || !recordsSources(parsed)) return null;
+  const recording = parsed.positional[0] === "sources" ? sourcesRecording(parsed) : null;
+  if (recording === null) return null;
+  if (recording === "consent") {
+    const ask =
+      "Crew: this command records the person's own consent that a hosted server may receive what a session asks in this project";
+    return (
+      personOnly(parsed, permissionMode, headless, policy, {
+        unwatched: (where) =>
+          `Crew: no person is watching this session (${where}) and a hosted server receives a project's data on a person's own consent: run it in a session a person watches; nothing is recorded until then.`,
+        withMode: (mode) =>
+          `Crew: a person is present (${mode} mode) and a hosted server receives a project's data on their own consent: run the command without --mode`,
+        ask,
+      }) ?? ["ask", ask]
+    );
+  }
   return personOnly(parsed, permissionMode, headless, policy, {
     unwatched: (where) =>
       `Crew: no person is watching this session (${where}) and an install is recorded on a person's own yes or no: run it in a session a person watches; nothing is recorded until then.`,

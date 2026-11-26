@@ -269,7 +269,7 @@ test(`${ITEM} AC-17: crew sources prints one line a team in the registry's order
   expect(lines[9]).toBe(LAST_LINE);
   expect(LAST_LINE).toBe(
     // 2026-11-21-006: the line says who installs and when (ADR 0025).
-    "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).",
+    "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; a row held for being hosted, after the person's own consent recorded with crew sources <team> --consented <page>; with nobody present, nothing (ADR 0025).",
   );
   REGISTRY_ORDER.forEach((team, index) => {
     const read = readTeamDeclaration(pluginRoot(), team);
@@ -340,7 +340,7 @@ test(`${ITEM} AC-19: a name that is no team, a number that is no section and a t
   expect(third.code).toBe(1);
   // 2026-11-21-004 edits this line: the usage gained the form of the project's rows.
   expect(said(third)).toBe(
-    "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>",
+    "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page> | crew sources <team> --consented <page>",
   );
   const flag = await run("sources", "backend", "--first", "PHP");
   expect(flag.code).toBe(1);

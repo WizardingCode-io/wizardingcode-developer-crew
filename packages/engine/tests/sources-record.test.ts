@@ -24,7 +24,7 @@ const ITEM = "2026-11-21-007";
 const BACKEND = join(pluginRoot(), "teams", "backend.md");
 const NAME = ".crew/local/sources.json";
 const USAGE =
-  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
+  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page> | crew sources <team> --consented <page>";
 const NO_MODE =
   "an install is recorded on a person's own yes or no: crew sources takes no --mode or --validator";
 // 2026-11-24-001: every team has a project form, so another team is refused by its own rows, and a name that is no team as crew sources refuses one.
@@ -353,7 +353,7 @@ test(`${ITEM} AC-11: the form records a ready row of the project by its page, an
     expect(unknown.code).toBe(1);
     // The refusal names the flags the command takes, the two that record among them.
     expect(`${unknown.out}${unknown.err}`.trim()).toBe(
-      `unknown flag ${flag} for sources (it takes --project, --installed, --declined, --mode, --validator, --json)`,
+      `unknown flag ${flag} for sources (it takes --project, --installed, --declined, --consented, --mode, --validator, --json)`,
     );
     expect(held(root)).toBe(before);
   }
@@ -468,53 +468,89 @@ test(`${ITEM} AC-12: the hook reads a recording sources command as a person's ow
     `Crew: a person is present (${mode} mode) and an install is recorded on their own yes or no: run the command without --mode`,
   ];
   const ASK = ["ask", "Crew: this command records the person's own yes or no to an install"];
-  const recording = [
-    "crew sources backend --installed https://example.test/a",
-    "crew sources backend --declined https://example.test/a",
-    "crew sources backend --x $F",
-    'crew sources backend --"$K" page',
-    "crew sources $T --project",
-    "crew sources backend --installed $P",
-    "crew sources backend --project --x *",
+  const CONSENT_ASK = [
+    "ask",
+    "Crew: this command records the person's own consent that a hosted server may receive what a session asks in this project",
   ];
-  for (const command of recording) {
-    // Nobody watching: denied whatever the flags.
-    for (const root of [prompt, relay]) {
-      for (const mode of ["dontAsk", "bypassPermissions"]) {
-        for (const tail of ["", ` --mode ${mode}`, " --validator x"])
-          expect({ command, mode, tail, is: answer(root, `${command}${tail}`, mode) }).toEqual({
-            command,
-            mode,
-            tail,
-            is: unwatched(`${mode} mode`),
-          });
+  // 2026-11-26-001: a word the hook cannot read may be the consent's flag, so such a command takes
+  // the consent's rule (its texts, and asked under relay too), save where the one such word is the
+  // value of a readable --installed or --declined.
+  const rules = [
+    {
+      commands: [
+        "crew sources backend --installed https://example.test/a",
+        "crew sources backend --declined https://example.test/a",
+        "crew sources backend --installed $P",
+      ],
+      unwatched,
+      withMode,
+      asked: ASK,
+      relayed: null,
+    },
+    {
+      commands: [
+        "crew sources backend --x $F",
+        'crew sources backend --"$K" page',
+        "crew sources $T --project",
+        "crew sources backend --project --x *",
+      ],
+      unwatched: (where: string) => [
+        "deny",
+        `Crew: no person is watching this session (${where}) and a hosted server receives a project's data on a person's own consent: run it in a session a person watches; nothing is recorded until then.`,
+      ],
+      withMode: (mode: string) => [
+        "deny",
+        `Crew: a person is present (${mode} mode) and a hosted server receives a project's data on their own consent: run the command without --mode`,
+      ],
+      asked: CONSENT_ASK,
+      relayed: CONSENT_ASK,
+    },
+  ];
+  for (const rule of rules)
+    for (const command of rule.commands) {
+      // Nobody watching: denied whatever the flags.
+      for (const root of [prompt, relay]) {
+        for (const mode of ["dontAsk", "bypassPermissions"]) {
+          for (const tail of ["", ` --mode ${mode}`, " --validator x"])
+            expect({ command, mode, tail, is: answer(root, `${command}${tail}`, mode) }).toEqual({
+              command,
+              mode,
+              tail,
+              is: rule.unwatched(`${mode} mode`),
+            });
+        }
+        expect({ command, is: answer(root, command, "auto", true) }).toEqual({
+          command,
+          is: rule.unwatched("a headless session in auto mode"),
+        });
+        expect({ command, is: answer(root, `${command} --mode auto`, "auto", true) }).toEqual({
+          command,
+          is: rule.unwatched("a headless session in auto mode"),
+        });
+        // A person present, with --mode: denied.
+        expect({ command, is: answer(root, `${command} --mode auto`, "auto") }).toEqual({
+          command,
+          is: rule.withMode("auto"),
+        });
       }
-      expect({ command, is: answer(root, command, "auto", true) }).toEqual({
+      // A person present: relayed, or asked, --validator or not.
+      expect({ command, is: answer(relay, command, "default") }).toEqual({
         command,
-        is: unwatched("a headless session in auto mode"),
+        is: rule.relayed,
       });
-      expect({ command, is: answer(root, `${command} --mode auto`, "auto", true) }).toEqual({
+      expect({ command, is: answer(relay, `${command} --validator x`, "auto") }).toEqual({
         command,
-        is: unwatched("a headless session in auto mode"),
+        is: rule.relayed,
       });
-      // A person present, with --mode: denied.
-      expect({ command, is: answer(root, `${command} --mode auto`, "auto") }).toEqual({
+      expect({ command, is: answer(prompt, command, "default") }).toEqual({
         command,
-        is: withMode("auto"),
+        is: rule.asked,
+      });
+      expect({ command, is: answer(prompt, `${command} --validator x`, "auto") }).toEqual({
+        command,
+        is: rule.asked,
       });
     }
-    // A person present: relayed, or asked, --validator or not.
-    expect({ command, is: answer(relay, command, "default") }).toEqual({ command, is: null });
-    expect({ command, is: answer(relay, `${command} --validator x`, "auto") }).toEqual({
-      command,
-      is: null,
-    });
-    expect({ command, is: answer(prompt, command, "default") }).toEqual({ command, is: ASK });
-    expect({ command, is: answer(prompt, `${command} --validator x`, "auto") }).toEqual({
-      command,
-      is: ASK,
-    });
-  }
   // The forms that print are let through in all three.
   for (const command of [
     "crew sources",
@@ -723,6 +759,7 @@ test(`${ITEM} AC-14: the reference, the ADR's amendment, the help and the usage 
   expect(later.map((part) => part.split("\n")[0])).toEqual([
     "Amendment of 2026-11-24 (item 2026-11-24-001)",
     "Amendment of 2026-11-24 (item 2026-11-24-002)",
+    "Amendment of 2026-11-26 (item 2026-11-26-001)",
   ]);
   for (const phrase of [
     NAME,

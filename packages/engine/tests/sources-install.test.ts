@@ -29,7 +29,7 @@ const AT_THE_PROMPT = "its line is typed at Claude Code's prompt, which a sessio
 const NO_FORM = "its line is not one of the engine's install forms";
 const CREDENTIAL = "it reaches production data with a credential";
 const LAST =
-  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
+  "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; a row held for being hosted, after the person's own consent recorded with crew sources <team> --consented <page>; with nobody present, nothing (ADR 0025).";
 
 /** The forms and their notes, as the spec's table gives them. */
 const NOTES: Record<string, string> = {

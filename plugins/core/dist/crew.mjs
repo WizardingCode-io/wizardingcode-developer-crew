@@ -21594,15 +21594,30 @@ function knowledgeUnmark(parsed, permissionMode, headless, policy) {
     ask: "Crew: a mark is removed by a person: this command records their decision"
   });
 }
-function recordsSources(parsed) {
-  if (parsed.flags.installed !== undefined || parsed.flags.declined !== undefined)
-    return true;
-  const unreadable = (word) => UNREADABLE_VERB.test(word);
-  return parsed.positional.slice(1).some(unreadable) || Object.entries(parsed.flags).some(([name, value]) => unreadable(name) || typeof value === "string" && unreadable(value));
+function sourcesRecording(parsed) {
+  const { installed, declined, consented } = parsed.flags;
+  if (consented !== undefined)
+    return "consent";
+  const unreadable = (word) => typeof word === "string" && UNREADABLE_VERB.test(word);
+  const flags = Object.entries(parsed.flags);
+  const unread = parsed.positional.slice(1).filter(unreadable).length + flags.filter(([name]) => unreadable(name)).length + flags.filter(([, value]) => unreadable(value)).length;
+  if (unread === 0)
+    return installed !== undefined || declined !== undefined ? "install" : null;
+  return unread === 1 && [installed, declined].some(unreadable) ? "install" : "consent";
 }
+var recordsSources = (parsed) => sourcesRecording(parsed) !== null;
 function sourcesRecorded(parsed, permissionMode, headless, policy) {
-  if (parsed.positional[0] !== "sources" || !recordsSources(parsed))
+  const recording = parsed.positional[0] === "sources" ? sourcesRecording(parsed) : null;
+  if (recording === null)
     return null;
+  if (recording === "consent") {
+    const ask = "Crew: this command records the person's own consent that a hosted server may receive what a session asks in this project";
+    return personOnly(parsed, permissionMode, headless, policy, {
+      unwatched: (where) => `Crew: no person is watching this session (${where}) and a hosted server receives a project's data on a person's own consent: run it in a session a person watches; nothing is recorded until then.`,
+      withMode: (mode) => `Crew: a person is present (${mode} mode) and a hosted server receives a project's data on their own consent: run the command without --mode`,
+      ask
+    }) ?? ["ask", ask];
+  }
   return personOnly(parsed, permissionMode, headless, policy, {
     unwatched: (where) => `Crew: no person is watching this session (${where}) and an install is recorded on a person's own yes or no: run it in a session a person watches; nothing is recorded until then.`,
     withMode: (mode) => `Crew: a person is present (${mode} mode) and an install is recorded on their own yes or no: run the command without --mode`,
@@ -25454,6 +25469,7 @@ function rowProjectLine(page, root, targets) {
 // packages/engine/src/sources-record.ts
 import { lstatSync as lstatSync13 } from "node:fs";
 import { join as join75 } from "node:path";
+var DECISIONS = ["installed", "declined", "consented"];
 var SOURCES_RECORD_NAME = ".crew/local/sources.json";
 var MAX_BYTES2 = 256 * 1024;
 var MAX_ROWS = 500;
@@ -25495,7 +25511,7 @@ function isEntry2(value) {
   if (!sameKeys(value, ENTRY_KEYS))
     return false;
   const entry = value;
-  return typeof entry.team === "string" && Object.hasOwn(TEAMS, entry.team) && isText2(entry.page) && (entry.decision === "installed" || entry.decision === "declined") && isTime(entry.at) && Array.isArray(entry.lines) && entry.lines.length >= 1 && entry.lines.length <= MAX_LINES && entry.lines.every(isText2);
+  return typeof entry.team === "string" && Object.hasOwn(TEAMS, entry.team) && isText2(entry.page) && DECISIONS.includes(entry.decision) && isTime(entry.at) && Array.isArray(entry.lines) && entry.lines.length >= 1 && entry.lines.length <= MAX_LINES && entry.lines.every(isText2);
 }
 var keyOf = (entry) => JSON.stringify([entry.team, entry.page]);
 function entriesIn(text) {
@@ -25559,8 +25575,8 @@ function recordSourceRow(root, row, at) {
 
 // packages/engine/src/team-sources.ts
 var DECLARATION_MAX_BYTES = 1024 * 1024;
-var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; with nobody present, nothing (ADR 0025).";
-var USAGE = "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
+var LAST_LINE = "Nothing is installed by this command. A row's install line is what its page gave on the day its definition names. The session installs, a row at a time: only a row that crew sources <team> --project calls ready, after the person's own yes in that session, where its page read again still gives the same line; a row held for being hosted, after the person's own consent recorded with crew sources <team> --consented <page>; with nobody present, nothing (ADR 0025).";
+var USAGE = "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page> | crew sources <team> --consented <page>";
 var PROJECT_TEAM = "backend";
 var NO_PROJECT = "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 function cells(line) {
@@ -25705,14 +25721,14 @@ function formOf(line) {
 function wordsBeside(cells) {
   return (cells.at(-1) ?? "").replace(/`[^`]*`/g, " ").split(/[\s,;:.]+/).filter((word) => word !== "" && !JOINING_WORDS.includes(word));
 }
-function holdOf(cells, lines) {
+function holdOf(cells, lines, hostedLifted) {
   if (lines.length === 0)
     return HOLD.noCommand;
   const some = (test) => lines.some(test);
   const said = (cell, phrase) => names2((cell ?? "").toLowerCase(), phrase);
   if (cells.some((cell) => NOT_STABLE_PHRASES.some((phrase) => said(cell, phrase))) || some((line) => line.split(" ").some((word) => NOT_STABLE_TAG.test(word))))
     return HOLD.notStable;
-  if (some((line) => line.includes("http://") || line.includes("https://")) || said(cells[1], "hosted"))
+  if (!hostedLifted && (some((line) => line.includes("http://") || line.includes("https://")) || said(cells[1], "hosted")))
     return HOLD.hosted;
   if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark))))
     return HOLD.value;
@@ -25746,9 +25762,9 @@ function requiresShown(line, stack, shown) {
   const required = words.find((word) => !word.startsWith("-"));
   return TOOLS.some((tool) => shown.has(tool.id) && onlyPackageOf(tool, stack) === required);
 }
-function rowInstall(cells, shown) {
+function rowInstall(cells, shown, hostedLifted = false) {
   const lines = installSpans(cells);
-  const reason = holdOf(cells, lines);
+  const reason = holdOf(cells, lines, hostedLifted);
   if (reason !== null)
     return { state: "held", reason };
   const forms = formsOf(lines);
@@ -25788,7 +25804,7 @@ function names2(text, phrase) {
 function shownTools(targets) {
   return new Set(targets.flatMap((target) => toolIds(target.tools)));
 }
-function projectRows(declaration, targets) {
+function projectRows(declaration, targets, entries = []) {
   const section = declarationSections(declaration).find((s) => s.heading === PER_STACK);
   const lines = (section?.lines ?? []).filter(isRow).slice(1);
   return lines.map((line) => {
@@ -25800,7 +25816,7 @@ function projectRows(declaration, targets) {
       mark,
       cells: row,
       line,
-      install: rowInstall(row, tools)
+      ...recordedInstall(row, tools, PROJECT_TEAM, entries)
     });
     if (stack === undefined || mine.length === 0)
       return marked("other stack");
@@ -25859,11 +25875,37 @@ var UNREAD_RECORD = `the record of installs (${SOURCES_RECORD_NAME}) could not b
 var rowsCount = (count) => `${count} row${count === 1 ? "" : "s"}`;
 var dayOf = (entry) => entry.at.slice(0, 10);
 var sameLines = (a, b) => a.length === b.length && a.every((line, at) => line === b[at]);
+var LIFTING = ["consented", "installed"];
+function recordedInstall(cells, shown, team, entries) {
+  const install = rowInstall(cells, shown);
+  if (install.state !== "held" || install.reason !== HOLD.hosted)
+    return { install };
+  const lifted = rowInstall(cells, shown, true);
+  const by = entries.find((entry) => entry.team === team && entry.page === cells[2] && LIFTING.includes(entry.decision) && sameLines(entry.lines, installSpans(cells)));
+  if (by === undefined)
+    return { install, hosted: { lifted } };
+  return { install: lifted, hosted: { lifted, by } };
+}
+function consentOffered(row) {
+  return row.hosted !== undefined && row.hosted.by === undefined && row.hosted.lifted.state !== "held" && (row.cells[2] ?? "") !== "";
+}
 function entryOf(entries, team, row) {
   return entries.find((entry) => entry.team === team && entry.page === row.cells[2]);
 }
 function stateLines(row, entries, team = PROJECT_TEAM) {
-  const entry = row.install.state === "ready" ? entryOf(entries, team, row) : undefined;
+  if (consentOffered(row))
+    return [
+      ...installLines(row.install),
+      `    a person's consent for this project lifts this hold: crew sources ${team} --consented ${declarationLine(row.cells[2] ?? "")}`
+    ];
+  const by = row.hosted?.by;
+  if (by?.decision === "consented" && row.install.state === "ready")
+    return [
+      ...installLines(row.install),
+      `    hosted: consented on ${dayOf(by)}; what a session asks of this server leaves the machine`
+    ];
+  const recorded = row.install.state === "ready" ? entryOf(entries, team, row) : undefined;
+  const entry = recorded?.decision === "consented" ? undefined : recorded;
   if (entry === undefined)
     return installLines(row.install);
   if (sameLines(entry.lines, installSpans(row.cells)))
@@ -25875,7 +25917,7 @@ function stateLines(row, entries, team = PROJECT_TEAM) {
   ];
 }
 function projectRowLines(declaration, targets, entries) {
-  const rows = projectRows(declaration, targets);
+  const rows = projectRows(declaration, targets, entries);
   const of = (mark) => rows.filter((row) => row.mark === mark);
   const orNone = (lines) => lines.length ? lines : ["  none"];
   const printed = (mark) => orNone(of(mark).flatMap((row) => [declarationLine(row.line), ...stateLines(row, entries)]));
@@ -25918,14 +25960,14 @@ var TEAM_HOLD = {
   otherTeam: "another team's declaration holds a row at its page"
 };
 var NOT_TOLD_OF_A_TEAM = "not told: whether this project uses the tool or the service of a held row, and of a ready row save where the line under it says; the heading over a row says when it applies";
-function ownInstall(heading, row) {
+function ownInstall(heading, row, team, entries) {
   if (HELD_HEADINGS.some((opening) => heading.startsWith(opening)))
-    return { state: "held", reason: TEAM_HOLD.heading };
+    return { install: { state: "held", reason: TEAM_HOLD.heading } };
   if (row.some((cell) => OWED_PHRASES.some((phrase) => names2(cell.toLowerCase(), phrase))))
-    return { state: "held", reason: TEAM_HOLD.owed };
-  return rowInstall(row, new Set);
+    return { install: { state: "held", reason: TEAM_HOLD.owed } };
+  return recordedInstall(row, new Set, team, entries);
 }
-function installRows(declaration) {
+function installRows(declaration, team, entries) {
   const found = [];
   for (const section of declarationSections(declaration)) {
     let header = null;
@@ -25941,14 +25983,14 @@ function installRows(declaration) {
           heading: section.heading,
           line,
           cells: row,
-          install: ownInstall(section.heading, row)
+          ...ownInstall(section.heading, row, team, entries)
         });
       }
     }
   }
   return found;
 }
-function teamRows(root, team, declaration) {
+function teamRows(root, team, declaration, entries) {
   const heldPages = new Set;
   for (const other of teamNames()) {
     if (other === team || other === PROJECT_TEAM)
@@ -25956,22 +25998,22 @@ function teamRows(root, team, declaration) {
     const read = readTeamDeclaration(root, other);
     if ("refused" in read)
       return read;
-    for (const row of installRows(read.text)) {
+    for (const row of installRows(read.text, other, entries)) {
       const page = row.cells[2] ?? "";
       if (row.install.state === "held" && page !== "")
         heldPages.add(page);
     }
   }
-  return installRows(declaration).map((row) => row.install.state === "ready" && heldPages.has(row.cells[2] ?? "") ? { ...row, install: { state: "held", reason: TEAM_HOLD.otherTeam } } : row);
+  return installRows(declaration, team, entries).map((row) => row.install.state === "ready" && heldPages.has(row.cells[2] ?? "") ? { ...row, install: { state: "held", reason: TEAM_HOLD.otherTeam } } : row);
 }
 function teamProjectLines(root, team, declaration, cwd) {
   const project = detectedProject(cwd);
   if (project === null)
     return [NO_PROJECT];
-  const rows = teamRows(root, team, declaration);
+  const record = readSourcesRecord(project.root);
+  const rows = teamRows(root, team, declaration, record.entries);
   if ("refused" in rows)
     return rows;
-  const record = readSourcesRecord(project.root);
   const lines = [];
   let section = 0;
   for (const row of rows) {
@@ -25995,13 +26037,13 @@ var NOT_RECORDED = {
   place: ".crew/local is not a folder of this project",
   bounds: "the row does not fit the record's bounds"
 };
-function recordedRow(root, team, declaration, targets, page) {
+function recordedRow(root, team, declaration, targets, page, entries) {
   const noRow = {
     refused: `no row of this project is read at that page: crew sources ${team} --project prints the rows and their pages`
   };
   if (team === PROJECT_TEAM)
-    return projectRows(declaration, targets).find((candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page) ?? noRow;
-  const rows = teamRows(root, team, declaration);
+    return projectRows(declaration, targets, entries).find((candidate) => OWN_MARKS.includes(candidate.mark) && candidate.cells[2] === page) ?? noRow;
+  const rows = teamRows(root, team, declaration, entries);
   if ("refused" in rows)
     return rows;
   const [row, second] = rows.filter((candidate) => candidate.cells[2] === page);
@@ -26013,11 +26055,13 @@ function recordedRow(root, team, declaration, targets, page) {
     };
   return row;
 }
+var RECORDING = ["installed", "declined", "consented"];
 function recordSourcesCommand(root, args, flags, cwd, at) {
   const refuse = (text) => ({ code: 1, text });
-  if (flags.installed === undefined === (flags.declined === undefined))
+  const given = RECORDING.filter((flag) => flags[flag] !== undefined);
+  const [decision] = given;
+  if (decision === undefined || given.length !== 1)
     return refuse(USAGE);
-  const decision = flags.installed === undefined ? "declined" : "installed";
   const page = flags[decision];
   if (typeof page !== "string" || page === "")
     return refuse(USAGE);
@@ -26032,13 +26076,19 @@ function recordSourcesCommand(root, args, flags, cwd, at) {
     return refuse(NO_PROJECT);
   if (sourcesPlaceRefused(project.root))
     return refuse(`not recorded: ${NOT_RECORDED.place}`);
-  const found = recordedRow(root, team, read.text, project.targets, page);
+  const entries = decision === "consented" ? [] : readSourcesRecord(project.root).entries;
+  const found = recordedRow(root, team, read.text, project.targets, page, entries);
   if ("refused" in found)
     return refuse(found.refused);
   const row = found;
-  if (row.install.state === "held")
+  if (decision === "consented") {
+    if (row.hosted === undefined)
+      return refuse("not recorded: the row is not held for being hosted");
+    if (row.hosted.lifted.state === "held")
+      return refuse(`not recorded: with the hosted hold lifted the row is still held, ${row.hosted.lifted.reason}`);
+  } else if (row.install.state === "held")
     return refuse(`not recorded: the row is held, ${row.install.reason}`);
-  if (row.install.state === "in the project already")
+  else if (row.install.state === "in the project already")
     return refuse("not recorded: the row is in the project already");
   const recorded = recordSourceRow(project.root, { team, page, decision, lines: installSpans(row.cells) }, at);
   if (!recorded.ok)
@@ -26243,7 +26293,7 @@ var KNOWN_FLAGS = {
     "contract"
   ],
   mode: [],
-  sources: ["project", "installed", "declined", "mode", "validator"],
+  sources: ["project", "installed", "declined", "consented", "mode", "validator"],
   config: [],
   version: [],
   help: []
@@ -29035,7 +29085,7 @@ async function dispatch(parsed, io) {
   if (command === "sources") {
     if (parsed.flags.mode !== undefined || parsed.flags.validator !== undefined)
       return refuse("an install is recorded on a person's own yes or no: crew sources takes no --mode or --validator");
-    if (parsed.flags.installed === undefined && parsed.flags.declined === undefined) {
+    if (parsed.flags.installed === undefined && parsed.flags.declined === undefined && parsed.flags.consented === undefined) {
       const answer = sourcesCommand(pluginRoot(), args, parsed.flags.project === true ? { project: { cwd: io.cwd } } : {});
       return answer.code === 0 ? ok(answer.text) : refuse(answer.text);
     }
@@ -31516,6 +31566,7 @@ var HELP = `crew ${VERSION}
   sources <team> --project              for the backend, the rows of its per-stack table that are this project's, by the frameworks its manifests show; for another team, every row of its install tables with its state; reads the project, writes nothing
   sources <team> --installed <page>     record that the person said yes to a ready row and its lines ran (asks the user; never with --mode or --validator)
   sources <team> --declined <page>      record that the person said no to a ready row (asks the user; never with --mode or --validator)
+  sources <team> --consented <page>     record the person's consent that the hosted server of a row held for being hosted may receive what a session asks in this project (asks the user in every policy; never with --mode or --validator)
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)

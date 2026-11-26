@@ -35,7 +35,7 @@ const NO_ENTRY = "  project: not told, nothing in a manifest or a file shows wha
 const NO_PROJECT =
   "this folder is in no project (no .git at or above it, no .crew in it): nothing was read of it";
 const USAGE =
-  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page>";
+  "usage: crew sources [<team> [<n>]] | crew sources <team> --project | crew sources <team> --installed <page> | crew sources <team> --declined <page> | crew sources <team> --consented <page>";
 const NOT_STABLE = "not stable by its own row";
 const HOSTED = "hosted, so what a session asks leaves the machine";
 const NO_COMMAND = "its row gives no command";
@@ -210,6 +210,8 @@ test(`${ITEM} AC-11: a heading of two hashes, a table of another header, an esca
     "Three hashes:",
     row("Hosted", "https://a.test/two", READY, "a server, hosted"),
     heldLine(HOSTED),
+    // 2026-11-26-001: a hosted row a consent would lift says how the consent is given.
+    "    a person's consent for this project lifts this hold: crew sources qa --consented https://a.test/two",
     "ready: 1 row; held: 1 row",
     NOT_TOLD,
     LAST_LINE,
@@ -575,6 +577,8 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
     "sources <team> --project",
     "sources <team> --installed <page>",
     "sources <team> --declined <page>",
+    // 2026-11-26-001: the form that records a consent.
+    "sources <team> --consented <page>",
   ]);
   expect(help[1]).toContain("for another team, every row of its install tables with its state");
   const reference = readFileSync(
@@ -606,6 +610,7 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
   const [amendment = "", ...later] = (parts[1] ?? "").split("\n## ");
   expect(later.map((part) => part.split("\n")[0])).toEqual([
     "Amendment of 2026-11-24 (item 2026-11-24-002)",
+    "Amendment of 2026-11-26 (item 2026-11-26-001)",
   ]);
   for (const phrase of [
     "every team",

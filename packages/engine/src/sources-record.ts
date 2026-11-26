@@ -8,7 +8,9 @@ import { join } from "node:path";
 import { ensureDir, readRegular, writeText } from "./fs.ts";
 import { TEAMS } from "./team.ts";
 
-export type SourceDecision = "installed" | "declined";
+/** What a person decided for a row: its lines ran, they said no, or its hosted server may receive what a session asks. */
+export type SourceDecision = "installed" | "declined" | "consented";
+const DECISIONS: readonly unknown[] = ["installed", "declined", "consented"];
 
 export interface SourceEntry {
   team: string;
@@ -78,7 +80,7 @@ function isEntry(value: unknown): value is SourceEntry {
     typeof entry.team === "string" &&
     Object.hasOwn(TEAMS, entry.team) &&
     isText(entry.page) &&
-    (entry.decision === "installed" || entry.decision === "declined") &&
+    DECISIONS.includes(entry.decision) &&
     isTime(entry.at) &&
     Array.isArray(entry.lines) &&
     entry.lines.length >= 1 &&
