@@ -171,8 +171,11 @@ test(`${ITEM} AC-7: ADR 0025 ends with the amendment that says what the hosted o
   );
   const parts = adr.split("\n## Amendment of 2026-11-26 (item 2026-11-26-002)\n");
   expect(parts).toHaveLength(2);
-  const amendment = parts[1] ?? "";
-  expect(amendment).not.toContain("\n## ");
+  // 2026-11-26-005: this amendment runs to the next item's heading and to no other.
+  const [amendment = "", ...later] = (parts[1] ?? "").split("\n## ");
+  expect(later.map((part) => part.split("\n")[0])).toEqual([
+    "Amendment of 2026-11-26 (item 2026-11-26-005)",
+  ]);
   for (const said of [
     "`https://github.com/<owner>/<repo>`",
     "wherever in the line it opens",

@@ -482,6 +482,7 @@ test(`${ITEM} AC-11: the usage, the last line, the help, the reference and the A
   const [amendment, ...later] = (rest ?? "").split("\n## ");
   expect(later.map((part) => part.split("\n")[0])).toEqual([
     "Amendment of 2026-11-26 (item 2026-11-26-002)",
+    "Amendment of 2026-11-26 (item 2026-11-26-005)",
   ]);
   for (const said of [
     "--consented <page>",

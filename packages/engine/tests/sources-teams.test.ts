@@ -622,6 +622,7 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
     "Amendment of 2026-11-24 (item 2026-11-24-002)",
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
     "Amendment of 2026-11-26 (item 2026-11-26-002)",
+    "Amendment of 2026-11-26 (item 2026-11-26-005)",
   ]);
   for (const phrase of [
     "every team",

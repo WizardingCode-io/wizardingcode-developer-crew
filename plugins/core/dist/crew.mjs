@@ -25677,6 +25677,46 @@ var INSTALL_FORMS = [
     note: "installs a plugin, with any hooks it carries, into the person's Claude Code, for every project of theirs unless a scope is given"
   }
 ];
+var SERVER_FORMS = [
+  {
+    form: "claude mcp add",
+    note: "adds a hosted server to the person's Claude Code for this project alone, in their `~/.claude.json`"
+  },
+  {
+    form: "claude mcp add",
+    note: "adds a hosted server to the project's `.mcp.json`, a file that a commit shares with everyone who opens the project"
+  },
+  {
+    form: "claude mcp add",
+    note: "adds a hosted server to the person's Claude Code for every project of theirs, in their `~/.claude.json`"
+  }
+];
+var READING_SERVERS = [
+  {
+    address: "https://developers.openai.com/mcp",
+    team: "agentic-os",
+    page: "https://developers.openai.com/learn/docs-mcp",
+    words: "Read-only access to OpenAI developer documentation (search + page content)"
+  },
+  {
+    address: "https://docs-mcp.getzep.com/mcp",
+    team: "agentic-os",
+    page: "https://help.getzep.com/docs-mcp-server.md",
+    words: "Capabilities: documentation search, and whole-page reads as MCP resources"
+  },
+  {
+    address: "https://mcp.clickhouse.cloud/mcp",
+    team: "etl",
+    page: "https://clickhouse.com/docs/use-cases/AI/MCP/remote_mcp",
+    words: "Read-only: SELECT alone"
+  },
+  {
+    address: "https://mcp.openalex.org/mcp",
+    team: "researchers",
+    page: "https://github.com/ourresearch/openalex-mcp-server",
+    words: "All tools are read-only."
+  }
+];
 var ERROR_SERVICE_HOLD = "it reaches production data with a credential";
 var HOLD = {
   noCommand: "its row gives no command",
@@ -25685,7 +25725,8 @@ var HOLD = {
   value: "its line takes a value of the machine, a token or a key",
   prompt: "its line is typed at Claude Code's prompt, which a session cannot do",
   wordy: "its last cell says more than its lines",
-  noForm: "its line is not one of the engine's install forms"
+  noForm: "its line is not one of the engine's install forms",
+  notReading: "its server is not one the declarations show to only read"
 };
 var COMPOSER_REQUIRE = "composer require";
 var NOT_STABLE_PHRASES = [
@@ -25747,10 +25788,43 @@ function holdOf(cells, lines, hostedLifted) {
     return HOLD.wordy;
   return null;
 }
+var SERVER_LINE = "claude mcp add ";
+var SCOPES = ["local", "project", "user"];
+var SERVER_NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+var SERVER_ADDRESS = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?(?:\/[^\s"'`\\]*)?$/;
+function serverLine(line) {
+  if (!line.startsWith(SERVER_LINE))
+    return;
+  const words = line.slice(SERVER_LINE.length).split(" ");
+  let transport = false;
+  let scope;
+  const names = [];
+  for (let at = 0;at < words.length; at++) {
+    const word = words[at] ?? "";
+    if (word === "--transport" || word === "-t") {
+      if (transport || words[at + 1] !== "http")
+        return;
+      transport = true;
+      at++;
+    } else if (word === "--scope" || word === "-s") {
+      const value = words[at + 1] ?? "";
+      if (scope !== undefined || !SCOPES.includes(value))
+        return;
+      scope = value;
+      at++;
+    } else
+      names.push(word);
+  }
+  const [name = "", address = "", ...more] = names;
+  if (!transport || more.length > 0 || !SERVER_NAME.test(name) || !SERVER_ADDRESS.test(address))
+    return;
+  const form = SERVER_FORMS[SCOPES.indexOf(scope ?? "local")];
+  return form === undefined ? undefined : { form, address };
+}
 function formsOf(lines) {
   const forms = [];
   for (const line of lines) {
-    const form = formOf(line);
+    const form = formOf(line) ?? serverLine(line)?.form;
     if (form === undefined || SHELL_MARKS.some((mark) => line.includes(mark)))
       return null;
     if (!forms.includes(form))
@@ -25779,6 +25853,12 @@ function rowInstall(cells, shown, hostedLifted = false) {
   const forms = formsOf(lines);
   if (forms === null)
     return { state: "held", reason: HOLD.noForm };
+  const reads = (address) => READING_SERVERS.some((server) => server.address === address);
+  if (lines.some((line) => {
+    const server = serverLine(line);
+    return server !== undefined && !reads(server.address);
+  }))
+    return { state: "held", reason: HOLD.notReading };
   const stack = STACK_OF.get(cells[0] ?? "");
   if (stack !== undefined && lines.some((line) => requiresShown(line, stack, shown)))
     return { state: "in the project already" };

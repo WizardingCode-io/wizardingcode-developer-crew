@@ -244,6 +244,58 @@ export const INSTALL_FORMS: readonly InstallForm[] = [
   },
 ];
 
+/** The forms of a line that adds a hosted server by its address alone, by its scope (item 2026-11-26-005). */
+export const SERVER_FORMS: readonly InstallForm[] = [
+  {
+    form: "claude mcp add",
+    note: "adds a hosted server to the person's Claude Code for this project alone, in their `~/.claude.json`",
+  },
+  {
+    form: "claude mcp add",
+    note: "adds a hosted server to the project's `.mcp.json`, a file that a commit shares with everyone who opens the project",
+  },
+  {
+    form: "claude mcp add",
+    note: "adds a hosted server to the person's Claude Code for every project of theirs, in their `~/.claude.json`",
+  },
+];
+
+/** A hosted server a declaration shows to only read: its address, the row's team and page, and the words that show it. */
+export interface ReadingServer {
+  address: string;
+  team: string;
+  page: string;
+  words: string;
+}
+
+/** The hosted servers the declarations show to only read, read on 2026-11-26 (item 2026-11-26-005). */
+export const READING_SERVERS: readonly ReadingServer[] = [
+  {
+    address: "https://developers.openai.com/mcp",
+    team: "agentic-os",
+    page: "https://developers.openai.com/learn/docs-mcp",
+    words: "Read-only access to OpenAI developer documentation (search + page content)",
+  },
+  {
+    address: "https://docs-mcp.getzep.com/mcp",
+    team: "agentic-os",
+    page: "https://help.getzep.com/docs-mcp-server.md",
+    words: "Capabilities: documentation search, and whole-page reads as MCP resources",
+  },
+  {
+    address: "https://mcp.clickhouse.cloud/mcp",
+    team: "etl",
+    page: "https://clickhouse.com/docs/use-cases/AI/MCP/remote_mcp",
+    words: "Read-only: SELECT alone",
+  },
+  {
+    address: "https://mcp.openalex.org/mcp",
+    team: "researchers",
+    page: "https://github.com/ourresearch/openalex-mcp-server",
+    words: "All tools are read-only.",
+  },
+];
+
 /** Why a row of the error services' section is held, whatever its line. */
 export const ERROR_SERVICE_HOLD = "it reaches production data with a credential";
 
@@ -256,6 +308,7 @@ const HOLD = {
   prompt: "its line is typed at Claude Code's prompt, which a session cannot do",
   wordy: "its last cell says more than its lines",
   noForm: "its line is not one of the engine's install forms",
+  notReading: "its server is not one the declarations show to only read",
 } as const;
 
 const COMPOSER_REQUIRE = "composer require";
@@ -342,11 +395,48 @@ function holdOf(
   return null;
 }
 
+const SERVER_LINE = "claude mcp add ";
+const SCOPES: readonly string[] = ["local", "project", "user"];
+const SERVER_NAME = /^[A-Za-z0-9_][A-Za-z0-9_-]*$/;
+const SERVER_ADDRESS = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?(?:\/[^\s"'`\\]*)?$/;
+
+/**
+ * A line that adds a hosted server by its address alone, read word by word (item 2026-11-26-005):
+ * the transport `http` once, at most one scope, a name and an `https://` address, the options in
+ * any place among them, and nothing else. Its form by its scope and its address; undefined where
+ * the line is not of that shape.
+ */
+function serverLine(line: string): { form: InstallForm; address: string } | undefined {
+  if (!line.startsWith(SERVER_LINE)) return undefined;
+  const words = line.slice(SERVER_LINE.length).split(" ");
+  let transport = false;
+  let scope: string | undefined;
+  const names: string[] = [];
+  for (let at = 0; at < words.length; at++) {
+    const word = words[at] ?? "";
+    if (word === "--transport" || word === "-t") {
+      if (transport || words[at + 1] !== "http") return undefined;
+      transport = true;
+      at++;
+    } else if (word === "--scope" || word === "-s") {
+      const value = words[at + 1] ?? "";
+      if (scope !== undefined || !SCOPES.includes(value)) return undefined;
+      scope = value;
+      at++;
+    } else names.push(word);
+  }
+  const [name = "", address = "", ...more] = names;
+  if (!transport || more.length > 0 || !SERVER_NAME.test(name) || !SERVER_ADDRESS.test(address))
+    return undefined;
+  const form = SERVER_FORMS[SCOPES.indexOf(scope ?? "local")];
+  return form === undefined ? undefined : { form, address };
+}
+
 /** The forms of a row's lines, each once, in the lines' order; null where a line holds a shell's mark or opens with no form (order 6). */
 function formsOf(lines: readonly string[]): InstallForm[] | null {
   const forms: InstallForm[] = [];
   for (const line of lines) {
-    const form = formOf(line);
+    const form = formOf(line) ?? serverLine(line)?.form;
     if (form === undefined || SHELL_MARKS.some((mark) => line.includes(mark))) return null;
     if (!forms.includes(form)) forms.push(form);
   }
@@ -384,6 +474,15 @@ export function rowInstall(
   if (reason !== null) return { state: "held", reason };
   const forms = formsOf(lines);
   if (forms === null) return { state: "held", reason: HOLD.noForm };
+  // A server's line is ready only where a declaration shows the server to only read (item 2026-11-26-005).
+  const reads = (address: string) => READING_SERVERS.some((server) => server.address === address);
+  if (
+    lines.some((line) => {
+      const server = serverLine(line);
+      return server !== undefined && !reads(server.address);
+    })
+  )
+    return { state: "held", reason: HOLD.notReading };
   const stack = STACK_OF.get(cells[0] ?? "");
   if (stack !== undefined && lines.some((line) => requiresShown(line, stack, shown)))
     return { state: "in the project already" };

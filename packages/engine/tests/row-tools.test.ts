@@ -466,6 +466,7 @@ test(`${ITEM} AC-8: the form's not told line, the reference's bullet and the ADR
   expect(later.map((part) => part.split("\n")[0])).toEqual([
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
     "Amendment of 2026-11-26 (item 2026-11-26-002)",
+    "Amendment of 2026-11-26 (item 2026-11-26-005)",
   ]);
   for (const phrase of [
     "under a ready row",
