@@ -15,7 +15,8 @@ import {
 // playbooks. Item 2026-11-17-007 added the second four under its own ids: its AC-1 is "AC-1", its
 // AC-11 (labels) "AC-10", its AC-3 (closed lists) "AC-11", its AC-4 "AC-4", its AC-5 "AC-5" and
 // "AC-5b", its AC-6 "AC-6b", its AC-7 "AC-7", its AC-8 (the Strategy step) "AC-13", and its AC-12
-// (donations and forms) "AC-12b".
+// (donations and forms) "AC-12b". Item 2026-11-26-004 added the mobile-app playbook to the second
+// set; its own clauses are in `frontend-platforms.test.ts`.
 const STRATEGY = "plugins/core/skills/wizardingcode-frontend-strategy/SKILL.md";
 const KOHAVI = "https://www.exp-platform.com/Documents/2014%20experimentersRulesOfThumb.pdf";
 const UNBOUNCE = "https://unbounce.com/conversion-benchmark-report/";
@@ -25,8 +26,8 @@ const ABOUT_US = "https://www.nngroup.com/articles/about-us-information-on-websi
 const QUBIT = "https://www.gwern.net/doc/economics/advertising/2017-browne.pdf";
 /**
  * Each playbook: its kind, its fewest rules, and the pages the research's notes mark as opened.
- * `second` marks the four of item 2026-11-17-007, which take two replication phrases where the
- * first four keep the four their own criterion gave them.
+ * `second` marks the four of item 2026-11-17-007 and the mobile-app playbook of item 2026-11-26-004,
+ * which take two replication phrases where the first four keep the four their own criterion gave them.
  */
 const PLAYBOOKS: { kind: Kind; least: number; opened: string[]; second?: true }[] = [
   {
@@ -111,8 +112,14 @@ const PLAYBOOKS: { kind: Kind; least: number; opened: string[]; second?: true }[
     second: true,
     opened: ["https://web.dev/case-studies/vitals-business-impact"],
   },
+  {
+    kind: "mobile-app",
+    least: 5,
+    second: true,
+    opened: ["https://www.revenuecat.com/blog/growth/subscription-app-trends-benchmarks-2026"],
+  },
 ];
-/** The phrases of the second four: what the source reports, or that the notes are silent. */
+/** The phrases of the second set: what the source reports, or that the notes are silent. */
 const REPLICATION_SECOND = ["repeated by", "replication unknown"];
 /** Sources that are a `hypothesis` said for what they are, by host: the words the row holds. */
 const SAID_AS: [host: string, words: string][] = [
@@ -135,6 +142,7 @@ const VENDORS = [
   "stripe.com",
   "www.mida.so",
   "web.dev",
+  "www.revenuecat.com",
 ];
 const COMMANDS =
   /(?:^|[\s`;&|(])(?:npx|npm|pnpm|yarn|bunx|curl|wget|brew|pip|composer)\s|git clone|\binstall\b/m;
@@ -149,7 +157,7 @@ const section = (kind: string, title: string) => sections(page(kind)).get(title)
 const every = () =>
   PLAYBOOKS.flatMap(({ kind }) => [page(kind), repoFile(sourcesOf(kind))]).join("\n");
 
-test("playbooks AC-1: eight playbooks, each named after its kind, read after the Strategy skill, with the engine's metric for the kind, rule tables of four columns and its fewest rules", () => {
+test("playbooks AC-1: nine playbooks, each named after its kind, read after the Strategy skill, with the engine's metric for the kind, rule tables of four columns and its fewest rules", () => {
   for (const { kind, least } of PLAYBOOKS) {
     const text = page(kind);
     expect(text, kind).toMatch(new RegExp(`^---\\nname: wizardingcode-frontend-${kind}\\n`));
@@ -329,7 +337,7 @@ test("playbooks AC-12: each playbook carries what the definition says of its kin
   expect(delayed[0] ?? "").toContain("no sample sizes or intervals");
 });
 
-test("playbooks AC-7: the sixteen files tell the session nothing to fetch or run", () => {
+test("playbooks AC-7: the eighteen files tell the session nothing to fetch or run", () => {
   for (const { kind } of PLAYBOOKS) {
     const text = page(kind);
     expect(tellsToFetchOrRun(text, COMMANDS, VERBS), kind).toEqual([]);
@@ -417,7 +425,7 @@ test("playbooks AC-14: the playbook of B2B lead generation bounds what a form as
   expect(saas[0] ?? "").toMatch(/\bform\b/);
 });
 
-test("playbooks AC-5b: no rule row of the second four speaks of a streak, a badge or a notification", () => {
+test("playbooks AC-5b: no rule row of the second five speaks of a streak, a badge or a notification", () => {
   for (const { kind, second } of PLAYBOOKS) {
     if (!second) continue;
     const own = ruleRows(kind);
@@ -455,7 +463,7 @@ test("playbooks AC-6b: each of the second four carries what the definition says 
   );
 });
 
-test("playbooks AC-12b: what stays true on a donation page, the prompt for a monthly gift after the decision to give, and each of the second four naming the paragraph on what a form asks", () => {
+test("playbooks AC-12b: what stays true on a donation page, the prompt for a monthly gift after the decision to give, and each of the second five naming the paragraph on what a form asks", () => {
   const stays = section("donations", "What stays true").filter((l) => l.trim().length > 0);
   expect(stays).toHaveLength(1);
   const paragraph = stays[0] ?? "";
