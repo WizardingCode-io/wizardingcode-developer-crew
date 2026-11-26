@@ -13,10 +13,14 @@ import {
 import { loadPolicy, POLICY_CHANGE_RULE, unattendedPolicyChange } from "../policy.ts";
 import {
   type CommandWrapper,
+  EXPANSION_CHARS,
   JS_RUNNERS,
   NPX_RUNNERS,
+  PATTERN_CHARS,
   quoteWord,
   RUNNER_SUFFIXES,
+  type RunnerKind,
+  runnerOptions,
   runnerSuffix,
   SHELL_NAMES,
   shellTakesNext,
@@ -27,6 +31,7 @@ import { loadState, recordWorking, updateSession } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
 import { worktreeRoots } from "../worktree.ts";
+import { actingAsk, actingDeny, actingIn, actingList } from "./acting.ts";
 import { lane } from "./context.ts";
 import { POWERSHELL_HOOK, powershellAsPosix, unreadablePowershell } from "./powershell.ts";
 import { LEADING_KEYWORDS, OPERATOR_PREFIX, type Piece, readCommand, type Token } from "./shell.ts";
@@ -180,32 +185,6 @@ function variableDenial(cleaned: string): string | null {
 // alone in a piece (`fi`, `done`, `esac`) and run nothing.
 const KEYWORDS = [...LEADING_KEYWORDS, "fi", "done", "in", "esac"];
 const WRAPPER_BY_NAME = new Map(WRAPPERS.map((w) => [w.name, w]));
-// What node and bun take a value for, before the script they run (`node -r ./a.js …/crew.mjs`).
-const JS_RUNNER_VALUED = new Set([
-  "-r",
-  "--require",
-  "--import",
-  "--loader",
-  "--experimental-loader",
-  "-e",
-  "--eval",
-  "-p",
-  "--print",
-  "--env-file",
-  "--conditions",
-  "-C",
-  "--input-type",
-  "--max-old-space-size",
-  "--title",
-  "--inspect-port",
-  "--cwd",
-  "--preload",
-  "--define",
-  "-d",
-  "--port",
-  "--config",
-  "-c",
-]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 // A group's braces stand alone as words (the shell reader separates at parentheses, so none reaches
 // a word); a `{` glued to a word is a brace expansion, read with the word.
@@ -353,28 +332,6 @@ const NPX_RUNNER = new RegExp(
   String.raw`^(?:.*[\/\\])?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`,
   "i",
 );
-const NPX_CALL = ["-c", "--call"];
-const NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
-// The two kinds of runner that take options before what they run: node and bun before the bundle,
-// npx and bunx before the package.
-type RunnerKind = "js" | "npx";
-const RUNNER_VALUED: Record<RunnerKind, Set<string>> = { js: JS_RUNNER_VALUED, npx: NPX_VALUED };
-/**
- * Where a runner's options end (the index of the first word after them) and, for npx and bunx, the
- * command line `-c`/`--call` carries (`--call=…` too). A `--name=value` carries its own value.
- */
-function runnerOptions(words: string[], kind: RunnerKind): { end: number; call: string | null } {
-  const valued = RUNNER_VALUED[kind];
-  let call: string | null = null;
-  let i = 1;
-  for (; i < words.length && (words[i] ?? "").startsWith("-"); i++) {
-    const option = words[i] ?? "";
-    const [name, attached] = option.split(/=(.*)/s, 2);
-    if (kind === "npx" && NPX_CALL.includes(name ?? "")) call ??= attached ?? words[i + 1] ?? "";
-    if (attached === undefined && valued.has(option)) i++;
-  }
-  return { end: i, call };
-}
 /** The arguments of a crew command, when the words are one (`crew …`, `/x/crew.mjs …`, `node [options] …/crew.mjs …`, `npx [options] crew …`); null otherwise. */
 function crewArgs(words: string[]): string[] | null {
   const [first] = words;
@@ -895,8 +852,6 @@ const verbEntry = (re: string, what: string): { re: RegExp; what: string } => ({
 // What the guard cannot read in a word: an expansion (`$`, a backtick) or a pattern the shell
 // expands (a brace, a bracket, a paren, `*`, `?`). One set for the command word, the verbs and a
 // push's remote (security review, rounds 13 and 14).
-const EXPANSION_CHARS = String.raw`$\x60`;
-const PATTERN_CHARS = String.raw`{[(*?`;
 const UNREADABLE_WORD = String.raw`\S*[${EXPANSION_CHARS}${PATTERN_CHARS}]`;
 // `git` by name or by path, then its `-c k=v` style options before the verb.
 const GIT_CMD = String.raw`${BIN}git\s+`;
@@ -2199,6 +2154,9 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       }
       const denied = openedSessionDenial(command, ctx.openedBranch, walked);
       if (denied) return answer("deny", `${never}: ${denied} is denied; ${ending}`);
+      // Every command of the table of acting commands, whatever the policy's key (ADR 0026).
+      const [acting] = actingIn(found);
+      if (acting) return answer("deny", `${never}: ${acting} is denied; ${ending}`);
       // The session stays in its checkout: a change of directory that leaves it (an absolute path,
       // the home, a parent, a target the hook cannot read, no target at all; through `eval`, a
       // shell's script or a `CDPATH` too) and any word that names the engine's folder (the user's
@@ -2348,6 +2306,19 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         });
       if (decided?.[0] === "deny") return answer(...decided);
       asked ??= decided;
+    }
+    // A command that can deploy, apply, destroy or publish is a person's decision where the
+    // project's policy says so (ADR 0026): denied at once where nobody is present, asked at the end
+    // where a person is, after every deny the line earns. A line the hook could not read is
+    // answered by its own rule below, the table not consulted.
+    if (ctx.policy.actingCommands === "ask" && !ctx.openedBy && !unreadable && !walked.unreadable) {
+      const acting = actingIn(found);
+      if (acting.length) {
+        const list = actingList(acting);
+        const nobody = unwatched(ctx.headless, payload.permission_mode);
+        if (nobody) return answer("deny", actingDeny(list, nobody));
+        asked = ["ask", asked ? `${asked[1]} ${actingAsk(list)}` : actingAsk(list)];
+      }
     }
     // Each simple command is judged on its own: an engine file named in one and a write verb in
     // another are not a write (finding 2 of the real-use phase). A plain copy whose destination is

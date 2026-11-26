@@ -2753,10 +2753,28 @@ function projectsStandingE2eSkip(env: Env, parsed: Parsed, args: string[], io: C
   return counts.failed ? { ...refuse(text), data } : ok(text, data);
 }
 
+/** What the register says of a change of `actingCommands`, the guard on commands that act (ADR 0026). */
+const ACTING_COMMANDS_SET: Record<string, string> = {
+  ask: "actingCommands set to ask: the hook asks the person before a command that deploys, applies, destroys or publishes, and denies it where nobody is present (ADR 0026)",
+  off: "actingCommands set to off: the hook no longer asks before a command that deploys, applies, destroys or publishes",
+};
+
 /** `crew policy set <scalar key> <value>`: written through the engine; the standing grant, one of the three loosenings a policy may carry (SP7b decision 15; ADR 0003, ADR 0022), on record. */
 function setScalarKey(env: Env, key: string, value: string): Outcome {
+  // Turning the guard on or off is on record before the file changes, so that it is never off
+  // without its record. A value that is neither word records nothing, and a write that is then
+  // refused is recorded too, so the register never reads as a change that was not made.
+  const acting =
+    key === "actingCommands" && Object.hasOwn(ACTING_COMMANDS_SET, value)
+      ? { kind: "decision" as const, text: ACTING_COMMANDS_SET[value] ?? "", by: "the user" }
+      : null;
+  if (acting) decide(env, "policy", acting);
   const result = setPolicyValue(env.paths, key, value);
-  if ("refused" in result) return refuse(result.refused);
+  if ("refused" in result) {
+    if (acting)
+      decide(env, "policy", { ...acting, text: `${key}: not written, ${result.refused}` });
+    return refuse(result.refused);
+  }
   if (key === "team.continuations" && value === "granted")
     decide(env, "policy", {
       kind: "decision",

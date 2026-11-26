@@ -3842,6 +3842,53 @@ var WRAPPERS = [
   { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
   { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
 ];
+var JS_RUNNER_VALUED = new Set([
+  "-r",
+  "--require",
+  "--import",
+  "--loader",
+  "--experimental-loader",
+  "-e",
+  "--eval",
+  "-p",
+  "--print",
+  "--env-file",
+  "--conditions",
+  "-C",
+  "--input-type",
+  "--max-old-space-size",
+  "--title",
+  "--inspect-port",
+  "--cwd",
+  "--preload",
+  "--define",
+  "-d",
+  "--port",
+  "--config",
+  "-c"
+]);
+var NPX_CALL = ["-c", "--call"];
+var NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
+var RUNNER_VALUED = {
+  js: JS_RUNNER_VALUED,
+  npx: NPX_VALUED
+};
+function runnerOptions(words, kind, from = 1) {
+  const valued = RUNNER_VALUED[kind];
+  let call = null;
+  let i = from;
+  for (;i < words.length && (words[i] ?? "").startsWith("-"); i++) {
+    const option = words[i] ?? "";
+    const [name, attached] = option.split(/=(.*)/s, 2);
+    if (kind === "npx" && NPX_CALL.includes(name ?? ""))
+      call ??= attached ?? words[i + 1] ?? "";
+    if (attached === undefined && valued.has(option))
+      i++;
+  }
+  return { end: i, call };
+}
+var EXPANSION_CHARS = String.raw`$\x60`;
+var PATTERN_CHARS = String.raw`{[(*?`;
 
 // packages/engine/src/version.ts
 var VERSION = "0.29.0";
@@ -6711,6 +6758,7 @@ var DEFAULT_POLICY = {
   unattendedDecisions: "wait",
   unattendedPolicyChanges: "never",
   attendedDecisions: "relay",
+  actingCommands: "off",
   mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
   team: {
     ...DEFAULT_TEAM_POLICY,
@@ -6765,7 +6813,8 @@ var SETTABLE_POLICY_KEYS = {
   "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
   "verify.asks": { subset: VERIFY_ASKS },
   unattendedPolicyChanges: { values: ["never", "validator"] },
-  riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } }
+  riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } },
+  actingCommands: { values: ["off", "ask"] }
 };
 var POLICY_CHANGE_RULE = "policy-change";
 var UNATTENDED_LOWERINGS = [
@@ -7005,6 +7054,7 @@ function loadPolicyFile(paths) {
       unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
       unattendedPolicyChanges: raw.unattendedPolicyChanges === "validator" ? "validator" : "never",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
+      actingCommands: raw.actingCommands === "ask" ? "ask" : "off",
       mail: loadMailPolicy(raw.mail),
       team: loadTeamPolicy(raw.team),
       verify: loadVerifyPolicy(raw.verify),
@@ -19899,6 +19949,357 @@ function takeNotices(session) {
 // packages/engine/src/hooks/pre-tool-use.ts
 import { isAbsolute as isAbsolute13, join as join65, relative as relative13 } from "node:path";
 
+// packages/engine/src/hooks/acting.ts
+var verbs = (...names) => names.map((name) => [name]);
+var ACTING_TOOLS = [
+  { names: ["terraform", "tofu"], valued: [], acts: verbs("apply", "destroy") },
+  {
+    names: ["pulumi"],
+    valued: ["-s", "--stack", "-C", "--cwd", "--color", "-v"],
+    acts: verbs("up", "update", "destroy")
+  },
+  {
+    names: ["kubectl"],
+    valued: [
+      "-n",
+      "--namespace",
+      "--context",
+      "--kubeconfig",
+      "--cluster",
+      "--user",
+      "-s",
+      "--server",
+      "--as",
+      "--as-group",
+      "--as-uid",
+      "--token",
+      "--request-timeout",
+      "--certificate-authority",
+      "--client-certificate",
+      "--client-key",
+      "--tls-server-name",
+      "--cache-dir",
+      "-v"
+    ],
+    acts: [
+      ...verbs("apply", "delete", "replace", "patch", "scale", "create", "set"),
+      ["rollout", "restart"],
+      ["rollout", "undo"]
+    ]
+  },
+  {
+    names: ["helm"],
+    valued: [
+      "-n",
+      "--namespace",
+      "--kube-context",
+      "--kubeconfig",
+      "--kube-apiserver",
+      "--kube-token",
+      "--kube-as-user",
+      "--registry-config",
+      "--repository-config"
+    ],
+    acts: verbs("install", "upgrade", "uninstall", "delete", "rollback", "push")
+  },
+  {
+    names: ["aws"],
+    valued: [
+      "--profile",
+      "--region",
+      "--endpoint-url",
+      "--output",
+      "--query",
+      "--color",
+      "--ca-bundle",
+      "--cli-read-timeout",
+      "--cli-connect-timeout"
+    ],
+    acts: [
+      ["cloudformation", "deploy"],
+      ["cloudformation", "create-stack"],
+      ["cloudformation", "update-stack"],
+      ["cloudformation", "delete-stack"],
+      ["cloudformation", "execute-change-set"],
+      ["deploy", "create-deployment"],
+      ["deploy", "stop-deployment"]
+    ]
+  },
+  {
+    names: ["cdk"],
+    valued: ["--profile", "-a", "--app", "-c", "--context", "-o", "--output"],
+    acts: verbs("deploy", "destroy")
+  },
+  {
+    names: ["az"],
+    valued: ["--subscription", "-o", "--output", "--query"],
+    acts: [
+      ["deployment", "*", "create"],
+      ["deployment", "*", "delete"]
+    ]
+  },
+  {
+    names: ["gcloud"],
+    valued: [
+      "--project",
+      "--account",
+      "--configuration",
+      "--region",
+      "--zone",
+      "--format",
+      "--impersonate-service-account",
+      "--verbosity",
+      "--billing-project"
+    ],
+    anyWord: ["deploy"]
+  },
+  { names: ["ansible-playbook"], valued: [], whole: true },
+  {
+    names: ["wrangler"],
+    valued: ["-c", "--config", "-e", "--env", "--cwd"],
+    acts: [
+      ...verbs("deploy", "publish", "rollback", "delete"),
+      ["versions", "deploy"],
+      ["pages", "deploy"]
+    ]
+  },
+  {
+    names: ["vercel", "vc"],
+    valued: [
+      "--cwd",
+      "-t",
+      "--token",
+      "-S",
+      "--scope",
+      "-T",
+      "--team",
+      "-A",
+      "--local-config",
+      "-Q",
+      "--global-config"
+    ],
+    reads: [
+      "dev",
+      "build",
+      "pull",
+      "link",
+      "login",
+      "logout",
+      "whoami",
+      "list",
+      "ls",
+      "inspect",
+      "logs",
+      "help",
+      "switch"
+    ]
+  },
+  { names: ["netlify", "ntl"], valued: ["--auth", "--filter"], acts: verbs("deploy") },
+  {
+    names: ["fly", "flyctl"],
+    valued: ["-a", "--app", "-c", "--config", "-t", "--access-token"],
+    acts: verbs("deploy")
+  },
+  {
+    names: ["kamal"],
+    valued: ["-c", "--config-file", "-d", "--destination", "-h", "--hosts", "-r", "--roles"],
+    acts: verbs("deploy", "redeploy", "rollback", "remove", "setup")
+  },
+  {
+    names: ["docker"],
+    valued: ["--context", "-c", "--config", "-H", "--host", "-l", "--log-level"],
+    acts: [["push"], ["image", "push"], ["compose", "push"], ["manifest", "push"]],
+    flagged: [
+      { path: ["build"], flags: ["--push"] },
+      { path: ["buildx", "build"], flags: ["--push"] }
+    ]
+  },
+  {
+    names: ["npm"],
+    valued: ["-w", "--workspace", "--prefix", "--registry", "--userconfig"],
+    acts: verbs("publish", "unpublish")
+  },
+  { names: ["pnpm"], valued: ["-C", "--dir", "--filter", "-F"], acts: verbs("publish") },
+  { names: ["yarn"], valued: ["--cwd"], acts: [["publish"], ["npm", "publish"]] },
+  { names: ["bun"], valued: ["--cwd"], acts: verbs("publish") },
+  {
+    names: ["cargo"],
+    valued: ["--manifest-path", "--color", "--config", "-Z"],
+    acts: verbs("publish", "yank")
+  },
+  { names: ["twine"], valued: [], acts: verbs("upload") },
+  { names: ["uv"], valued: ["--directory", "--project"], acts: verbs("publish") },
+  {
+    names: ["poetry"],
+    valued: ["-C", "--directory", "-P", "--project"],
+    acts: verbs("publish")
+  },
+  { names: ["gem"], valued: [], acts: verbs("push", "yank") },
+  {
+    names: ["gh"],
+    valued: ["-R", "--repo"],
+    acts: [
+      ["release", "create"],
+      ["release", "delete"],
+      ["workflow", "run"],
+      ["run", "rerun"]
+    ]
+  },
+  {
+    names: ["eas"],
+    valued: [],
+    acts: verbs("submit", "update", "deploy"),
+    flagged: [{ path: ["build"], flags: ["--auto-submit"] }]
+  },
+  {
+    names: ["promptfoo"],
+    valued: [],
+    acts: verbs("share"),
+    flagged: [{ path: ["eval"], flags: ["--share", "--remote"] }]
+  }
+];
+var TOOL_BY_NAME = new Map(ACTING_TOOLS.flatMap((row) => row.names.map((name) => [name, row])));
+var ONE_WORD_RUNNERS = ["npx", "bunx", "pnpx"];
+var TWO_WORD_RUNNERS = {
+  pnpm: ["dlx", "exec"],
+  yarn: ["dlx"],
+  npm: ["exec", "x"],
+  bun: ["x"]
+};
+var HANDED_ON = ["npx", "bunx"];
+var MAX_READ = 6;
+var CANNOT_BE_READ = new RegExp(`[${EXPANSION_CHARS}${PATTERN_CHARS}]`);
+var HELP_OR_VERSION = ["--version", "-v", "--help", "-h"];
+function programOf(word) {
+  const name = word.slice(Math.max(word.lastIndexOf("/"), word.lastIndexOf("\\")) + 1);
+  return name.toLowerCase().replace(/\.(?:exe|cmd)$/, "");
+}
+function packageOf(word) {
+  const name = word.slice(word.lastIndexOf("/") + 1);
+  const at = name.indexOf("@", 1);
+  return (at < 0 ? name : name.slice(0, at)).toLowerCase();
+}
+function positionals(words, valued) {
+  const kept = [];
+  for (let i = 1;i < words.length && kept.length < MAX_READ; i++) {
+    const word = words[i] ?? "";
+    if (!word.startsWith("-"))
+      kept.push({ word, index: i });
+    else if (valued.includes(word))
+      i++;
+  }
+  return kept;
+}
+function throughRunner(words, from, runner, viaXargs) {
+  const { end, call } = runnerOptions(words, "npx", from);
+  const cannot = { cannot: `${runner} with a command the guard cannot read` };
+  if (call !== null)
+    return HANDED_ON.includes(runner) ? null : cannot;
+  if (end >= words.length)
+    return viaXargs ? cannot : null;
+  return { words: [packageOf(words[end] ?? ""), ...words.slice(end + 1)] };
+}
+function readRow(program, row, words, viaXargs) {
+  const read = positionals(words, row.valued).map((p) => p.word);
+  const cannot = `${program} with a verb the guard cannot read`;
+  if (row.whole)
+    return program;
+  if (row.reads) {
+    const [first] = read;
+    if (first === undefined) {
+      if (viaXargs)
+        return cannot;
+      return words.some((w) => HELP_OR_VERSION.includes(w)) ? null : program;
+    }
+    if (CANNOT_BE_READ.test(first))
+      return cannot;
+    return row.reads.includes(first) ? null : program;
+  }
+  if (row.anyWord) {
+    const found = read.find((word) => row.anyWord?.includes(word));
+    if (found !== undefined)
+      return `${program} ${found}`;
+    if (read.some((word) => CANNOT_BE_READ.test(word)))
+      return cannot;
+    return viaXargs && read.length < MAX_READ ? cannot : null;
+  }
+  const flagged = row.flagged ?? [];
+  const flagOf = (flags) => flags.find((flag) => words.some((w) => w === flag || w.startsWith(`${flag}=`)));
+  let alive = [...row.acts ?? [], ...flagged.map((f) => f.path)];
+  for (let i = 0;i < MAX_READ; i++) {
+    const longer = alive.filter((path) => path.length > i);
+    if (longer.length === 0)
+      return null;
+    const word = read[i];
+    if (word === undefined)
+      return viaXargs ? cannot : null;
+    const star = longer.some((path) => path[i] === "*");
+    if (!star && CANNOT_BE_READ.test(word))
+      return cannot;
+    alive = longer.filter((path) => path[i] === "*" || path[i] === word);
+    for (const path of alive) {
+      if (path.length !== i + 1)
+        continue;
+      const said = path.filter((part) => part !== "*").join(" ");
+      if (row.acts?.includes(path))
+        return `${program} ${said}`;
+      const flag = flagOf(flagged.find((f) => f.path === path)?.flags ?? []);
+      if (flag)
+        return `${program} ${said} ${flag}`;
+    }
+  }
+  return null;
+}
+function actingOf(words, viaXargs = false) {
+  const [first] = words;
+  if (first === undefined)
+    return null;
+  let program = programOf(first);
+  let rest = words;
+  let through;
+  if (ONE_WORD_RUNNERS.includes(program))
+    through = throughRunner(words, 1, program, viaXargs);
+  else if (Object.hasOwn(TWO_WORD_RUNNERS, program)) {
+    const [second] = positionals(words, TOOL_BY_NAME.get(program)?.valued ?? []);
+    if (second && TWO_WORD_RUNNERS[program]?.includes(second.word))
+      through = throughRunner(words, second.index + 1, `${program} ${second.word}`, viaXargs);
+  }
+  if (through !== undefined) {
+    if (through === null)
+      return null;
+    if ("cannot" in through)
+      return through.cannot;
+    rest = through.words;
+    program = rest[0] ?? "";
+  }
+  const row = TOOL_BY_NAME.get(program);
+  return row ? readRow(program, row, rest, viaXargs) : null;
+}
+var acting = { of: actingOf };
+function actingIn(found) {
+  const texts = [];
+  for (const { words, viaXargs } of found) {
+    let text = null;
+    try {
+      text = acting.of(words, viaXargs);
+    } catch {}
+    if (text !== null && !texts.includes(text))
+      texts.push(text);
+  }
+  return texts;
+}
+function actingList(texts) {
+  if (texts.length <= 2)
+    return texts.join(" and ");
+  return `${texts.slice(0, -1).join(", ")}, and ${texts.at(-1)}`;
+}
+function actingDeny(list, nobody) {
+  return `Crew: ${list} is a person's decision in this project (policy actingCommands) and nobody is here to give it (${nobody}): stop, and do not run it in another form (a script, a package's script, another runner); say so to the user, who runs it themselves or asks again from a session that can be asked`;
+}
+function actingAsk(list) {
+  return `Crew: ${list} is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, and the guard cannot tell an act from a read for it, nor production from a preview. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.`;
+}
+
 // packages/engine/src/hooks/powershell.ts
 var CREW_WORD = String.raw`(?:[^\s"']*[/\\])?crew(?:\.mjs)?`;
 var CREW_PROGRAM = String.raw`(?:^|[\s;|&(\x60"'={])${CREW_WORD}["']?`;
@@ -20824,31 +21225,6 @@ function variableDenial(cleaned) {
 }
 var KEYWORDS = [...LEADING_KEYWORDS, "fi", "done", "in", "esac"];
 var WRAPPER_BY_NAME2 = new Map(WRAPPERS.map((w) => [w.name, w]));
-var JS_RUNNER_VALUED = new Set([
-  "-r",
-  "--require",
-  "--import",
-  "--loader",
-  "--experimental-loader",
-  "-e",
-  "--eval",
-  "-p",
-  "--print",
-  "--env-file",
-  "--conditions",
-  "-C",
-  "--input-type",
-  "--max-old-space-size",
-  "--title",
-  "--inspect-port",
-  "--cwd",
-  "--preload",
-  "--define",
-  "-d",
-  "--port",
-  "--config",
-  "-c"
-]);
 var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var BRACKETS = ["{", "}"];
 var NEXT_WORD = "\x00next";
@@ -20949,23 +21325,6 @@ function withoutRedirects(tokens) {
   return kept;
 }
 var NPX_RUNNER = new RegExp(String.raw`^(?:.*[\/\\])?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`, "i");
-var NPX_CALL = ["-c", "--call"];
-var NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
-var RUNNER_VALUED = { js: JS_RUNNER_VALUED, npx: NPX_VALUED };
-function runnerOptions(words, kind) {
-  const valued = RUNNER_VALUED[kind];
-  let call = null;
-  let i = 1;
-  for (;i < words.length && (words[i] ?? "").startsWith("-"); i++) {
-    const option = words[i] ?? "";
-    const [name, attached] = option.split(/=(.*)/s, 2);
-    if (kind === "npx" && NPX_CALL.includes(name ?? ""))
-      call ??= attached ?? words[i + 1] ?? "";
-    if (attached === undefined && valued.has(option))
-      i++;
-  }
-  return { end: i, call };
-}
 function crewArgs(words) {
   const [first] = words;
   if (first === undefined)
@@ -21266,8 +21625,6 @@ var verbEntry = (re, what) => ({
   re: new RegExp(`${BIN}${re}`),
   what
 });
-var EXPANSION_CHARS = String.raw`$\x60`;
-var PATTERN_CHARS = String.raw`{[(*?`;
 var UNREADABLE_WORD = String.raw`\S*[${EXPANSION_CHARS}${PATTERN_CHARS}]`;
 var GIT_CMD = String.raw`${BIN}git\s+`;
 var GIT_OPTS = String.raw`(?:-\S+(?:\s+\S+)?\s+)`;
@@ -22265,6 +22622,9 @@ function onPreToolUse(ctx, payload) {
       const denied = openedSessionDenial(command, ctx.openedBranch, walked);
       if (denied)
         return answer("deny", `${never}: ${denied} is denied; ${ending}`);
+      const [acting] = actingIn(found);
+      if (acting)
+        return answer("deny", `${never}: ${acting} is denied; ${ending}`);
       const stays = `${opened} and stays in its checkout`;
       for (const { program, words, handed, tokens } of found) {
         if (program === "cd" || program === "pushd") {
@@ -22349,6 +22709,16 @@ function onPreToolUse(ctx, payload) {
       if (decided?.[0] === "deny")
         return answer(...decided);
       asked ??= decided;
+    }
+    if (ctx.policy.actingCommands === "ask" && !ctx.openedBy && !unreadable && !walked.unreadable) {
+      const acting = actingIn(found);
+      if (acting.length) {
+        const list = actingList(acting);
+        const nobody = unwatched(ctx.headless, payload.permission_mode);
+        if (nobody)
+          return answer("deny", actingDeny(list, nobody));
+        asked = ["ask", asked ? `${asked[1]} ${actingAsk(list)}` : actingAsk(list)];
+      }
     }
     const readCopies = new Set(found.filter(copiesOut).map((f) => f.piece));
     for (const piece of judgedTexts(readCommand(command).pieces)) {
@@ -27267,10 +27637,20 @@ function projectsStandingE2eSkip(env, parsed, args, io) {
   const data = { projects: lines, counts };
   return counts.failed ? { ...refuse(text), data } : ok(text, data);
 }
+var ACTING_COMMANDS_SET = {
+  ask: "actingCommands set to ask: the hook asks the person before a command that deploys, applies, destroys or publishes, and denies it where nobody is present (ADR 0026)",
+  off: "actingCommands set to off: the hook no longer asks before a command that deploys, applies, destroys or publishes"
+};
 function setScalarKey(env, key, value) {
+  const acting = key === "actingCommands" && Object.hasOwn(ACTING_COMMANDS_SET, value) ? { kind: "decision", text: ACTING_COMMANDS_SET[value] ?? "", by: "the user" } : null;
+  if (acting)
+    decide(env, "policy", acting);
   const result = setPolicyValue(env.paths, key, value);
-  if ("refused" in result)
+  if ("refused" in result) {
+    if (acting)
+      decide(env, "policy", { ...acting, text: `${key}: not written, ${result.refused}` });
     return refuse(result.refused);
+  }
   if (key === "team.continuations" && value === "granted")
     decide(env, "policy", {
       kind: "decision",

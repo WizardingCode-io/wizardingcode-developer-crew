@@ -195,3 +195,65 @@ export const WRAPPERS: readonly CommandWrapper[] = [
   { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
   { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true },
 ];
+
+// What node and bun take a value for, before the script they run (`node -r ./a.js …/crew.mjs`).
+export const JS_RUNNER_VALUED = new Set([
+  "-r",
+  "--require",
+  "--import",
+  "--loader",
+  "--experimental-loader",
+  "-e",
+  "--eval",
+  "-p",
+  "--print",
+  "--env-file",
+  "--conditions",
+  "-C",
+  "--input-type",
+  "--max-old-space-size",
+  "--title",
+  "--inspect-port",
+  "--cwd",
+  "--preload",
+  "--define",
+  "-d",
+  "--port",
+  "--config",
+  "-c",
+]);
+export const NPX_CALL = ["-c", "--call"];
+export const NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
+// The two kinds of runner that take options before what they run: node and bun before the bundle,
+// npx and bunx before the package.
+export type RunnerKind = "js" | "npx";
+export const RUNNER_VALUED: Record<RunnerKind, Set<string>> = {
+  js: JS_RUNNER_VALUED,
+  npx: NPX_VALUED,
+};
+/**
+ * Where a runner's options end (the index of the first word after them) and, for npx and bunx, the
+ * command line `-c`/`--call` carries (`--call=…` too). A `--name=value` carries its own value. The
+ * options are read from `from`, the word after the runner's own (two words for `pnpm dlx`).
+ */
+export function runnerOptions(
+  words: readonly string[],
+  kind: RunnerKind,
+  from = 1,
+): { end: number; call: string | null } {
+  const valued = RUNNER_VALUED[kind];
+  let call: string | null = null;
+  let i = from;
+  for (; i < words.length && (words[i] ?? "").startsWith("-"); i++) {
+    const option = words[i] ?? "";
+    const [name, attached] = option.split(/=(.*)/s, 2);
+    if (kind === "npx" && NPX_CALL.includes(name ?? "")) call ??= attached ?? words[i + 1] ?? "";
+    if (attached === undefined && valued.has(option)) i++;
+  }
+  return { end: i, call };
+}
+// What a guard cannot read in a word, as the source of a regular expression's class: an expansion
+// (`$`, a backtick) or a pattern the shell expands (a brace, a bracket, a paren, `*`, `?`). One pair
+// for the hook's standing list and for the table of acting commands (ADR 0026).
+export const EXPANSION_CHARS = String.raw`$\x60`;
+export const PATTERN_CHARS = String.raw`{[(*?`;

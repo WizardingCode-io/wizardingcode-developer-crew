@@ -111,6 +111,7 @@ export const DEFAULT_POLICY: Policy = {
   unattendedDecisions: "wait",
   unattendedPolicyChanges: "never",
   attendedDecisions: "relay",
+  actingCommands: "off",
   // A copy: a caller that changes the default policy's mail block leaves the mail defaults as they are.
   mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
   // Copies, as the mail block is: a caller that changes the default policy's team or verify block
@@ -206,6 +207,7 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
   // The one loosening a policy may carry (ADR 0003), one glob per command, added or removed (finding 120).
   // Appended last: the messages that enumerate the table keep their first keys.
   riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } },
+  actingCommands: { values: ["off", "ask"] },
 };
 
 /** The validator's rule for a policy change where nobody watches (ADR 0012), named once. */
@@ -608,6 +610,7 @@ function loadPolicyFile(paths: CrewPaths): { policy: Policy; tampered: boolean }
           : "wait",
       unattendedPolicyChanges: raw.unattendedPolicyChanges === "validator" ? "validator" : "never",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
+      actingCommands: raw.actingCommands === "ask" ? "ask" : "off",
       mail: loadMailPolicy(raw.mail),
       team: loadTeamPolicy(raw.team),
       verify: loadVerifyPolicy(raw.verify),

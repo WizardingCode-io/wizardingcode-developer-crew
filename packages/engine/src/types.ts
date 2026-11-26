@@ -1124,6 +1124,12 @@ export interface Policy {
    * are always asked.
    */
   attendedDecisions: "prompt" | "relay";
+  /**
+   * Whether the hook reads a command that can deploy, apply, destroy or publish (ADR 0026): `ask`
+   * puts it to the person where one is present and denies it where nobody is; `off`, the default,
+   * leaves it to the session's own permissions. The person's to turn on and off.
+   */
+  actingCommands: "off" | "ask";
   /** The mailbox: the workspace, the name, what is accepted, what may open and the limits (SP2c §6). */
   mail: MailPolicy;
   /** The verification backend's policy (SP3 decision 9). */
