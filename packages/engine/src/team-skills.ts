@@ -190,6 +190,53 @@ export const TEAM_SKILLS = {
     { skill: "wizardingcode-research-evidence-map", title: "Evidence map", subjects: [] },
     { skill: "wizardingcode-research-selection", title: "Selection", subjects: [] },
   ],
+  etl: [
+    // The entry is one of the eleven: the interview and the choice by volume come before the rest.
+    {
+      skill: "wizardingcode-etl",
+      title: "Sizing to the volume",
+      subjects: ["Data warehouse and analytics", "Sizing the solution to the volume"],
+    },
+    {
+      skill: "wizardingcode-etl-quality-monitor",
+      title: "Data quality monitor",
+      subjects: ["Data quality and validation"],
+    },
+    {
+      skill: "wizardingcode-etl-pipeline",
+      title: "Pipeline generator",
+      subjects: [
+        "Pipelines",
+        "Imports, exports and file formats",
+        "Integrations and synchronisation between systems",
+      ],
+    },
+    {
+      skill: "wizardingcode-etl-documentation",
+      title: "Documentation and data dictionary",
+      subjects: ["Documentation, catalogue and lineage of the data"],
+    },
+    {
+      skill: "wizardingcode-etl-query-optimiser",
+      title: "Query optimiser",
+      subjects: ["Queries and ORM use", "Transactions", "Indexes"],
+    },
+    { skill: "wizardingcode-etl-lineage", title: "Lineage tracer", subjects: [] },
+    { skill: "wizardingcode-etl-data-tests", title: "Data test generator", subjects: [] },
+    {
+      skill: "wizardingcode-etl-schema-evolution",
+      title: "Source schema evolution",
+      // Backups go with the schema: the rubric asks that data be copied before a destructive step.
+      subjects: [
+        "Schema and migrations",
+        "Availability of the data while the change runs",
+        "Backups, restore and retention",
+      ],
+    },
+    { skill: "wizardingcode-etl-performance", title: "Performance measuring", subjects: [] },
+    { skill: "wizardingcode-etl-catalogue", title: "Data catalogue", subjects: [] },
+    { skill: "wizardingcode-etl-pandas-polars", title: "pandas and Polars", subjects: [] },
+  ],
 } satisfies Partial<Record<TeamName, readonly TeamSkill[]>>;
 
 /** The teams that have skills of their own: the table's keys, so the two cannot differ. */
@@ -211,6 +258,7 @@ const TEAM_TABLE: Readonly<Record<SkilledTeam, readonly [header: string, row: st
   "agentic-os": [SUBJECTS_HEADER, "a subject"],
   architects: [SUBJECTS_HEADER, "a subject"],
   researchers: ["| Kind | Sources |", "a kind of research"],
+  etl: [SUBJECTS_HEADER, "a subject"],
 };
 
 /**
@@ -262,6 +310,10 @@ const TEAM_RESEARCH: Readonly<Record<SkilledTeam, readonly [string, string]>> = 
   ],
   researchers: [
     "The research opened most of the pages; a line that says a page was not opened, or was read in part, names no more than it says.",
+    RULE_ONLY_AS_A_ROW,
+  ],
+  etl: [
+    "The research read the pages on 2026-11-15; a line that says a page was not opened, or that it answered with a redirect alone, names nothing that was read.",
     RULE_ONLY_AS_A_ROW,
   ],
 };

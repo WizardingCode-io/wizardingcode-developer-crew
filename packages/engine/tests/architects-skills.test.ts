@@ -772,6 +772,6 @@ test(`${ITEM} AC-43: with --team the script writes this team's three files alone
   const all = build(copyOf(every));
   expect({ status: all.status, err: all.stderr }).toEqual({ status: 0, err: "" });
   const lines = all.stdout.trimEnd().split("\n");
-  expect(lines).toHaveLength(24);
+  expect(lines).toHaveLength(30);
   expect(lines.slice(20, 23)).toEqual(WROTE);
 });

@@ -720,7 +720,7 @@ test(`${ITEM} AC-15: with --team the script writes this team's nine files alone,
   const all = build(copyOf(every));
   expect({ status: all.status, err: all.stderr }).toEqual({ status: 0, err: "" });
   const lines = all.stdout.trimEnd().split("\n");
-  expect(lines).toHaveLength(24);
+  expect(lines).toHaveLength(30);
   expect(lines.slice(0, 5).every((l) => l.includes("wizardingcode-qa-"))).toBe(true);
   expect(lines.slice(5, 11).every((l) => l.includes("wizardingcode-devops-"))).toBe(true);
   expect(lines.slice(11, 20)).toEqual(WROTE);

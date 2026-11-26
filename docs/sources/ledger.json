@@ -150,6 +150,11 @@
    "name": "last30days-skill",
    "licence": "MIT",
    "commit": "331025e"
+  },
+  {
+   "name": "mozilla-bigquery-etl-skills",
+   "licence": "MPL-2.0",
+   "commit": "a89cf8f"
   }
  ],
  "unread": [
@@ -3972,6 +3977,321 @@
    "text": "A vendor's account of its own product is set beside what independent users report, and where the two differ the report shows both.",
    "proof": "researchers-skills.test.ts",
    "note": "read at e435a22, skills/core-tools/bmad-deep-recon/references/selection.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Before any query is drafted, settle precisely what a single output row stands fo",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl/SKILL.md",
+   "text": "Before any query is drafted, settle precisely what a single output row stands for and at what time unit, because every later design choice depends on that answer.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Open the interview by learning which business activity the model represents, who",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl/SKILL.md",
+   "text": "Open the interview by learning which business activity the model represents, who will consume it and to decide what, and a handful of concrete questions it must answer, raised as the talk unfolds rather than in one batch.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Ask how current the data must be and how far back its history must reach, and pa",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl/SKILL.md",
+   "text": "Ask how current the data must be and how far back its history must reach, and partition the table on the same time unit as its grain.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Load large tables and append-style daily data incrementally by default, and rese",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl/SKILL.md",
+   "text": "Load large tables and append-style daily data incrementally by default, and reserve full rebuilds for small reference tables or data whose past values can still change.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, agents/etl-orchestrator.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Record before building what must already exist upstream, what will consume the r",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl/SKILL.md",
+   "text": "Record before building what must already exist upstream, what will consume the result downstream, and every open blocker with its owner and date where these are known.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Watch freshness on tables loaded on a schedule, where staleness points to a fail",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-quality-monitor/SKILL.md",
+   "text": "Watch freshness on tables loaded on a schedule, where staleness points to a failed load, and watch row volume on tables with predictable counts, where a sudden fall means lost data and a sudden rise duplicates.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/bigconfig-generator/references/monitoring_patterns.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Put checks on the critical outputs of a data flow and on the tables behind repor",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-quality-monitor/SKILL.md",
+   "text": "Put checks on the critical outputs of a data flow and on the tables behind reports, and leave out scratch tables that nobody reads.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/bigconfig-generator/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Let a failed check stop a deployment only for critical tables whose checks rarel",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-quality-monitor/SKILL.md",
+   "text": "Let a failed check stop a deployment only for critical tables whose checks rarely raise false alarms, and let it merely alert while a table is still settling or false alarms are expected.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/bigconfig-generator/references/monitoring_patterns.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Beyond freshness and row volume, check columns for nulls, duplicate values and m",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-quality-monitor/SKILL.md",
+   "text": "Beyond freshness and row volume, check columns for nulls, duplicate values and malformed values, and add custom checks for the table's own business rules.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/bigconfig-generator/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: When a freshness check fails, first confirm on the table itself that it did not ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-quality-monitor/SKILL.md",
+   "text": "When a freshness check fails, first confirm on the table itself that it did not update and that the check runs on a schedule aligned with the load, since either can raise a false alarm.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/bigconfig-generator/references/monitoring_patterns.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Before implementing a transformation, confirm the columns it must output, the lo",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-pipeline/SKILL.md",
+   "text": "Before implementing a transformation, confirm the columns it must output, the logic that produces them and the tables they come from, and put short, specific questions only about what is still missing.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, agents/etl-orchestrator.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Before changing a transformation, note its existing tests and current sources, t",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-pipeline/SKILL.md",
+   "text": "Before changing a transformation, note its existing tests and current sources, then bring every test's fixtures and expected output in line with the change and run them until they pass.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/query-writer/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: When a test fails, decide whether the fault lies in the query's logic, the expec",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-pipeline/SKILL.md",
+   "text": "When a test fails, decide whether the fault lies in the query's logic, the expected output or a fixture, and fix it at that cause, going back to the query when the logic is wrong.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, agents/etl-orchestrator.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Run the project's formatter and validator on a new query and keep fixing it unti",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-pipeline/SKILL.md",
+   "text": "Run the project's formatter and validator on a new query and keep fixing it until validation passes, before producing its schema or its tests.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, agents/etl-orchestrator.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Each column's description says how a computed value is derived, the unit it is m",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-documentation/SKILL.md",
+   "text": "Each column's description says how a computed value is derived, the unit it is measured in and what a null in it means.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/metadata-manager/references/schema_description_improvements.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Correct any column description that is empty or only restates the column's name,",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-documentation/SKILL.md",
+   "text": "Correct any column description that is empty or only restates the column's name, and make each one say what kind of value it holds, a count, a flag or a rate for instance.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/schema-enricher/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Start a derived column's description from the source's and add what the derivati",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-documentation/SKILL.md",
+   "text": "Start a derived column's description from the source's and add what the derivation changed, such as a filter, but keep that narrower wording out of the source's description.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/metadata-manager/references/schema_description_improvements.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Whenever a change alters a table's output, update its declared schema in the sam",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-documentation/SKILL.md",
+   "text": "Whenever a change alters a table's output, update its declared schema in the same change and write a description for every new field.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/metadata-manager/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: A table's overview states plainly which records it includes and which it exclude",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-documentation/SKILL.md",
+   "text": "A table's overview states plainly which records it includes and which it excludes, or says that no record is excluded at that layer.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/schema-readme-generator/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Restrict each read to the partitions it needs by filtering on the partition colu",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-query-optimiser/SKILL.md",
+   "text": "Restrict each read to the partitions it needs by filtering on the partition column, and filter rows before a join so less data moves between stages.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/query-writer/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Read from an aggregated, deduplicated table where one holds what is needed, and ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-query-optimiser/SKILL.md",
+   "text": "Read from an aggregated, deduplicated table where one holds what is needed, and when the raw table cannot be avoided, write down why in the requirements along with its cost and speed.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/references/common_aggregated_tables.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Before changing an existing table, find every model that reads it, from the quer",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-lineage/SKILL.md",
+   "text": "Before changing an existing table, find every model that reads it, from the query definitions first and the lineage graph when needed, and warn that those consumers are affected.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: For a column passed through unchanged from a source table, find that source in t",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-lineage/SKILL.md",
+   "text": "For a column passed through unchanged from a source table, find that source in the query's FROM clause and copy the column's description from the source's definition when it has one.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/schema-enricher/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Give every table the query reads its own fixture, even one that contributes next",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-data-tests/SKILL.md",
+   "text": "Give every table the query reads its own fixture, even one that contributes next to nothing, so that the test reads its fixtures and no data beyond them.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/sql-test-generator/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Treat a test that runs slowly, returns far more rows than its expected output or",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-data-tests/SKILL.md",
+   "text": "Treat a test that runs slowly, returns far more rows than its expected output or shows real identifiers as a sign that it reads data beyond its fixtures.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/sql-test-generator/references/preventing_production_queries.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Cover each join with rows that find a partner and rows that find none on every s",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-data-tests/SKILL.md",
+   "text": "Cover each join with rows that find a partner and rows that find none on every side the join keeps, plus the case where an inner join matches nothing.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/sql-test-generator/references/test_strategy_patterns.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Test an incremental load on a run that updates records whose key already exists ",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-data-tests/SKILL.md",
+   "text": "Test an incremental load on a run that updates records whose key already exists and merges new rows into stored state, and on a first run with no earlier state.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/sql-test-generator/references/test_strategy_patterns.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: When the expected rows follow a sort, give the sort columns distinct values in t",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-data-tests/SKILL.md",
+   "text": "When the expected rows follow a sort, give the sort columns distinct values in the fixtures so the order of the result is fixed.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/sql-test-generator/references/common_test_failures.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Compare the declared schema with the columns the query really returns, fix its t",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-schema-evolution/SKILL.md",
+   "text": "Compare the declared schema with the columns the query really returns, fix its types to the output, add missing columns with descriptions, and ask a person before deleting a declared column the query no longer returns.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/schema-enricher/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Coordinate any change to a table's schema with its downstream consumers and reco",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-schema-evolution/SKILL.md",
+   "text": "Coordinate any change to a table's schema with its downstream consumers and record the analysis of its impact in the requirements.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: When rewriting a schema file, change only the descriptions, keeping every field'",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-schema-evolution/SKILL.md",
+   "text": "When rewriting a schema file, change only the descriptions, keeping every field's name, type, mode and position, then read it back to confirm no field was renamed or dropped and the count is as expected.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/schema-enricher/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Register every table with its owners, preferably teams over single people, a rea",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-catalogue/SKILL.md",
+   "text": "Register every table with its owners, preferably teams over single people, a readable name and a description of what it is for.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/metadata-manager/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Look up a table's structure first in the definitions kept beside the transformat",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-catalogue/SKILL.md",
+   "text": "Look up a table's structure first in the definitions kept beside the transformation code, and query the shared catalogue only when those lack it or to confirm what was found.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/model-requirements/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: When a source's existing description is unclear or incomplete, write the improve",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-catalogue/SKILL.md",
+   "text": "When a source's existing description is unclear or incomplete, write the improved wording as a recommendation to that source's owners, so every downstream table gains from it.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/metadata-manager/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
+  },
+  {
+   "source": "mozilla-bigquery-etl-skills",
+   "rule": "etl: Match each table's columns to the shared column definitions by name or alias, an",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-etl-catalogue/SKILL.md",
+   "text": "Match each table's columns to the shared column definitions by name or alias, and where an alias is in use, propose renaming it to the canonical name.",
+   "proof": "etl-skills.test.ts",
+   "note": "read at a89cf8f, skills/metadata-manager/SKILL.md; the crew's sentence, written from the passage the item's pairs set beside it"
   }
  ]
 }

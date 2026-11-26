@@ -1609,14 +1609,16 @@ interface LedgerRow {
 /**
  * Whether a source's licence lets it into the ledger: MIT or Apache-2.0 and nothing beside the
  * name (ADR 0017, decision 5), or
- * the one source that decision's note of 2026-11-22 names, under the licence it names, and no other.
+ * the one source that decision's note of 2026-11-22 names, under the licence it names, or the one
+ * source its note of 2026-11-26 names, under MPL-2.0, and no other.
  */
 function licenceLetsIn(source: { name: string; licence: string }): boolean {
   if (source.name === "dandgabr-architect" && source.licence === "GPL-3.0") return true;
+  if (source.name === "mozilla-bigquery-etl-skills" && source.licence === "MPL-2.0") return true;
   return /^(MIT|Apache-2\.0)$/.test(source.licence);
 }
 
-test("2026-11-22-001 AC-44: a source enters the ledger under MIT or Apache-2.0, and under GPL-3.0 only the one source ADR 0017's note of 2026-11-22 names", () => {
+test("2026-11-22-001 AC-44: a source enters the ledger under MIT or Apache-2.0, under GPL-3.0 only the one source ADR 0017's note of 2026-11-22 names, and under MPL-2.0 only the one source its note of 2026-11-26 names (2026-11-26-003 AC-18)", () => {
   const lets = (name: string, licence: string) => licenceLetsIn({ name, licence });
   expect(lets("a-source", "MIT")).toBe(true);
   expect(lets("a-source", "Apache-2.0")).toBe(true);
@@ -1634,6 +1636,14 @@ test("2026-11-22-001 AC-44: a source enters the ledger under MIT or Apache-2.0, 
   expect(lets("a-source", "MIT or GPL-3.0")).toBe(false);
   expect(lets("a-source", "Apache-2.0-with-exceptions")).toBe(false);
   expect(lets("a-source", "Apache-2x0")).toBe(false);
+  // The one source under MPL-2.0 (2026-11-26-003 AC-18): that name under that licence, and no other.
+  expect(lets("mozilla-bigquery-etl-skills", "MPL-2.0")).toBe(true);
+  expect(lets("a-source", "MPL-2.0")).toBe(false);
+  expect(lets("mozilla-bigquery-etl-skills-two", "MPL-2.0")).toBe(false);
+  expect(lets("dandgabr-architect", "MPL-2.0")).toBe(false);
+  expect(lets("mozilla-bigquery-etl-skills", "MPL-1.1")).toBe(false);
+  expect(lets("mozilla-bigquery-etl-skills", "MPL-2.0-no-copyleft-exception")).toBe(false);
+  expect(lets("mozilla-bigquery-etl-skills", "GPL-3.0")).toBe(false);
 });
 
 test("AC-16: every row of the coverage ledger holds its text at its file or a refusal with a decision, and every source has rows", () => {

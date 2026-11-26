@@ -120,6 +120,7 @@ export const ENTRY_SENTENCES = [
   "Before a change to an agent, a tool an agent calls, a prompt, a skill, a plugin or an MCP server, read `wizardingcode-agentic`: it sends each subject to the skill that holds the crew's rule for it.",
   "Before a change to a boundary, a model, a contract or an integration, and before a decision on the architecture or on a technology, read `wizardingcode-architecture`: it sends each subject to the skill that holds the crew's rule for it.",
   "Before research for an item is planned or run, and before its result is judged, read `wizardingcode-research`: it gives the method and sends a verification, an evidence map and a choice between candidates to the skill that holds the crew's rule for it.",
+  "Before a change to a schema, a query, a pipeline or a load of data, and before a choice of how to store or move data, read `wizardingcode-etl`: it gives the interview and the choice by volume and sends each subject to the skill that holds the crew's rule for it.",
 ] as const;
 
 /**
