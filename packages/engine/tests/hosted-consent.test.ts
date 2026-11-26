@@ -476,9 +476,13 @@ test(`${ITEM} AC-11: the usage, the last line, the help, the reference and the A
     ),
     "utf8",
   );
-  const [, amendment] = adr.split("\n## Amendment of 2026-11-26 (item 2026-11-26-001)\n");
-  expect(amendment).toBeDefined();
-  expect(amendment).not.toContain("\n## ");
+  const [, rest] = adr.split("\n## Amendment of 2026-11-26 (item 2026-11-26-001)\n");
+  expect(rest).toBeDefined();
+  // 2026-11-26-002: this amendment runs to the next item's heading and to no other.
+  const [amendment, ...later] = (rest ?? "").split("\n## ");
+  expect(later.map((part) => part.split("\n")[0])).toEqual([
+    "Amendment of 2026-11-26 (item 2026-11-26-002)",
+  ]);
   for (const said of [
     "--consented <page>",
     "the row's own team",

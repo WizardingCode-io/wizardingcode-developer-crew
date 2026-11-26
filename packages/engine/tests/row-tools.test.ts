@@ -39,6 +39,10 @@ const APOLLO = "https://github.com/apollographql/skills";
 const NO_SIGN = [
   "https://github.com/WizardingCode-io/wizardingcode-mem",
   "https://github.com/mattpocock/skills",
+  // 2026-11-26-002: three rows ready since a repository's address is no hosted server.
+  "https://github.com/cloudflare/security-audit-skill",
+  "https://github.com/datacontract/datacontract-skills",
+  "https://github.com/currents-dev/playwright-best-practices-skill",
 ];
 
 type Signs = { dependencies?: string[]; files?: string[] };
@@ -243,7 +247,7 @@ test(`${ITEM} AC-1: the table holds the ten entries of the Design, and its pages
       line.startsWith("| ") && lines[at + 1] === "  install: ready" ? [cells(line)[2] ?? ""] : [],
     );
   });
-  expect(ready).toHaveLength(12);
+  expect(ready).toHaveLength(15);
   expect(ready.slice().sort()).toEqual([...EXPECTED.map((entry) => entry.page), ...NO_SIGN].sort());
 });
 
@@ -461,6 +465,7 @@ test(`${ITEM} AC-8: the form's not told line, the reference's bullet and the ADR
   const later = (parts[1] ?? "").split("\n## ").slice(1);
   expect(later.map((part) => part.split("\n")[0])).toEqual([
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
+    "Amendment of 2026-11-26 (item 2026-11-26-002)",
   ]);
   for (const phrase of [
     "under a ready row",

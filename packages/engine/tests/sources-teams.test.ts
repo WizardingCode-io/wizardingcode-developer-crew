@@ -108,7 +108,10 @@ function skeleton(text: string): string[] {
 }
 
 const READY_PAGES: Record<Team, string[]> = {
-  security: [],
+  security: [
+    // 2026-11-26-002: a repository's address in a line is no hosted server.
+    "https://github.com/cloudflare/security-audit-skill",
+  ],
   etl: [
     "https://github.com/planetscale/database-skills",
     "https://github.com/ClickHouse/agent-skills",
@@ -117,9 +120,15 @@ const READY_PAGES: Record<Team, string[]> = {
     "https://github.com/metabase/agent-skills",
     "https://github.com/looker-open-source/looker-skills",
     "https://atlasgo.io/guides/ai-tools/agent-skills",
+    // 2026-11-26-002: a repository's address in a line is no hosted server.
+    "https://github.com/datacontract/datacontract-skills",
   ],
   researchers: ["https://github.com/WizardingCode-io/wizardingcode-mem"],
-  qa: ["https://github.com/cypress-io/ai-toolkit"],
+  qa: [
+    "https://github.com/cypress-io/ai-toolkit",
+    // 2026-11-26-002: a repository's address in a line is no hosted server.
+    "https://github.com/currents-dev/playwright-best-practices-skill",
+  ],
   architects: [
     "https://github.com/pactflow/pactflow-agent-skills",
     "https://github.com/apollographql/skills",
@@ -130,10 +139,11 @@ const READY_PAGES: Record<Team, string[]> = {
   frontend: [],
 };
 const HELD_COUNT: Record<Team, number> = {
-  security: 29,
-  etl: 64,
+  // 2026-11-26-002: one row fewer in security, ETL and QA.
+  security: 28,
+  etl: 63,
   researchers: 24,
-  qa: 26,
+  qa: 25,
   architects: 46,
   devops: 32,
   "agentic-os": 80,
@@ -611,6 +621,7 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
   expect(later.map((part) => part.split("\n")[0])).toEqual([
     "Amendment of 2026-11-24 (item 2026-11-24-002)",
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
+    "Amendment of 2026-11-26 (item 2026-11-26-002)",
   ]);
   for (const phrase of [
     "every team",

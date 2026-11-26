@@ -302,6 +302,24 @@ function wordsBeside(cells: readonly string[]): string[] {
     .filter((word) => word !== "" && !JOINING_WORDS.includes(word));
 }
 
+/** An address in a line: from its scheme, wherever in the line it opens, to a space or the line's end. */
+const ADDRESS = /https?:\/\/\S*/g;
+/** A GitHub repository's address and nothing after it, the scheme and the host as written here. */
+const REPOSITORY_ADDRESS = /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
+const dotsAlone = (name: string | undefined) => name === undefined || /^\.+$/.test(name);
+
+/**
+ * Whether a line holds an address that is no repository's (ADR 0025's amendment of 2026-11-26,
+ * item 2026-11-26-002): a repository is fetched as the form with `owner/repo` fetches it, and
+ * nothing a session asks is sent to it, so its address does not make a row hosted.
+ */
+function holdsAnAddress(line: string): boolean {
+  return (line.match(ADDRESS) ?? []).some((address) => {
+    const [, owner, repository] = REPOSITORY_ADDRESS.exec(address) ?? [];
+    return dotsAlone(owner) || dotsAlone(repository);
+  });
+}
+
 /** Why a row is held before its lines' forms are asked, by orders 1 to 5 of ADR 0025's table and then by what its last cell says beside its lines; null where none holds. `hostedLifted` leaves the hosted order out. */
 function holdOf(
   cells: readonly string[],
@@ -317,12 +335,7 @@ function holdOf(
     some((line) => line.split(" ").some((word) => NOT_STABLE_TAG.test(word)))
   )
     return HOLD.notStable;
-  if (
-    !hostedLifted &&
-    (some((line) => line.includes("http://") || line.includes("https://")) ||
-      said(cells[1], "hosted"))
-  )
-    return HOLD.hosted;
+  if (!hostedLifted && (some(holdsAnAddress) || said(cells[1], "hosted"))) return HOLD.hosted;
   if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark)))) return HOLD.value;
   if (some((line) => line.startsWith("/"))) return HOLD.prompt;
   if (wordsBeside(cells).length > 0) return HOLD.wordy;

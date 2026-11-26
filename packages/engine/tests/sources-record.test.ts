@@ -760,6 +760,7 @@ test(`${ITEM} AC-14: the reference, the ADR's amendment, the help and the usage 
     "Amendment of 2026-11-24 (item 2026-11-24-001)",
     "Amendment of 2026-11-24 (item 2026-11-24-002)",
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
+    "Amendment of 2026-11-26 (item 2026-11-26-002)",
   ]);
   for (const phrase of [
     NAME,

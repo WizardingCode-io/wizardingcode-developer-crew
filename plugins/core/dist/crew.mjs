@@ -25721,6 +25721,15 @@ function formOf(line) {
 function wordsBeside(cells) {
   return (cells.at(-1) ?? "").replace(/`[^`]*`/g, " ").split(/[\s,;:.]+/).filter((word) => word !== "" && !JOINING_WORDS.includes(word));
 }
+var ADDRESS = /https?:\/\/\S*/g;
+var REPOSITORY_ADDRESS = /^https:\/\/github\.com\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+)$/;
+var dotsAlone = (name) => name === undefined || /^\.+$/.test(name);
+function holdsAnAddress(line) {
+  return (line.match(ADDRESS) ?? []).some((address) => {
+    const [, owner, repository] = REPOSITORY_ADDRESS.exec(address) ?? [];
+    return dotsAlone(owner) || dotsAlone(repository);
+  });
+}
 function holdOf(cells, lines, hostedLifted) {
   if (lines.length === 0)
     return HOLD.noCommand;
@@ -25728,7 +25737,7 @@ function holdOf(cells, lines, hostedLifted) {
   const said = (cell, phrase) => names2((cell ?? "").toLowerCase(), phrase);
   if (cells.some((cell) => NOT_STABLE_PHRASES.some((phrase) => said(cell, phrase))) || some((line) => line.split(" ").some((word) => NOT_STABLE_TAG.test(word))))
     return HOLD.notStable;
-  if (!hostedLifted && (some((line) => line.includes("http://") || line.includes("https://")) || said(cells[1], "hosted")))
+  if (!hostedLifted && (some(holdsAnAddress) || said(cells[1], "hosted")))
     return HOLD.hosted;
   if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark))))
     return HOLD.value;

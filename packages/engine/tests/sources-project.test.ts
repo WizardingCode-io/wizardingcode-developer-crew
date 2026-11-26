@@ -327,7 +327,7 @@ test(`${ITEM} AC-13: --project takes a team, no value and no section number (202
   // 2026-11-24-001: the QA team's form, where a refusal stood.
   expect(qa.code).toBe(0);
   expect(qa.out.split("\n")[0]).toBe(join(pluginRoot(), "teams", "qa.md"));
-  expect(qa.out).toContain("\nready: 1 row; held: 26 rows\n");
+  expect(qa.out).toContain("\nready: 2 rows; held: 25 rows\n");
   for (const args of [
     ["sources", "backend", "5", "--project"],
     ["sources", "backend", "--project", "5"],
