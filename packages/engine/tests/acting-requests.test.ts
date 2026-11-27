@@ -10,7 +10,7 @@ const ITEM = "2026-11-26-006";
 const REPO = join(import.meta.dir, "..", "..", "..");
 const words = (line: string) => line.split(" ").filter(Boolean);
 const ASK =
-  "Crew: nuclei is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, or send requests to a running application, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.";
+  "Crew: nuclei is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, send requests to a running application, or restore, load or change a database's data, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.";
 
 test(`${ITEM} AC-7: the tools that send requests to a running application act, and their reads pass`, () => {
   const acting: [string, string][] = [
@@ -193,7 +193,7 @@ test(`${ITEM} AC-10: the ask names requests to a running application, and so doe
   );
   const rule2 = rules.split("\n").find((l) => l.startsWith("2. ")) ?? "";
   expect(rule2).toContain(
-    "a command that deploys, applies, destroys or publishes, or sends requests to a running application,",
+    "a command that deploys, applies, destroys or publishes, sends requests to a running application, or restores, loads or changes a database's data,",
   );
 });
 
@@ -203,7 +203,7 @@ test(`${ITEM} AC-14: ADR 0026 ends with this item's amendment`, () => {
     "utf8",
   );
   const heading = "## Amendment of 2026-11-26 (item 2026-11-26-006)";
-  expect(adr.match(/^## .*$/gm)?.at(-1)).toBe(heading);
+  expect(adr.match(/^## .*$/gm)?.at(-2)).toBe(heading);
   const part = adr.slice(adr.indexOf(heading));
   for (const said of [
     "`zap-baseline.py`",

@@ -5,8 +5,11 @@ import { EXPANSION_CHARS, PATTERN_CHARS, runnerOptions } from "../shell-words.ts
  * options that take the next word as their value, and what acts. `acts` are paths of subcommand
  * words, `*` standing for any one word; `anyWord` acts at any position among the words read;
  * `reads` are the first words that do not act, for a tool that acts with no subcommand; `whole`
- * means every use acts; `flagged` is a path with the flags that make it act; `images` are the
- * container images whose `run` acts, read in every word after it (item 2026-11-26-006).
+ * means every use acts; `flagged` is a path with the flags that make it act, and a path of no
+ * word makes any use with one of the flags act; `images` are the container images whose `run`
+ * acts, read in every word after it (item 2026-11-26-006). `data` marks a tool that restores,
+ * loads or changes a database's data: a session opened by mail or by a journey is denied it only
+ * where the project turned the key on (item 2026-11-27-002).
  */
 export interface ActingTool {
   names: string[];
@@ -17,10 +20,15 @@ export interface ActingTool {
   whole?: true;
   flagged?: { path: string[]; flags: string[] }[];
   images?: string[];
+  data?: true;
 }
 
 /** Paths of one word each. */
 const verbs = (...names: string[]): string[][] => names.map((name) => [name]);
+
+/** Rows of the tools of a database's data, each marked so. */
+const dataRows = (...rows: ActingTool[]): ActingTool[] =>
+  rows.map((row) => ({ ...row, data: true }));
 
 /**
  * The table. A row lists the verbs that deploy, apply, destroy, delete, publish or push: a tool's
@@ -263,6 +271,199 @@ export const ACTING_TOOLS: readonly ActingTool[] = [
     valued: ["-c", "--config", "--log-output", "-f", "--log-format", "-a", "--address"],
     acts: [["run"], ["cloud", "run"]],
   },
+  // The tools that restore, load or change a database's data (item 2026-11-27-002, pages read on 2026-11-27).
+  ...dataRows(
+    { names: ["pg_restore"], valued: [], flagged: [{ path: [], flags: ["-d", "--dbname"] }] },
+    { names: ["mongorestore"], valued: [], whole: true },
+    { names: ["myloader"], valued: [], whole: true },
+    { names: ["pgbackrest"], valued: [], acts: verbs("restore", "expire", "stanza-delete") },
+    {
+      names: ["barman"],
+      valued: ["-c", "--config", "--color", "--colour", "-f", "--format", "--log-level"],
+      acts: verbs("restore", "recover", "delete"),
+    },
+    {
+      names: ["wal-g"],
+      valued: ["--config"],
+      acts: [
+        ...verbs(
+          "backup-fetch",
+          "wal-restore",
+          "catchup-fetch",
+          "catchup-receive",
+          "binlog-replay",
+        ),
+        ["pgbackrest", "backup-fetch"],
+      ],
+      flagged: [{ path: ["delete"], flags: ["--confirm"] }],
+    },
+    {
+      names: ["xtrabackup"],
+      valued: [],
+      flagged: [{ path: [], flags: ["--copy-back", "--move-back"] }],
+    },
+    { names: ["litestream"], valued: [], acts: verbs("restore") },
+    { names: ["pgbench"], valued: [], whole: true },
+    {
+      names: ["sysbench"],
+      valued: [],
+      acts: [
+        ["*", "prepare"],
+        ["*", "run"],
+        ["*", "cleanup"],
+      ],
+    },
+    {
+      names: ["dbt"],
+      valued: [
+        "--project-dir",
+        "--profiles-dir",
+        "--profile",
+        "--target",
+        "--target-path",
+        "--log-path",
+        "--log-format",
+        "--log-level",
+        "--state",
+      ],
+      acts: verbs("build", "run", "seed", "snapshot", "clone", "run-operation", "retry"),
+    },
+    {
+      names: ["sqlmesh"],
+      valued: ["-p", "--paths", "--config", "--gateway", "--log-file-dir", "--dotenv"],
+      acts: [
+        ...verbs("plan", "run", "destroy", "invalidate", "janitor", "migrate", "rollback"),
+        ["state", "import"],
+      ],
+    },
+    {
+      names: ["dlt"],
+      valued: ["--pipelines-dir"],
+      acts: ["drop", "sync", "abort-packages", "drop-pending-packages", "load-package"].map(
+        (verb) => ["pipeline", "*", verb],
+      ),
+    },
+    {
+      names: ["meltano"],
+      valued: [
+        "--cwd",
+        "--log-config",
+        "--log-format",
+        "--log-level",
+        "--env-file",
+        "--environment",
+        "--state-id-suffix",
+      ],
+      acts: [
+        ...verbs("run", "el", "elt", "invoke"),
+        ...["set", "clear", "merge", "copy", "move", "import"].map((verb) => ["state", verb]),
+      ],
+    },
+    {
+      names: ["airflow"],
+      valued: [],
+      acts: [
+        ["dags", "trigger"],
+        ["dags", "test"],
+        ["dags", "clear"],
+        ["dags", "delete"],
+        ["tasks", "test"],
+        ["tasks", "clear"],
+        ["backfill", "create"],
+        ["assets", "materialize"],
+        ["db", "migrate"],
+        ["db", "downgrade"],
+        ["db", "reset"],
+        ["db", "clean"],
+        ["db", "drop-archived"],
+        ["db-manager", "migrate"],
+        ["db-manager", "downgrade"],
+        ["db-manager", "reset"],
+      ],
+    },
+    {
+      names: ["dagster"],
+      valued: [],
+      acts: [
+        ["asset", "materialize"],
+        ["asset", "wipe"],
+        ["job", "execute"],
+        ["job", "launch"],
+        ["job", "backfill"],
+        ["run", "delete"],
+        ["run", "wipe"],
+        ["instance", "migrate"],
+      ],
+    },
+    { names: ["dg"], valued: [], acts: verbs("launch") },
+    {
+      names: ["prefect"],
+      valued: ["--profile"],
+      acts: [
+        ["deployment", "run"],
+        ["flow-run", "execute"],
+        ["flow-run", "retry"],
+        ["server", "database", "reset"],
+        ["server", "database", "upgrade"],
+        ["server", "database", "downgrade"],
+      ],
+    },
+    {
+      names: ["alembic"],
+      valued: ["-x", "--name", "--config", "-n", "-c"],
+      acts: verbs("upgrade", "downgrade", "stamp"),
+    },
+    {
+      names: ["prisma"],
+      valued: [],
+      acts: [
+        ...["dev", "deploy", "reset", "resolve"].map((verb) => ["migrate", verb]),
+        ...["push", "execute", "seed", "init", "migrate", "update", "sign"].map((verb) => [
+          "db",
+          verb,
+        ]),
+      ],
+    },
+    { names: ["drizzle-kit"], valued: [], acts: verbs("migrate", "push") },
+    {
+      names: ["migrate"],
+      valued: ["-source", "-path", "-database", "-prefetch", "-lock-timeout"],
+      acts: verbs("up", "down", "goto", "drop", "force"),
+    },
+    {
+      names: ["atlas"],
+      valued: ["-c", "--config", "--env", "--var"],
+      acts: [
+        ["migrate", "apply"],
+        ["migrate", "down"],
+        ["migrate", "set"],
+        ["schema", "apply"],
+        ["schema", "clean"],
+      ],
+    },
+    {
+      names: ["sqlx"],
+      valued: ["--database-url"],
+      acts: [
+        ["migrate", "run"],
+        ["migrate", "revert"],
+        ["database", "create"],
+        ["database", "drop"],
+      ],
+    },
+    { names: ["gh-ost"], valued: [], flagged: [{ path: [], flags: ["--execute"] }] },
+    {
+      names: ["pt-online-schema-change"],
+      valued: [],
+      flagged: [{ path: [], flags: ["--execute", "--dry-run"] }],
+    },
+    {
+      names: ["pgroll"],
+      valued: ["--postgres-url"],
+      acts: verbs("init", "start", "complete", "rollback", "baseline"),
+    },
+    { names: ["pg_repack"], valued: [], whole: true },
+  ),
 ];
 
 const TOOL_BY_NAME = new Map(
@@ -282,6 +483,7 @@ const HANDED_ON = ["npx", "bunx"];
 const MAX_READ = 6;
 const CANNOT_BE_READ = new RegExp(`[${EXPANSION_CHARS}${PATTERN_CHARS}]`);
 const HELP_OR_VERSION = ["--version", "-v", "--help", "-h"];
+const ONE_LETTER = /^-[A-Za-z]$/;
 
 /** A command word as a program's name: its folder and a Windows suffix gone, in lower case. */
 function programOf(word: string): string {
@@ -382,8 +584,19 @@ function readRow(
     return viaXargs && read.length < MAX_READ ? cannot : null;
   }
   const flagged = row.flagged ?? [];
+  // A flag is a word, a word that starts with it and `=`, or, for a flag of one letter, a word that starts with it.
   const flagOf = (flags: readonly string[]) =>
-    flags.find((flag) => words.some((w) => w === flag || w.startsWith(`${flag}=`)));
+    flags.find((flag) =>
+      words.some(
+        (w) =>
+          w === flag || w.startsWith(`${flag}=`) || (ONE_LETTER.test(flag) && w.startsWith(flag)),
+      ),
+    );
+  // A flagged path of no word: any use with one of its flags acts.
+  for (const { path, flags } of flagged) {
+    const flag = path.length === 0 ? flagOf(flags) : undefined;
+    if (flag) return `${program} ${flag}`;
+  }
   // The paths still alive after each word; a word is read only while a longer path can continue.
   let alive = [...(row.acts ?? []), ...flagged.map((f) => f.path)];
   for (let i = 0; i < MAX_READ; i++) {
@@ -413,6 +626,14 @@ function readRow(
  * `<program> with a verb the guard cannot read`. Each word is read once.
  */
 export function actingOf(words: readonly string[], viaXargs = false): string | null {
+  return readCommand(words, viaXargs)?.text ?? null;
+}
+
+/** What acts in one simple command, with whether its row is a tool of a database's data. */
+function readCommand(
+  words: readonly string[],
+  viaXargs: boolean,
+): { text: string; data: boolean } | null {
   const [first] = words;
   if (first === undefined) return null;
   let program = programOf(first);
@@ -426,24 +647,36 @@ export function actingOf(words: readonly string[], viaXargs = false): string | n
   }
   if (through !== undefined) {
     if (through === null) return null;
-    if ("cannot" in through) return through.cannot;
+    if ("cannot" in through) return { text: through.cannot, data: false };
     rest = through.words;
     program = rest[0] ?? "";
   }
   const row = TOOL_BY_NAME.get(program);
-  return row ? readRow(program, row, rest, viaXargs) : null;
+  const text = row ? readRow(program, row, rest, viaXargs) : null;
+  return text === null ? null : { text, data: row?.data === true };
 }
 
 /** What the hook's helper calls: an object, so that a test can put a function that throws in its place. */
-export const acting = { of: actingOf };
+export const acting = {
+  of: actingOf,
+  data: (words: readonly string[], viaXargs = false): boolean =>
+    readCommand(words, viaXargs)?.data === true,
+};
 
-/** The acting texts of a line's commands, each once, in order. A throw for one command loses that command's text and nothing else. */
-export function actingIn(found: readonly { words: string[]; viaXargs: boolean }[]): string[] {
+/**
+ * The acting texts of a line's commands, each once, in order. A throw for one command loses that
+ * command's text and nothing else. With `withData` false, the text of a row marked `data` is left out.
+ */
+export function actingIn(
+  found: readonly { words: string[]; viaXargs: boolean }[],
+  withData = true,
+): string[] {
   const texts: string[] = [];
   for (const { words, viaXargs } of found) {
     let text: string | null = null;
     try {
       text = acting.of(words, viaXargs);
+      if (text !== null && !withData && acting.data(words, viaXargs)) text = null;
     } catch {
       // a broken table decides nothing: the hook's standing rules still run
     }
@@ -465,5 +698,5 @@ export function actingDeny(list: string, nobody: string): string {
 
 /** The reason of the ask where a person is present. */
 export function actingAsk(list: string): string {
-  return `Crew: ${list} is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, or send requests to a running application, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.`;
+  return `Crew: ${list} is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, send requests to a running application, or restore, load or change a database's data, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.`;
 }

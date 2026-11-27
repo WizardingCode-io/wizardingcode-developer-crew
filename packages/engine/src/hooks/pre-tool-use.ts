@@ -2177,8 +2177,9 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       }
       const denied = openedSessionDenial(command, ctx.openedBranch, walked);
       if (denied) return answer("deny", `${never}: ${denied} is denied; ${ending}`);
-      // Every command of the table of acting commands, whatever the policy's key (ADR 0026).
-      const [acting] = actingIn(found);
+      // Every command of the table of acting commands, whatever the policy's key (ADR 0026); a tool
+      // of a database's data only where the project turned the key on (item 2026-11-27-002).
+      const [acting] = actingIn(found, ctx.policy.actingCommands === "ask");
       if (acting) return answer("deny", `${never}: ${acting} is denied; ${ending}`);
       // The session stays in its checkout: a change of directory that leaves it (an absolute path,
       // the home, a parent, a target the hook cannot read, no target at all; through `eval`, a

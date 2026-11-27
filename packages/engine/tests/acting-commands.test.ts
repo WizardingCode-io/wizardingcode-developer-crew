@@ -33,8 +33,41 @@ const turnOn = (ctx: HookContext) => {
 const REPO = join(import.meta.dir, "..", "..", "..");
 const CANNOT = "with a verb the guard cannot read";
 
+/** 2026-11-27-002: the tools of a database's data, one line a name. */
+const DATA_ACTING: [string, string][] = [
+  ["pg_restore -d x dump", "pg_restore -d"],
+  ["mongorestore x", "mongorestore"],
+  ["myloader -d x", "myloader"],
+  ["pgbackrest restore", "pgbackrest restore"],
+  ["barman restore x y z", "barman restore"],
+  ["wal-g backup-fetch x y", "wal-g backup-fetch"],
+  ["xtrabackup --copy-back", "xtrabackup --copy-back"],
+  ["litestream restore x", "litestream restore"],
+  ["pgbench x", "pgbench"],
+  ["sysbench x run", "sysbench run"],
+  ["dbt run", "dbt run"],
+  ["sqlmesh plan", "sqlmesh plan"],
+  ["dlt pipeline x drop", "dlt pipeline drop"],
+  ["meltano run x y", "meltano run"],
+  ["airflow dags trigger x", "airflow dags trigger"],
+  ["dagster job launch", "dagster job launch"],
+  ["dg launch", "dg launch"],
+  ["prefect deployment run x", "prefect deployment run"],
+  ["alembic upgrade head", "alembic upgrade"],
+  ["prisma migrate deploy", "prisma migrate deploy"],
+  ["drizzle-kit push", "drizzle-kit push"],
+  ["migrate up", "migrate up"],
+  ["atlas migrate apply", "atlas migrate apply"],
+  ["sqlx migrate run", "sqlx migrate run"],
+  ["gh-ost --execute", "gh-ost --execute"],
+  ["pt-online-schema-change --execute", "pt-online-schema-change --execute"],
+  ["pgroll start x", "pgroll start"],
+  ["pg_repack x", "pg_repack"],
+];
+
 /** Every acting form of every row: the command line and the text it gives. */
 const ACTING: [string, string][] = [
+  ...DATA_ACTING,
   // 2026-11-26-006: the tools that send requests to a running application, one line a name.
   ["zap-baseline.py -t x", "zap-baseline.py"],
   ["zap-full-scan.py -t x", "zap-full-scan.py"],
@@ -255,6 +288,19 @@ test("AC-10: every valued option of every row takes its value with it", () => {
     gh: "-R --repo",
     schemathesis: "--config-file",
     k6: "-c --config --log-output -f --log-format -a --address",
+    barman: "-c --config --color --colour -f --format --log-level",
+    "wal-g": "--config",
+    dbt: "--project-dir --profiles-dir --profile --target --target-path --log-path --log-format --log-level --state",
+    sqlmesh: "-p --paths --config --gateway --log-file-dir --dotenv",
+    dlt: "--pipelines-dir",
+    meltano:
+      "--cwd --log-config --log-format --log-level --env-file --environment --state-id-suffix",
+    prefect: "--profile",
+    alembic: "-x --name --config -n -c",
+    migrate: "-source -path -database -prefetch -lock-timeout",
+    atlas: "-c --config --env --var",
+    sqlx: "--database-url",
+    pgroll: "--postgres-url",
   };
   expect(m.ACTING_TOOLS.filter((row) => row.valued.length).map((row) => row.names[0])).toEqual(
     Object.keys(VALUED),
@@ -334,7 +380,7 @@ test("AC-10: the table's rows are well formed, and each name has an acting line"
       expect([name, ACTING.some(([line]) => words(line)[0] === name)]).toEqual([name, true]);
     }
   }
-  expect(m.ACTING_TOOLS).toHaveLength(34);
+  expect(m.ACTING_TOOLS).toHaveLength(62);
 });
 
 test("AC-14: a verb that cannot be read, at a position the row reads", () => {
@@ -394,7 +440,7 @@ const powershell = (ctx: HookContext, command: string, permission_mode = "defaul
 const HIDDEN = "terraform apply; iex $cmd";
 
 const ASK_TERRAFORM =
-  "Crew: terraform apply is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, or send requests to a running application, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.";
+  "Crew: terraform apply is a person's decision in this project (policy actingCommands): it can deploy, apply, destroy or publish outside this machine, send requests to a running application, or restore, load or change a database's data, and the guard cannot tell an act from a read for it, nor production from a preview or from this machine's own environment. A yes here is that decision, for the whole line. Where nobody answers, stop, and do not run it in another form.";
 
 test("AC-19: the key is off by default, loads as off for any other word, and is the person's to set", async () => {
   expect(keyOf(DEFAULT_POLICY)).toBe("off");
@@ -573,12 +619,16 @@ function opened(kind: "mail" | "journey", on: boolean) {
   return { root, ctx, ending };
 }
 
-test("AC-20: an opened session is denied every acting line of the table, whatever the key, and no reading line", () => {
+test("AC-20: an opened session is denied every acting line of the table, a data row's only where the key is on, and no reading line", () => {
   for (const kind of ["mail", "journey"] as const)
     for (const on of [false, true]) {
       const { ctx, ending } = opened(kind, on);
       for (const [line, text] of ACTING) {
         const answer = bash(ctx, line, "dontAsk");
+        if (!on && DATA_ACTING.some(([data]) => data === line)) {
+          expect([kind, on, line, answer]).toEqual([kind, on, line, {}]);
+          continue;
+        }
         expect([kind, on, line, decision(answer)]).toEqual([kind, on, line, "deny"]);
         const said = reason(answer) ?? "";
         expect(said).toContain("never merges, pushes to another branch, releases or deploys: ");
@@ -627,7 +677,7 @@ test("AC-16: a command of 20,000 option words before its verb is read in under a
 });
 
 const RULE_2 =
-  "; where a project's policy sets `actingCommands` to `ask`, the hook asks the person before a command that deploys, applies, destroys or publishes, or sends requests to a running application, and denies it where nobody is present, a reminder and not a boundary (ADR 0026)";
+  "; where a project's policy sets `actingCommands` to `ask`, the hook asks the person before a command that deploys, applies, destroys or publishes, sends requests to a running application, or restores, loads or changes a database's data, and denies it where nobody is present, a reminder and not a boundary (ADR 0026)";
 const LIMITS = [
   "reminder",
   "yarn <bin>",
@@ -659,6 +709,7 @@ test("AC-21: the ADR says the rule and its twelve limits, and rule 2 names the k
     "## What the rule does not hold",
     "## Consequences",
     "## Amendment of 2026-11-26 (item 2026-11-26-006)",
+    "## Amendment of 2026-11-27 (item 2026-11-27-002)",
   ]);
   const section = (heading: string) => (adr.split(`${heading}\n`)[1] ?? "").split("\n## ")[0] ?? "";
   expect(section("## Decision")).toContain("not read on a page");
