@@ -85,6 +85,8 @@ test(`${ITEM} AC-8: the tools that restore a database or measure against it act,
 
 test(`${ITEM} AC-9: the pipeline tools' runs act, and their reads pass`, () => {
   const acting: [string, string][] = [
+    ["uvx dbt run", "dbt run"],
+    ["python -m dbt run", "dbt run"],
     ["dbt run", "dbt run"],
     ["dbt build --select orders", "dbt build"],
     ["dbt seed", "dbt seed"],
@@ -190,14 +192,14 @@ test(`${ITEM} AC-9: the pipeline tools' runs act, and their reads pass`, () => {
     "prefect deploy",
     "prefect flow-run cancel x",
     "prefect server database stamp x",
-    "uvx dbt run",
-    "python -m dbt run",
   ])
     expect([line, actingOf(words(line))]).toEqual([line, null]);
 });
 
 test(`${ITEM} AC-10: the migration tools' applying verbs act, and their reads pass`, () => {
   const acting: [string, string][] = [
+    ["php artisan migrate", "artisan migrate"],
+    ["python manage.py migrate", "manage.py migrate"],
     ["alembic upgrade head", "alembic upgrade"],
     ["alembic downgrade -1", "alembic downgrade"],
     ["alembic stamp head", "alembic stamp"],
@@ -286,8 +288,6 @@ test(`${ITEM} AC-10: the migration tools' applying verbs act, and their reads pa
     "pgroll status",
     "squawk check m.sql",
     "sqlfluff lint x.sql",
-    "php artisan migrate",
-    "python manage.py migrate",
     'psql -c "delete from t"',
   ])
     expect([line, actingOf(words(line))]).toEqual([line, null]);
@@ -421,6 +421,7 @@ test(`${ITEM} AC-13: ADR 0026 ends with this item's amendment`, () => {
     "## Consequences",
     "## Amendment of 2026-11-26 (item 2026-11-26-006)",
     heading,
+    "## Amendment of 2026-11-27 (item 2026-11-27-003)",
   ]);
   const part = adr.slice(adr.indexOf(heading));
   for (const said of [

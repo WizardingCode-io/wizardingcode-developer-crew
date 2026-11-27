@@ -28,6 +28,8 @@ test(`${ITEM} AC-7: the tools that send requests to a running application act, a
     ["st run api.yaml --url https://a.test", "st run"],
     ["st fuzz x", "st fuzz"],
     ["st replay", "st replay"],
+    ["python sqlmap.py -u x", "sqlmap.py"],
+    ["uvx schemathesis run x", "schemathesis run"],
     ["schemathesis --config-file c.toml run x", "schemathesis run"],
     ["testssl.sh https://a.test", "testssl.sh"],
     ["testssl --file hosts.txt", "testssl"],
@@ -61,8 +63,6 @@ test(`${ITEM} AC-7: the tools that send requests to a running application act, a
     "promptfoo eval",
     "promptfoo eval -c redteam.yaml",
     "promptfoo validate target",
-    "python sqlmap.py -u x",
-    "uvx schemathesis run x",
   ])
     expect([line, actingOf(words(line))]).toEqual([line, null]);
 });
@@ -203,7 +203,7 @@ test(`${ITEM} AC-14: ADR 0026 ends with this item's amendment`, () => {
     "utf8",
   );
   const heading = "## Amendment of 2026-11-26 (item 2026-11-26-006)";
-  expect(adr.match(/^## .*$/gm)?.at(-2)).toBe(heading);
+  expect(adr.match(/^## .*$/gm)?.at(-3)).toBe(heading);
   const part = adr.slice(adr.indexOf(heading));
   for (const said of [
     "`zap-baseline.py`",

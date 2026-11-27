@@ -20340,7 +20340,15 @@ var ACTING_TOOLS = [
     names: ["pgroll"],
     valued: ["--postgres-url"],
     acts: verbs("init", "start", "complete", "rollback", "baseline")
-  }, { names: ["pg_repack"], valued: [], whole: true })
+  }, { names: ["pg_repack"], valued: [], whole: true }, {
+    names: ["artisan"],
+    valued: [],
+    acts: verbs("migrate", "migrate:fresh", "migrate:refresh", "migrate:reset", "migrate:rollback", "migrate:install", "db:seed", "db:wipe")
+  }, {
+    names: ["manage.py", "django-admin", "django"],
+    valued: [],
+    acts: verbs("migrate", "flush", "loaddata", "createcachetable", "createsuperuser", "changepassword", "clearsessions", "remove_stale_contenttypes")
+  })
 ];
 var TOOL_BY_NAME = new Map(ACTING_TOOLS.flatMap((row) => row.names.map((name) => [name, row])));
 var ONE_WORD_RUNNERS = ["npx", "bunx", "pnpx"];
@@ -20406,6 +20414,229 @@ function imageRun(row, words) {
   }
   return;
 }
+var INTERPRETERS2 = [
+  {
+    names: /^php(?:\d+(?:\.\d+)?)?$/,
+    valued: ["-c", "--php-ini", "-d", "--define", "-t", "--docroot"],
+    none: [
+      "-r",
+      "--run",
+      "-B",
+      "--process-begin",
+      "-R",
+      "--process-code",
+      "-F",
+      "--process-file",
+      "-E",
+      "--process-end",
+      "-S",
+      "--server",
+      "-a",
+      "--interactive",
+      "--rf",
+      "--rfunction",
+      "--rc",
+      "--rclass",
+      "--re",
+      "--rextension",
+      "--rz",
+      "--rzendextension",
+      "--ri",
+      "--rextinfo",
+      "--"
+    ]
+  },
+  {
+    names: /^(?:python(?:\d+(?:\.\d+)?)?|py)$/,
+    valued: ["-W", "-X", "--check-hash-based-pycs"],
+    none: ["-c", "-"],
+    module: "-m"
+  }
+];
+var UV_VALUED = [
+  "--allow-insecure-host",
+  "--trusted-host",
+  "--cache-dir",
+  "--color",
+  "--config-file",
+  "--config-setting",
+  "--config-settings",
+  "-C",
+  "--config-settings-package",
+  "--default-index",
+  "--directory",
+  "--env-file",
+  "--exclude-newer",
+  "--exclude-newer-package",
+  "--extra",
+  "--extra-index-url",
+  "--find-links",
+  "-f",
+  "--fork-strategy",
+  "--group",
+  "--index",
+  "--index-strategy",
+  "--index-url",
+  "-i",
+  "--keyring-provider",
+  "--link-mode",
+  "--no-binary-package",
+  "--no-build-isolation-package",
+  "--no-build-package",
+  "--no-editable-package",
+  "--no-extra",
+  "--no-group",
+  "--no-sources-package",
+  "--only-group",
+  "--package",
+  "--prerelease",
+  "--prerelease-package",
+  "--project",
+  "--python",
+  "-p",
+  "--python-platform",
+  "--refresh-package",
+  "--reinstall-package",
+  "--resolution",
+  "--upgrade-group",
+  "--upgrade-package",
+  "-P",
+  "--with",
+  "-w",
+  "--with-editable",
+  "--with-requirements",
+  "--build-constraints",
+  "--build-constraint",
+  "-b",
+  "--constraints",
+  "--constraint",
+  "-c",
+  "--from",
+  "--overrides",
+  "--override",
+  "--torch-backend"
+];
+var RUN = [["run"]];
+var RUNNERS2 = {
+  uv: {
+    valued: UV_VALUED,
+    runs: [["run"], ["tool", "run"]],
+    versioned: true
+  },
+  uvx: { valued: UV_VALUED, runs: [[]], versioned: true },
+  poetry: { valued: ["-C", "--directory", "-P", "--project"], runs: RUN },
+  pipenv: { valued: ["--python", "--pypi-mirror"], runs: RUN },
+  pdm: {
+    valued: [
+      "-c",
+      "--config",
+      "--pep582",
+      "--venv",
+      "--env",
+      "--env-file",
+      "--working-dir",
+      "-p",
+      "--project",
+      "-k",
+      "--skip"
+    ],
+    runs: RUN
+  },
+  hatch: {
+    valued: ["-e", "--env", "-p", "--project", "--data-dir", "--cache-dir", "--config"],
+    runs: RUN,
+    environments: true
+  },
+  pipx: {
+    valued: [
+      "--python-args",
+      "--with",
+      "--spec",
+      "--python",
+      "--fetch-python",
+      "--index-url",
+      "-i",
+      "--pip-args",
+      "--cooldown",
+      "--backend"
+    ],
+    runs: RUN,
+    versioned: true
+  }
+};
+var SAIL = new Map([
+  ["artisan", "artisan"],
+  ["debug", "artisan"],
+  ["php", "php"]
+]);
+var MAX_THROUGH = 4;
+function throughInterpreter(lang, words) {
+  for (let i = 1;i < words.length; i++) {
+    const word = words[i] ?? "";
+    const next = words.slice(i + 1);
+    if (lang.none.includes(word))
+      return null;
+    if (lang.module !== undefined && word.startsWith(lang.module)) {
+      const attached = word.slice(lang.module.length);
+      if (attached)
+        return { words: [attached, ...next] };
+      return next.length ? { words: next } : null;
+    }
+    if (lang.valued.includes(word))
+      i++;
+    else if (!word.startsWith("-"))
+      return { words: [word, ...next] };
+  }
+  return null;
+}
+function throughPythonRunner(name, runner, words, viaXargs) {
+  const pastOptions = (from, plus) => {
+    let i = from;
+    for (;i < words.length; i++) {
+      const word = words[i] ?? "";
+      if (!word.startsWith("-") && !(plus && word.startsWith("+")))
+        return i;
+      if (runner.valued.includes(word))
+        i++;
+    }
+    return i;
+  };
+  const start = pastOptions(1, false);
+  for (const run of runner.runs) {
+    let at = start;
+    let matched = true;
+    for (const [n, part] of run.entries()) {
+      if (words[at] !== part) {
+        matched = false;
+        break;
+      }
+      at = pastOptions(at + 1, runner.environments === true && n === run.length - 1);
+    }
+    if (!matched)
+      continue;
+    const said = [name, ...run].join(" ");
+    if (at >= words.length)
+      return viaXargs ? { cannot: `${said} with a command the guard cannot read` } : null;
+    let command = words[at] ?? "";
+    if (runner.environments)
+      command = command.slice(command.indexOf(":") + 1);
+    if (runner.versioned)
+      command = packageOf(command);
+    return { words: [command, ...words.slice(at + 1)] };
+  }
+  return;
+}
+function through(program, words, viaXargs) {
+  const lang = INTERPRETERS2.find((entry) => entry.names.test(program));
+  if (lang)
+    return throughInterpreter(lang, words);
+  if (program === "sail") {
+    const handed = SAIL.get(words[1] ?? "");
+    return handed === undefined ? undefined : { words: [handed, ...words.slice(2)] };
+  }
+  const runner = Object.hasOwn(RUNNERS2, program) ? RUNNERS2[program] : undefined;
+  return runner ? throughPythonRunner(program, runner, words, viaXargs) : undefined;
+}
 function readRow(program, row, words, viaXargs) {
   const read = positionals(words, row.valued).map((p) => p.word);
   const cannot = `${program} with a verb the guard cannot read`;
@@ -20468,26 +20699,37 @@ function readRow(program, row, words, viaXargs) {
 function actingOf(words, viaXargs = false) {
   return readCommand2(words, viaXargs)?.text ?? null;
 }
-function readCommand2(words, viaXargs) {
+function readCommand2(words, viaXargs, gone = { count: 0, first: "" }) {
   const [first] = words;
   if (first === undefined)
     return null;
   let program = programOf(first);
+  const left = through(program, words, viaXargs);
+  if (left !== undefined) {
+    if (left === null)
+      return null;
+    if ("cannot" in left)
+      return { text: left.cannot, data: false };
+    const outer = gone.first || program;
+    if (gone.count === MAX_THROUGH)
+      return { text: `${outer} with a command the guard cannot read`, data: false };
+    return readCommand2(left.words, viaXargs, { count: gone.count + 1, first: outer });
+  }
   let rest = words;
-  let through;
+  let run;
   if (ONE_WORD_RUNNERS.includes(program))
-    through = throughRunner(words, 1, program, viaXargs);
+    run = throughRunner(words, 1, program, viaXargs);
   else if (Object.hasOwn(TWO_WORD_RUNNERS, program)) {
     const [second] = positionals(words, TOOL_BY_NAME.get(program)?.valued ?? []);
     if (second && TWO_WORD_RUNNERS[program]?.includes(second.word))
-      through = throughRunner(words, second.index + 1, `${program} ${second.word}`, viaXargs);
+      run = throughRunner(words, second.index + 1, `${program} ${second.word}`, viaXargs);
   }
-  if (through !== undefined) {
-    if (through === null)
+  if (run !== undefined) {
+    if (run === null)
       return null;
-    if ("cannot" in through)
-      return { text: through.cannot, data: false };
-    rest = through.words;
+    if ("cannot" in run)
+      return { text: run.cannot, data: false };
+    rest = run.words;
     program = rest[0] ?? "";
   }
   const row = TOOL_BY_NAME.get(program);

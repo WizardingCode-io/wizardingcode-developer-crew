@@ -63,6 +63,10 @@ const DATA_ACTING: [string, string][] = [
   ["pt-online-schema-change --execute", "pt-online-schema-change --execute"],
   ["pgroll start x", "pgroll start"],
   ["pg_repack x", "pg_repack"],
+  ["artisan migrate", "artisan migrate"],
+  ["manage.py migrate", "manage.py migrate"],
+  ["django-admin migrate", "django-admin migrate"],
+  ["django migrate", "django migrate"],
 ];
 
 /** Every acting form of every row: the command line and the text it gives. */
@@ -380,7 +384,7 @@ test("AC-10: the table's rows are well formed, and each name has an acting line"
       expect([name, ACTING.some(([line]) => words(line)[0] === name)]).toEqual([name, true]);
     }
   }
-  expect(m.ACTING_TOOLS).toHaveLength(62);
+  expect(m.ACTING_TOOLS).toHaveLength(64);
 });
 
 test("AC-14: a verb that cannot be read, at a position the row reads", () => {
@@ -710,6 +714,7 @@ test("AC-21: the ADR says the rule and its twelve limits, and rule 2 names the k
     "## Consequences",
     "## Amendment of 2026-11-26 (item 2026-11-26-006)",
     "## Amendment of 2026-11-27 (item 2026-11-27-002)",
+    "## Amendment of 2026-11-27 (item 2026-11-27-003)",
   ]);
   const section = (heading: string) => (adr.split(`${heading}\n`)[1] ?? "").split("\n## ")[0] ?? "";
   expect(section("## Decision")).toContain("not read on a page");

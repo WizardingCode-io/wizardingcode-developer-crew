@@ -463,6 +463,35 @@ export const ACTING_TOOLS: readonly ActingTool[] = [
       acts: verbs("init", "start", "complete", "rollback", "baseline"),
     },
     { names: ["pg_repack"], valued: [], whole: true },
+    // The frameworks' own migration commands (item 2026-11-27-003, pages read on 2026-11-27).
+    {
+      names: ["artisan"],
+      valued: [],
+      acts: verbs(
+        "migrate",
+        "migrate:fresh",
+        "migrate:refresh",
+        "migrate:reset",
+        "migrate:rollback",
+        "migrate:install",
+        "db:seed",
+        "db:wipe",
+      ),
+    },
+    {
+      names: ["manage.py", "django-admin", "django"],
+      valued: [],
+      acts: verbs(
+        "migrate",
+        "flush",
+        "loaddata",
+        "createcachetable",
+        "createsuperuser",
+        "changepassword",
+        "clearsessions",
+        "remove_stale_contenttypes",
+      ),
+    },
   ),
 ];
 
@@ -556,6 +585,260 @@ function imageRun(row: ActingTool, words: readonly string[]): string | undefined
   return undefined;
 }
 
+/** An interpreter: its names, its options that take the next word, and those with which no script is read. */
+interface Interpreter {
+  names: RegExp;
+  valued: string[];
+  none: string[];
+  /** The option a module's name follows, in the next word or in the same one. */
+  module?: string;
+}
+
+const INTERPRETERS: readonly Interpreter[] = [
+  {
+    names: /^php(?:\d+(?:\.\d+)?)?$/,
+    valued: ["-c", "--php-ini", "-d", "--define", "-t", "--docroot"],
+    none: [
+      "-r",
+      "--run",
+      "-B",
+      "--process-begin",
+      "-R",
+      "--process-code",
+      "-F",
+      "--process-file",
+      "-E",
+      "--process-end",
+      "-S",
+      "--server",
+      "-a",
+      "--interactive",
+      "--rf",
+      "--rfunction",
+      "--rc",
+      "--rclass",
+      "--re",
+      "--rextension",
+      "--rz",
+      "--rzendextension",
+      "--ri",
+      "--rextinfo",
+      "--",
+    ],
+  },
+  {
+    names: /^(?:python(?:\d+(?:\.\d+)?)?|py)$/,
+    valued: ["-W", "-X", "--check-hash-based-pycs"],
+    none: ["-c", "-"],
+    module: "-m",
+  },
+];
+
+/** A Python runner: its options that take the next word, and the words that make a use a run, each way a list. */
+interface Runner {
+  valued: string[];
+  runs: string[][];
+  /** Whether the command word may carry a version (`alembic@1.20`). */
+  versioned?: true;
+  /** Whether words that start with `+` stand before the command, and an environment's name with a colon before its first word. */
+  environments?: true;
+}
+
+// uv's page prints these with a value, under `uv run` or under `uv tool run`: one list for both and for `uvx`.
+const UV_VALUED = [
+  "--allow-insecure-host",
+  "--trusted-host",
+  "--cache-dir",
+  "--color",
+  "--config-file",
+  "--config-setting",
+  "--config-settings",
+  "-C",
+  "--config-settings-package",
+  "--default-index",
+  "--directory",
+  "--env-file",
+  "--exclude-newer",
+  "--exclude-newer-package",
+  "--extra",
+  "--extra-index-url",
+  "--find-links",
+  "-f",
+  "--fork-strategy",
+  "--group",
+  "--index",
+  "--index-strategy",
+  "--index-url",
+  "-i",
+  "--keyring-provider",
+  "--link-mode",
+  "--no-binary-package",
+  "--no-build-isolation-package",
+  "--no-build-package",
+  "--no-editable-package",
+  "--no-extra",
+  "--no-group",
+  "--no-sources-package",
+  "--only-group",
+  "--package",
+  "--prerelease",
+  "--prerelease-package",
+  "--project",
+  "--python",
+  "-p",
+  "--python-platform",
+  "--refresh-package",
+  "--reinstall-package",
+  "--resolution",
+  "--upgrade-group",
+  "--upgrade-package",
+  "-P",
+  "--with",
+  "-w",
+  "--with-editable",
+  "--with-requirements",
+  "--build-constraints",
+  "--build-constraint",
+  "-b",
+  "--constraints",
+  "--constraint",
+  "-c",
+  "--from",
+  "--overrides",
+  "--override",
+  "--torch-backend",
+];
+const RUN = [["run"]];
+const RUNNERS: Record<string, Runner> = {
+  uv: {
+    valued: UV_VALUED,
+    runs: [["run"], ["tool", "run"]],
+    versioned: true,
+  },
+  uvx: { valued: UV_VALUED, runs: [[]], versioned: true },
+  poetry: { valued: ["-C", "--directory", "-P", "--project"], runs: RUN },
+  pipenv: { valued: ["--python", "--pypi-mirror"], runs: RUN },
+  pdm: {
+    valued: [
+      "-c",
+      "--config",
+      "--pep582",
+      "--venv",
+      "--env",
+      "--env-file",
+      "--working-dir",
+      "-p",
+      "--project",
+      "-k",
+      "--skip",
+    ],
+    runs: RUN,
+  },
+  hatch: {
+    valued: ["-e", "--env", "-p", "--project", "--data-dir", "--cache-dir", "--config"],
+    runs: RUN,
+    environments: true,
+  },
+  pipx: {
+    valued: [
+      "--python-args",
+      "--with",
+      "--spec",
+      "--python",
+      "--fetch-python",
+      "--index-url",
+      "-i",
+      "--pip-args",
+      "--cooldown",
+      "--backend",
+    ],
+    runs: RUN,
+    versioned: true,
+  },
+};
+/** What Sail hands on: its second word, and the program the words after it are read as. */
+const SAIL = new Map([
+  ["artisan", "artisan"],
+  ["debug", "artisan"],
+  ["php", "php"],
+]);
+/** How many interpreters and runners a command is read through at most. */
+const MAX_THROUGH = 4;
+
+type Left = { words: readonly string[] } | { cannot: string } | null;
+
+/** What an interpreter runs: its script, or its module, with the words after it; null where it is given none the guard reads. */
+function throughInterpreter(lang: Interpreter, words: readonly string[]): Left {
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i] ?? "";
+    const next = words.slice(i + 1);
+    if (lang.none.includes(word)) return null;
+    if (lang.module !== undefined && word.startsWith(lang.module)) {
+      const attached = word.slice(lang.module.length);
+      if (attached) return { words: [attached, ...next] };
+      return next.length ? { words: next } : null;
+    }
+    if (lang.valued.includes(word)) i++;
+    else if (!word.startsWith("-")) return { words: [word, ...next] };
+  }
+  return null;
+}
+
+/**
+ * What a Python runner runs: the words from its command on, or that its command cannot be read,
+ * or null where it is given none; undefined where the use is no run and the runner's own row reads it.
+ */
+function throughPythonRunner(
+  name: string,
+  runner: Runner,
+  words: readonly string[],
+  viaXargs: boolean,
+): Left | undefined {
+  // The index of the first word that is no option of the runner, from `from` on.
+  const pastOptions = (from: number, plus: boolean): number => {
+    let i = from;
+    for (; i < words.length; i++) {
+      const word = words[i] ?? "";
+      if (!word.startsWith("-") && !(plus && word.startsWith("+"))) return i;
+      if (runner.valued.includes(word)) i++;
+    }
+    return i;
+  };
+  const start = pastOptions(1, false);
+  for (const run of runner.runs) {
+    let at = start;
+    let matched = true;
+    for (const [n, part] of run.entries()) {
+      if (words[at] !== part) {
+        matched = false;
+        break;
+      }
+      at = pastOptions(at + 1, runner.environments === true && n === run.length - 1);
+    }
+    if (!matched) continue;
+    const said = [name, ...run].join(" ");
+    if (at >= words.length)
+      return viaXargs ? { cannot: `${said} with a command the guard cannot read` } : null;
+    let command = words[at] ?? "";
+    if (runner.environments) command = command.slice(command.indexOf(":") + 1);
+    if (runner.versioned) command = packageOf(command);
+    return { words: [command, ...words.slice(at + 1)] };
+  }
+  return undefined;
+}
+
+/** What a command is read through to, where its program is an interpreter, Sail or a Python runner; undefined where it is none of them. */
+function through(program: string, words: readonly string[], viaXargs: boolean): Left | undefined {
+  const lang = INTERPRETERS.find((entry) => entry.names.test(program));
+  if (lang) return throughInterpreter(lang, words);
+  if (program === "sail") {
+    const handed = SAIL.get(words[1] ?? "");
+    return handed === undefined ? undefined : { words: [handed, ...words.slice(2)] };
+  }
+  const runner = Object.hasOwn(RUNNERS, program) ? RUNNERS[program] : undefined;
+  return runner ? throughPythonRunner(program, runner, words, viaXargs) : undefined;
+}
+
 /** One row read against a command's positional words. */
 function readRow(
   program: string,
@@ -621,7 +904,8 @@ function readRow(
 /**
  * What acts in one simple command, as a short text of the table's own words (`kubectl apply`,
  * `vercel`, `wrangler deploy`), or null. The words are a command's as the hook's walk gives them,
- * its lead gone. A runner is read through once to the tool it runs. A verb that is an expansion or
+ * its lead gone. A command is read through an interpreter or a runner, four at most, to the command
+ * it runs; a JavaScript runner is read through once, and last. A verb that is an expansion or
  * a pattern at a position the row reads, and words that would come through xargs there, give
  * `<program> with a verb the guard cannot read`. Each word is read once.
  */
@@ -629,26 +913,39 @@ export function actingOf(words: readonly string[], viaXargs = false): string | n
   return readCommand(words, viaXargs)?.text ?? null;
 }
 
-/** What acts in one simple command, with whether its row is a tool of a database's data. */
+/**
+ * What acts in one simple command, with whether its row is a tool of a database's data. `gone` is
+ * how many interpreters and runners were read through to reach these words, and the first of them.
+ */
 function readCommand(
   words: readonly string[],
   viaXargs: boolean,
+  gone: { count: number; first: string } = { count: 0, first: "" },
 ): { text: string; data: boolean } | null {
   const [first] = words;
   if (first === undefined) return null;
   let program = programOf(first);
+  const left = through(program, words, viaXargs);
+  if (left !== undefined) {
+    if (left === null) return null;
+    if ("cannot" in left) return { text: left.cannot, data: false };
+    const outer = gone.first || program;
+    if (gone.count === MAX_THROUGH)
+      return { text: `${outer} with a command the guard cannot read`, data: false };
+    return readCommand(left.words, viaXargs, { count: gone.count + 1, first: outer });
+  }
   let rest: readonly string[] = words;
-  let through: ReturnType<typeof throughRunner> | undefined;
-  if (ONE_WORD_RUNNERS.includes(program)) through = throughRunner(words, 1, program, viaXargs);
+  let run: ReturnType<typeof throughRunner> | undefined;
+  if (ONE_WORD_RUNNERS.includes(program)) run = throughRunner(words, 1, program, viaXargs);
   else if (Object.hasOwn(TWO_WORD_RUNNERS, program)) {
     const [second] = positionals(words, TOOL_BY_NAME.get(program)?.valued ?? []);
     if (second && TWO_WORD_RUNNERS[program]?.includes(second.word))
-      through = throughRunner(words, second.index + 1, `${program} ${second.word}`, viaXargs);
+      run = throughRunner(words, second.index + 1, `${program} ${second.word}`, viaXargs);
   }
-  if (through !== undefined) {
-    if (through === null) return null;
-    if ("cannot" in through) return { text: through.cannot, data: false };
-    rest = through.words;
+  if (run !== undefined) {
+    if (run === null) return null;
+    if ("cannot" in run) return { text: run.cannot, data: false };
+    rest = run.words;
     program = rest[0] ?? "";
   }
   const row = TOOL_BY_NAME.get(program);
