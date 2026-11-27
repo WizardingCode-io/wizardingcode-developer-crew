@@ -93,7 +93,7 @@ const NO_RULE =
 const NO_RULE_OF_THE_FIVE =
   "No rule of the five comes from a page: the research for the definition read each page's title and not the page.";
 const NO_RULE_ON =
-  "The crew's files hold no rule on properties, fuzzing, flakiness or the suite in CI: the table has none.";
+  "Beyond the test-quality rubric's questions 10, 13 and 14, the crew's files hold no rule on properties, fuzzing, flakiness or the suite in CI: the table has none.";
 
 const SUBJECTS = declared(repoFile(DECLARATION));
 const cellOf = (subject: string) => {

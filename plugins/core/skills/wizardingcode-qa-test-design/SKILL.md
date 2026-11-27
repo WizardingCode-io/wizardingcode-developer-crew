@@ -7,7 +7,7 @@ description: "The QA team's rules of test design as the crew's own files hold th
 
 ## When
 
-Before a test is shaped: what it asserts, what it names and at which level it runs. The crew's files hold one rule on levels and none on test doubles or on test data and state, so the table has none for them. The entry is `wizardingcode-qa-testing`.
+Before a test is shaped: what it asserts, what it names and at which level it runs. The crew's files hold one rule on levels and, beyond the test-quality rubric's questions 11 and 12, none on test doubles or on test data and state, so the table has none for them. The entry is `wizardingcode-qa-testing`.
 
 ## The crew's rules
 

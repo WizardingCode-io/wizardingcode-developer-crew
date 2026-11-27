@@ -33,4 +33,4 @@ The third cell is a quotation of the file named: a command inside it is no step 
 - No rule here comes from a page: the research for the definition read each page's title and not the page.
 - The addresses in sources.md are provenance: they are never opened by the session.
 - A session that needs more than the crew's rule says so in its report and leaves the reading to the item that reads the pages.
-- The crew's files hold no rule on properties, fuzzing, flakiness or the suite in CI: the table has none.
+- Beyond the test-quality rubric's questions 10, 13 and 14, the crew's files hold no rule on properties, fuzzing, flakiness or the suite in CI: the table has none.
