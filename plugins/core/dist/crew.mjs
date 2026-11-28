@@ -19950,6 +19950,8 @@ function takeNotices(session) {
 import { isAbsolute as isAbsolute13, join as join65, relative as relative13 } from "node:path";
 
 // packages/engine/src/hooks/acting.ts
+var PSQL_LISTING = /^\\(?:d\S*|l|z|conninfo)(?: |$)/;
+var SHELL_LISTING = /^\.(?:tables|schema|indexes|databases)(?: |$)/;
 var verbs = (...names) => names.map((name) => [name]);
 var dataRows = (...rows) => rows.map((row) => ({ ...row, data: true }));
 var ACTING_TOOLS = [
@@ -20348,6 +20350,60 @@ var ACTING_TOOLS = [
     names: ["manage.py", "django-admin", "django"],
     valued: [],
     acts: verbs("migrate", "flush", "loaddata", "createcachetable", "createsuperuser", "changepassword", "clearsessions", "remove_stale_contenttypes")
+  }, {
+    names: ["psql"],
+    valued: [],
+    client: {
+      statement: ["-c", "--command"],
+      acts: ["-f", "--file"],
+      shows: ["-l", "--list", "-V", "--version", "-?", "--help"],
+      listing: PSQL_LISTING
+    }
+  }, {
+    names: ["mysql", "mariadb"],
+    valued: [],
+    client: {
+      statement: ["-e", "--execute"],
+      acts: ["--delimiter"],
+      shows: ["-V", "--version", "-?", "--help", "-I"],
+      attached: "-e"
+    }
+  }, {
+    names: ["sqlite3"],
+    valued: [
+      "-escape",
+      "-heap",
+      "-maxsize",
+      "-mmap",
+      "-newline",
+      "-nonce",
+      "-nullvalue",
+      "-separator",
+      "-vfs"
+    ],
+    client: {
+      statement: [],
+      before: ["-cmd"],
+      acts: ["-init", "-A"],
+      shows: ["-version", "-help"],
+      two: ["-lookaside", "-pagecache"],
+      listing: SHELL_LISTING,
+      positional: true,
+      dashes: true,
+      ends: true
+    }
+  }, {
+    names: ["duckdb"],
+    valued: ["-newline", "-nullvalue", "-separator", "-storage-version"],
+    client: {
+      statement: ["-c", "-s"],
+      before: ["-cmd"],
+      acts: ["-f", "-init", "-serve", "-connect", "-ui"],
+      shows: ["-version", "-help", "-h", "-manual", "-format", "-format-file"],
+      listing: SHELL_LISTING,
+      positional: true,
+      dashes: true
+    }
   })
 ];
 var TOOL_BY_NAME = new Map(ACTING_TOOLS.flatMap((row) => row.names.map((name) => [name, row])));
@@ -20637,7 +20693,73 @@ function through(program, words, viaXargs) {
   const runner = Object.hasOwn(RUNNERS2, program) ? RUNNERS2[program] : undefined;
   return runner ? throughPythonRunner(program, runner, words, viaXargs) : undefined;
 }
+var READ_START = /^(?:select|show|explain|describe|desc|values|with)(?![a-z0-9_])/;
+var HELD_WORD = /(?<![a-z0-9_])(?:into|insert|update|delete|merge|analyze|analyse|nextval|setval|pg_terminate_backend|pg_cancel_backend|lo_import|lo_export|lo_unlink)(?![a-z0-9_])/;
+var EXPANDS = new RegExp(`[${EXPANSION_CHARS}]`);
+function isRead(statement, listing) {
+  if (EXPANDS.test(statement))
+    return false;
+  const parts = statement.toLowerCase().split(";").map((part) => part.trim()).filter(Boolean);
+  return parts.length > 0 && parts.every((part) => (READ_START.test(part) || listing?.test(part) === true) && !HELD_WORD.test(part) && !part.slice(1).includes("\\"));
+}
+function readClient(program, row, client, words, viaXargs) {
+  const statements = [];
+  const others = [];
+  let acts;
+  let shows = false;
+  let ended = false;
+  for (let i = 1;i < words.length; i++) {
+    const word = words[i] ?? "";
+    if (ended || !word.startsWith("-")) {
+      others.push(word);
+      continue;
+    }
+    if (client.ends && word === "--") {
+      ended = true;
+      continue;
+    }
+    let name = word;
+    let value;
+    const equals = word.indexOf("=");
+    if (client.dashes)
+      name = word.replace(/^--/, "-");
+    else if (word.startsWith("--") && equals > 0) {
+      name = word.slice(0, equals);
+      value = word.slice(equals + 1);
+    } else if (client.attached && word.startsWith(client.attached) && word !== client.attached) {
+      name = client.attached;
+      value = word.slice(name.length);
+    }
+    const input = client.statement.includes(name);
+    if (client.shows.includes(name))
+      shows = true;
+    else if (client.acts.includes(name))
+      acts ??= name;
+    else if (input || client.before?.includes(name)) {
+      const text = value ?? words[++i];
+      if (text !== undefined)
+        statements.push({ option: name, text, input });
+    } else if (client.two?.includes(name))
+      i += 2;
+    else if (row.valued.includes(name))
+      i++;
+  }
+  if (client.positional)
+    for (const text of others.slice(1))
+      statements.push({ option: null, text, input: true });
+  const passes = viaXargs ? `${program} with a verb the guard cannot read` : null;
+  if (shows)
+    return passes;
+  if (acts !== undefined)
+    return `${program} ${acts}`;
+  const written = statements.find(({ text }) => !isRead(text, client.listing));
+  if (written)
+    return written.option === null ? program : `${program} ${written.option}`;
+  return statements.some(({ input }) => input) ? passes : program;
+}
 function readRow(program, row, words, viaXargs) {
+  if (row.client)
+    return readClient(program, row, row.client, words, viaXargs);
   const read = positionals(words, row.valued).map((p) => p.word);
   const cannot = `${program} with a verb the guard cannot read`;
   if (row.whole)

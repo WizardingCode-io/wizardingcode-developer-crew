@@ -203,7 +203,7 @@ test(`${ITEM} AC-14: ADR 0026 ends with this item's amendment`, () => {
     "utf8",
   );
   const heading = "## Amendment of 2026-11-26 (item 2026-11-26-006)";
-  expect(adr.match(/^## .*$/gm)?.at(-3)).toBe(heading);
+  expect(adr.match(/^## .*$/gm)?.at(-4)).toBe(heading);
   const part = adr.slice(adr.indexOf(heading));
   for (const said of [
     "`zap-baseline.py`",

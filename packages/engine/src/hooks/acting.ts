@@ -9,7 +9,8 @@ import { EXPANSION_CHARS, PATTERN_CHARS, runnerOptions } from "../shell-words.ts
  * word makes any use with one of the flags act; `images` are the container images whose `run`
  * acts, read in every word after it (item 2026-11-26-006). `data` marks a tool that restores,
  * loads or changes a database's data: a session opened by mail or by a journey is denied it only
- * where the project turned the key on (item 2026-11-27-002).
+ * where the project turned the key on (item 2026-11-27-002). `client` is a database client's row:
+ * its use acts unless every statement the line carries is one the reader knows as a read.
  */
 export interface ActingTool {
   names: string[];
@@ -20,8 +21,34 @@ export interface ActingTool {
   whole?: true;
   flagged?: { path: string[]; flags: string[] }[];
   images?: string[];
+  client?: Client;
   data?: true;
 }
+
+/**
+ * How a database client's line is read. `statement` are the options a statement follows, in the
+ * place of standard input; `before`, those whose statement runs before standard input is read;
+ * `acts`, the options the use acts with; `shows`, those with which the client shows something and
+ * leaves; `two`, the options that take two words; `listing`, the client's own commands that only
+ * list. With `positional` the first word that is no option is the file and each later one a
+ * statement; with `dashes` one dash and two are the same; with `ends` a `--` ends the options;
+ * `attached` is a statement option whose value may stand in its own word.
+ */
+interface Client {
+  statement: string[];
+  before?: string[];
+  acts: string[];
+  shows: string[];
+  two?: string[];
+  listing?: RegExp;
+  positional?: true;
+  dashes?: true;
+  ends?: true;
+  attached?: string;
+}
+
+const PSQL_LISTING = /^\\(?:d\S*|l|z|conninfo)(?: |$)/;
+const SHELL_LISTING = /^\.(?:tables|schema|indexes|databases)(?: |$)/;
 
 /** Paths of one word each. */
 const verbs = (...names: string[]): string[][] => names.map((name) => [name]);
@@ -492,6 +519,65 @@ export const ACTING_TOOLS: readonly ActingTool[] = [
         "remove_stale_contenttypes",
       ),
     },
+    // The database clients (item 2026-11-27-004, pages read on 2026-11-27).
+    {
+      names: ["psql"],
+      valued: [],
+      client: {
+        statement: ["-c", "--command"],
+        acts: ["-f", "--file"],
+        shows: ["-l", "--list", "-V", "--version", "-?", "--help"],
+        listing: PSQL_LISTING,
+      },
+    },
+    {
+      names: ["mysql", "mariadb"],
+      valued: [],
+      client: {
+        statement: ["-e", "--execute"],
+        acts: ["--delimiter"],
+        shows: ["-V", "--version", "-?", "--help", "-I"],
+        attached: "-e",
+      },
+    },
+    {
+      names: ["sqlite3"],
+      valued: [
+        "-escape",
+        "-heap",
+        "-maxsize",
+        "-mmap",
+        "-newline",
+        "-nonce",
+        "-nullvalue",
+        "-separator",
+        "-vfs",
+      ],
+      client: {
+        statement: [],
+        before: ["-cmd"],
+        acts: ["-init", "-A"],
+        shows: ["-version", "-help"],
+        two: ["-lookaside", "-pagecache"],
+        listing: SHELL_LISTING,
+        positional: true,
+        dashes: true,
+        ends: true,
+      },
+    },
+    {
+      names: ["duckdb"],
+      valued: ["-newline", "-nullvalue", "-separator", "-storage-version"],
+      client: {
+        statement: ["-c", "-s"],
+        before: ["-cmd"],
+        acts: ["-f", "-init", "-serve", "-connect", "-ui"],
+        shows: ["-version", "-help", "-h", "-manual", "-format", "-format-file"],
+        listing: SHELL_LISTING,
+        positional: true,
+        dashes: true,
+      },
+    },
   ),
 ];
 
@@ -839,6 +925,85 @@ function through(program: string, words: readonly string[], viaXargs: boolean): 
   return runner ? throughPythonRunner(program, runner, words, viaXargs) : undefined;
 }
 
+// A whole word is a run of letters, digits and `_` with none of them on either side.
+const READ_START = /^(?:select|show|explain|describe|desc|values|with)(?![a-z0-9_])/;
+const HELD_WORD =
+  /(?<![a-z0-9_])(?:into|insert|update|delete|merge|analyze|analyse|nextval|setval|pg_terminate_backend|pg_cancel_backend|lo_import|lo_export|lo_unlink)(?![a-z0-9_])/;
+const EXPANDS = new RegExp(`[${EXPANSION_CHARS}]`);
+
+/** Whether a statement's word is one the reader knows as a read: every part of it, cut at each `;`. */
+function isRead(statement: string, listing: RegExp | undefined): boolean {
+  if (EXPANDS.test(statement)) return false;
+  const parts = statement
+    .toLowerCase()
+    .split(";")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return (
+    parts.length > 0 &&
+    parts.every(
+      (part) =>
+        (READ_START.test(part) || listing?.test(part) === true) &&
+        !HELD_WORD.test(part) &&
+        !part.slice(1).includes("\\"),
+    )
+  );
+}
+
+/** A database client's row read against a line: what acts, or null where the line shows a read. */
+function readClient(
+  program: string,
+  row: ActingTool,
+  client: Client,
+  words: readonly string[],
+  viaXargs: boolean,
+): string | null {
+  const statements: { option: string | null; text: string; input: boolean }[] = [];
+  const others: string[] = [];
+  let acts: string | undefined;
+  let shows = false;
+  let ended = false;
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i] ?? "";
+    if (ended || !word.startsWith("-")) {
+      others.push(word);
+      continue;
+    }
+    if (client.ends && word === "--") {
+      ended = true;
+      continue;
+    }
+    let name = word;
+    let value: string | undefined;
+    const equals = word.indexOf("=");
+    if (client.dashes) name = word.replace(/^--/, "-");
+    else if (word.startsWith("--") && equals > 0) {
+      name = word.slice(0, equals);
+      value = word.slice(equals + 1);
+    } else if (client.attached && word.startsWith(client.attached) && word !== client.attached) {
+      name = client.attached;
+      value = word.slice(name.length);
+    }
+    const input = client.statement.includes(name);
+    if (client.shows.includes(name)) shows = true;
+    else if (client.acts.includes(name)) acts ??= name;
+    else if (input || client.before?.includes(name)) {
+      const text = value ?? words[++i];
+      if (text !== undefined) statements.push({ option: name, text, input });
+    } else if (client.two?.includes(name)) i += 2;
+    else if (row.valued.includes(name)) i++;
+  }
+  if (client.positional)
+    for (const text of others.slice(1)) statements.push({ option: null, text, input: true });
+  const passes = viaXargs ? `${program} with a verb the guard cannot read` : null;
+  if (shows) return passes;
+  if (acts !== undefined) return `${program} ${acts}`;
+  const written = statements.find(({ text }) => !isRead(text, client.listing));
+  if (written) return written.option === null ? program : `${program} ${written.option}`;
+  // With no statement in the place of standard input, the statements come from outside the line.
+  return statements.some(({ input }) => input) ? passes : program;
+}
+
 /** One row read against a command's positional words. */
 function readRow(
   program: string,
@@ -846,6 +1011,7 @@ function readRow(
   words: readonly string[],
   viaXargs: boolean,
 ): string | null {
+  if (row.client) return readClient(program, row, row.client, words, viaXargs);
   const read = positionals(words, row.valued).map((p) => p.word);
   const cannot = `${program} with a verb the guard cannot read`;
   if (row.whole) return program;

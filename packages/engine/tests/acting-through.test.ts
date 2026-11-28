@@ -318,7 +318,7 @@ test(`${ITEM} AC-11: ADR 0026 ends with this item's amendment, and the reader's 
     "utf8",
   );
   const heading = "## Amendment of 2026-11-27 (item 2026-11-27-003)";
-  expect(adr.match(/^## .*$/gm)?.at(-1)).toBe(heading);
+  expect(adr.match(/^## .*$/gm)?.at(-2)).toBe(heading);
   const part = adr.slice(adr.indexOf(heading));
   for (const said of [
     // the two rows and what acts in each

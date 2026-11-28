@@ -288,7 +288,6 @@ test(`${ITEM} AC-10: the migration tools' applying verbs act, and their reads pa
     "pgroll status",
     "squawk check m.sql",
     "sqlfluff lint x.sql",
-    'psql -c "delete from t"',
   ])
     expect([line, actingOf(words(line))]).toEqual([line, null]);
 });
@@ -422,6 +421,7 @@ test(`${ITEM} AC-13: ADR 0026 ends with this item's amendment`, () => {
     "## Amendment of 2026-11-26 (item 2026-11-26-006)",
     heading,
     "## Amendment of 2026-11-27 (item 2026-11-27-003)",
+    "## Amendment of 2026-11-27 (item 2026-11-27-004)",
   ]);
   const part = adr.slice(adr.indexOf(heading));
   for (const said of [

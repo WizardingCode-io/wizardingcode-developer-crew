@@ -17,6 +17,7 @@ interface Row {
   reads?: string[];
   whole?: true;
   flagged?: { path: string[]; flags: string[] }[];
+  client?: object;
 }
 const m = actingModule as unknown as {
   ACTING_TOOLS: readonly Row[];
@@ -67,6 +68,11 @@ const DATA_ACTING: [string, string][] = [
   ["manage.py migrate", "manage.py migrate"],
   ["django-admin migrate", "django-admin migrate"],
   ["django migrate", "django migrate"],
+  ["psql -f x", "psql -f"],
+  ["mysql x", "mysql"],
+  ["mariadb x", "mariadb"],
+  ["sqlite3 x", "sqlite3"],
+  ["duckdb -f x", "duckdb -f"],
 ];
 
 /** Every acting form of every row: the command line and the text it gives. */
@@ -305,6 +311,8 @@ test("AC-10: every valued option of every row takes its value with it", () => {
     atlas: "-c --config --env --var",
     sqlx: "--database-url",
     pgroll: "--postgres-url",
+    sqlite3: "-escape -heap -maxsize -mmap -newline -nonce -nullvalue -separator -vfs",
+    duckdb: "-newline -nullvalue -separator -storage-version",
   };
   expect(m.ACTING_TOOLS.filter((row) => row.valued.length).map((row) => row.names[0])).toEqual(
     Object.keys(VALUED),
@@ -375,7 +383,9 @@ test("AC-10: the table's rows are well formed, and each name has an acting line"
   const seen = new Set<string>();
   for (const row of m.ACTING_TOOLS) {
     expect(row.names.length).toBeGreaterThan(0);
-    const forms = [row.acts, row.anyWord, row.reads, row.whole].filter((f) => f !== undefined);
+    const forms = [row.acts, row.anyWord, row.reads, row.whole, row.client].filter(
+      (f) => f !== undefined,
+    );
     expect([row.names[0], forms.length <= 1]).toEqual([row.names[0], true]);
     expect([row.names[0], forms.length + (row.flagged ? 1 : 0) > 0]).toEqual([row.names[0], true]);
     for (const name of row.names) {
@@ -384,7 +394,7 @@ test("AC-10: the table's rows are well formed, and each name has an acting line"
       expect([name, ACTING.some(([line]) => words(line)[0] === name)]).toEqual([name, true]);
     }
   }
-  expect(m.ACTING_TOOLS).toHaveLength(64);
+  expect(m.ACTING_TOOLS).toHaveLength(68);
 });
 
 test("AC-14: a verb that cannot be read, at a position the row reads", () => {
@@ -715,6 +725,7 @@ test("AC-21: the ADR says the rule and its twelve limits, and rule 2 names the k
     "## Amendment of 2026-11-26 (item 2026-11-26-006)",
     "## Amendment of 2026-11-27 (item 2026-11-27-002)",
     "## Amendment of 2026-11-27 (item 2026-11-27-003)",
+    "## Amendment of 2026-11-27 (item 2026-11-27-004)",
   ]);
   const section = (heading: string) => (adr.split(`${heading}\n`)[1] ?? "").split("\n## ")[0] ?? "";
   expect(section("## Decision")).toContain("not read on a page");
