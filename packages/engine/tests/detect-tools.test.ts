@@ -32,8 +32,14 @@ const FASTAPI_STATE = [
   "    uvx library-skills install: downloads and runs the PyPI package `library-skills` first, which the row does not say is its publisher's",
 ];
 const HELD_VALUE = "  install: held, its line takes a value of the machine, a token or a key";
-const HELD_PROMPT =
-  "  install: held, its line is typed at Claude Code's prompt, which a session cannot do";
+/** 2026-11-28-001: a row of two lines typed at the prompt is ready, and prints the lines the session runs. */
+const ASTRAL_READY = [
+  "  install: ready",
+  "    claude plugin marketplace add: its page gives the line as typed at Claude Code's prompt; the session runs the command-line form under `runs`, which declares the marketplace in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+  "    claude plugin install: its page gives the line as typed at Claude Code's prompt, where a panel shows the plugin and asks its scope; the session runs the command-line form under `runs`, which opens no panel and installs the plugin, with any hooks and servers it carries, for this project, in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+  "    runs: claude plugin marketplace add astral-sh/agent-plugins --scope project",
+  "    runs: claude plugin install astral@astral-sh --scope project",
+];
 const HELD_CREDENTIAL = "  install: held, it reaches production data with a credential";
 const HELD_NOT_STABLE = "  install: held, not stable by its own row";
 const HELD_NO_COMMAND = "  install: held, its row gives no command";
@@ -692,7 +698,7 @@ function expectedForLaravel(): string[] {
     ...FASTAPI_STATE,
     FOR_TOOLS,
     rowLine("Astral's plugin"),
-    HELD_PROMPT,
+    ...ASTRAL_READY,
     BY_STACK,
     "  none",
     ERRORS,

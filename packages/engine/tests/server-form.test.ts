@@ -314,8 +314,11 @@ test(`${ITEM} AC-13: ADR 0025 ends with this item's amendment`, () => {
     "utf8",
   );
   const heading = "## Amendment of 2026-11-26 (item 2026-11-26-005)";
-  expect(adr.lastIndexOf("\n## ")).toBe(adr.indexOf(`\n${heading}`));
-  const part = adr.slice(adr.indexOf(heading));
+  // 2026-11-28-001: this amendment runs to the next item's heading and to no other.
+  const [part = "", ...later] = adr.slice(adr.indexOf(heading)).split("\n## ");
+  expect(later.map((next) => next.split("\n")[0])).toEqual([
+    "Amendment of 2026-11-28 (item 2026-11-28-001)",
+  ]);
   for (const words of [
     "`claude mcp add`",
     "`--transport http`",

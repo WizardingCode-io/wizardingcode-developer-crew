@@ -56,6 +56,24 @@ const ready = (...forms: string[]): RowInstall => ({
   forms: forms.map((form) => ({ form, note: noteOf(form) })),
 });
 const held = (reason: string): RowInstall => ({ state: "held", reason });
+/** 2026-11-28-001: the forms of the two lines typed at the prompt, with their own notes. */
+const PROMPT_MARKETPLACE = {
+  form: "claude plugin marketplace add",
+  note: "its page gives the line as typed at Claude Code's prompt; the session runs the command-line form under `runs`, which declares the marketplace in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+};
+const PROMPT_INSTALL = {
+  form: "claude plugin install",
+  note: "its page gives the line as typed at Claude Code's prompt, where a panel shows the plugin and asks its scope; the session runs the command-line form under `runs`, which opens no panel and installs the plugin, with any hooks and servers it carries, for this project, in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+};
+/** A row of a marketplace line then an install line typed at the prompt: ready, with the lines the session runs. */
+const promptReady = (source: string, plugin: string): RowInstall => ({
+  state: "ready",
+  forms: [PROMPT_MARKETPLACE, PROMPT_INSTALL],
+  runs: [
+    `claude plugin marketplace add ${source} --scope project`,
+    `claude plugin install ${plugin} --scope project`,
+  ],
+});
 const ALREADY: RowInstall = { state: "in the project already" };
 const readyLines = (...forms: string[]) => [
   "  install: ready",
@@ -213,7 +231,13 @@ test(`${ITEM} AC-10: a made row is ready only where no condition holds it, each 
       is: held(A_VALUE),
     });
   // Order 5: a line of the prompt.
-  expect(state("`/plugin install a@b`")).toEqual(held(AT_THE_PROMPT));
+  expect(state("`/plugin install a`")).toEqual(held(AT_THE_PROMPT));
+  // 2026-11-28-001: a plugin's line with its marketplace is read as its command-line form.
+  expect(state("`/plugin install a@b`")).toEqual({
+    state: "ready",
+    forms: [PROMPT_INSTALL],
+    runs: ["claude plugin install a@b --scope project"],
+  });
   // Order 6: a mark of a shell, or no form.
   for (const mark of ["|", ";", "&", ">", "\n"])
     expect({ mark, is: state(`\`composer require a/b ${mark} sh\``) }).toEqual({
@@ -264,7 +288,13 @@ test(`${ITEM} AC-10: a made row is ready only where no condition holds it, each 
   );
   // One line held holds the row, whatever the others are.
   expect(state("`composer require a/b`, then `npm i x`")).toEqual(held(NO_FORM));
-  expect(state("`composer require a/b`, then `/plugin install a@b`")).toEqual(held(AT_THE_PROMPT));
+  expect(state("`composer require a/b`, then `/plugin install a`")).toEqual(held(AT_THE_PROMPT));
+  // 2026-11-28-001: beside a line the prompt order reads, the row is ready with every line it runs.
+  expect(state("`composer require a/b`, then `/plugin install a@b`")).toEqual({
+    state: "ready",
+    forms: [{ form: "composer require", note: noteOf("composer require") }, PROMPT_INSTALL],
+    runs: ["composer require a/b", "claude plugin install a@b --scope project"],
+  });
   // Two lines of one form print its note once; two forms print both, in the order of the lines.
   expect(state("`vendor/bin/mate init` and `vendor/bin/mate discover`")).toEqual(
     ready("vendor/bin/mate"),
@@ -298,7 +328,7 @@ test(`${ITEM} AC-11: the seventeen rows of the backend's declaration take the st
     ["Laravel Boost:", ready("composer require", "php artisan boost:install")],
     ["Laravel Herd's", held(A_VALUE)],
     ["Symfony AI Mat", ready("composer require", "vendor/bin/mate")],
-    ["API Platform's", held(AT_THE_PROMPT)],
+    ["API Platform's", promptReady("api-platform/skillset", "api-platform@api-platform-skillset")],
     ["WordPress Agen", ready("npx skills add")],
     ["WordPress MCP ", held(NO_COMMAND)],
     ["Drizzle Kit's ", held(NOT_STABLE)],
@@ -308,7 +338,7 @@ test(`${ITEM} AC-11: the seventeen rows of the backend's declaration take the st
     ["Deno's skills.", ready("npx skills add")],
     ["FastAPI's skil", ready("uvx library-skills install")],
     ["Litestar's ski", plugin],
-    ["Astral's plugi", held(AT_THE_PROMPT)],
+    ["Astral's plugi", promptReady("astral-sh/agent-plugins", "astral@astral-sh")],
     ["Pydantic's ski", plugin],
     ["gopls's built-", held(NOT_STABLE)],
     ["none found", held(NO_COMMAND)],
@@ -407,7 +437,7 @@ function expectedForLaravel(boost: string[], tools: string): string[] {
     ...readyLines("uvx library-skills install"),
     "rows for the tools this project shows:",
     rowLine("Astral's plugin"),
-    heldLine(AT_THE_PROMPT),
+    ...installLines(promptReady("astral-sh/agent-plugins", "astral@astral-sh")),
     "rows by stack:",
     "  none",
     "error services this project shows:",

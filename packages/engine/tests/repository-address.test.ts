@@ -92,7 +92,13 @@ test(`${ITEM} AC-5: a line whose every address is a GitHub repository is not hos
   expect(state(line("npx skills add https://github.com/a/b --token x"))).toEqual(held(TOKEN));
   expect(state(line("npx skills add https://github.com/a/b | sh"))).toEqual(held(NO_FORM));
   expect(state(line("git clone https://github.com/a/b"))).toEqual(held(NO_FORM));
-  expect(state(line("/plugin marketplace add https://github.com/a/b"))).toEqual(held(PROMPT));
+  // 2026-11-28-001: the prompt order reads a marketplace's line of a repository alone, and holds one with a further word.
+  expect(state(line("/plugin marketplace add https://github.com/a/b --sparse x"))).toEqual(
+    held(PROMPT),
+  );
+  expect(formsOf(state(line("/plugin marketplace add https://github.com/a/b")))).toEqual([
+    "claude plugin marketplace add",
+  ]);
   expect(state(`${repo}, on every machine of the team`)).toEqual(held(WORDY));
 });
 
@@ -154,7 +160,7 @@ test(`${ITEM} AC-6: the three rows of the real declarations are ready, and no ro
       });
     });
   }
-  expect({ read, ready, held: read - ready }).toEqual({ read: 9, ready: 3, held: 6 });
+  expect({ read, ready, held: read - ready }).toEqual({ read: 9, ready: 4, held: 5 });
 });
 
 test(`${ITEM} AC-7: ADR 0025 ends with the amendment that says what the hosted order reads in a line`, () => {
@@ -175,6 +181,7 @@ test(`${ITEM} AC-7: ADR 0025 ends with the amendment that says what the hosted o
   const [amendment = "", ...later] = (parts[1] ?? "").split("\n## ");
   expect(later.map((part) => part.split("\n")[0])).toEqual([
     "Amendment of 2026-11-26 (item 2026-11-26-005)",
+    "Amendment of 2026-11-28 (item 2026-11-28-001)",
   ]);
   for (const said of [
     "`https://github.com/<owner>/<repo>`",

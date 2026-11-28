@@ -43,6 +43,22 @@ const NO_SIGN = [
   "https://github.com/cloudflare/security-audit-skill",
   "https://github.com/datacontract/datacontract-skills",
   "https://github.com/currents-dev/playwright-best-practices-skill",
+  // 2026-11-28-001: fifteen rows ready since a plugin line typed at the prompt is read as its command-line form.
+  "https://code.claude.com/docs/en/claude-security",
+  "https://code.claude.com/docs/en/security-guidance",
+  "https://github.com/redis/agent-skills",
+  "https://github.com/neondatabase/agent-skills",
+  "https://github.com/cockroachdb/claude-plugin",
+  "https://github.com/dbt-labs/dbt-agent-skills",
+  "https://github.com/dagster-io/skills",
+  "https://github.com/airbytehq/airbyte-agent-sdk",
+  "https://github.com/meltano/agent-skills",
+  "https://github.com/confluentinc/agent-skills",
+  "https://github.com/microsoft/skills-for-fabric",
+  "https://github.com/databricks/databricks-agent-skills",
+  "https://github.com/testcontainers/claude-skills",
+  "https://github.com/anthropics/claude-plugins-official/tree/main/plugins/feature-dev",
+  "https://github.com/bufbuild/claude-plugins",
 ];
 
 type Signs = { dependencies?: string[]; files?: string[] };
@@ -247,7 +263,7 @@ test(`${ITEM} AC-1: the table holds the ten entries of the Design, and its pages
       line.startsWith("| ") && lines[at + 1] === "  install: ready" ? [cells(line)[2] ?? ""] : [],
     );
   });
-  expect(ready).toHaveLength(15);
+  expect(ready).toHaveLength(30);
   expect(ready.slice().sort()).toEqual([...EXPECTED.map((entry) => entry.page), ...NO_SIGN].sort());
 });
 
@@ -467,6 +483,7 @@ test(`${ITEM} AC-8: the form's not told line, the reference's bullet and the ADR
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
     "Amendment of 2026-11-26 (item 2026-11-26-002)",
     "Amendment of 2026-11-26 (item 2026-11-26-005)",
+    "Amendment of 2026-11-28 (item 2026-11-28-001)",
   ]);
   for (const phrase of [
     "under a ready row",

@@ -26279,6 +26279,23 @@ var SERVER_FORMS = [
     note: "adds a hosted server to the person's Claude Code for every project of theirs, in their `~/.claude.json`"
   }
 ];
+var PROMPT_NAME = "[A-Za-z0-9][A-Za-z0-9._-]*";
+var PROMPT_FORMS = [
+  {
+    shape: new RegExp(`^/plugin marketplace add ((?:https://github\\.com/)?${PROMPT_NAME}/${PROMPT_NAME})$`),
+    form: {
+      form: "claude plugin marketplace add",
+      note: "its page gives the line as typed at Claude Code's prompt; the session runs the command-line form under `runs`, which declares the marketplace in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project"
+    }
+  },
+  {
+    shape: new RegExp(`^/plugin install (${PROMPT_NAME}@${PROMPT_NAME})$`),
+    form: {
+      form: "claude plugin install",
+      note: "its page gives the line as typed at Claude Code's prompt, where a panel shows the plugin and asks its scope; the session runs the command-line form under `runs`, which opens no panel and installs the plugin, with any hooks and servers it carries, for this project, in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project"
+    }
+  }
+];
 var READING_SERVERS = [
   {
     address: "https://developers.openai.com/mcp",
@@ -26347,6 +26364,14 @@ function installSpans(cells) {
 function formOf(line) {
   return INSTALL_FORMS.find(({ form }) => line === form || line.startsWith(`${form} `));
 }
+function promptLine(line) {
+  for (const { shape, form } of PROMPT_FORMS) {
+    const [, taken] = shape.exec(line) ?? [];
+    if (taken !== undefined)
+      return { form, runs: `${form.form} ${taken} --scope project` };
+  }
+  return;
+}
 function wordsBeside(cells) {
   return (cells.at(-1) ?? "").replace(/`[^`]*`/g, " ").split(/[\s,;:.]+/).filter((word) => word !== "" && !JOINING_WORDS.includes(word));
 }
@@ -26370,7 +26395,7 @@ function holdOf(cells, lines, hostedLifted) {
     return HOLD.hosted;
   if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark))))
     return HOLD.value;
-  if (some((line) => line.startsWith("/")))
+  if (some((line) => line.startsWith("/") && promptLine(line) === undefined))
     return HOLD.prompt;
   if (wordsBeside(cells).length > 0)
     return HOLD.wordy;
@@ -26412,7 +26437,7 @@ function serverLine(line) {
 function formsOf(lines) {
   const forms = [];
   for (const line of lines) {
-    const form = formOf(line) ?? serverLine(line)?.form;
+    const form = promptLine(line)?.form ?? formOf(line) ?? serverLine(line)?.form;
     if (form === undefined || SHELL_MARKS.some((mark) => line.includes(mark)))
       return null;
     if (!forms.includes(form))
@@ -26450,14 +26475,20 @@ function rowInstall(cells, shown, hostedLifted = false) {
   const stack = STACK_OF.get(cells[0] ?? "");
   if (stack !== undefined && lines.some((line) => requiresShown(line, stack, shown)))
     return { state: "in the project already" };
-  return { state: "ready", forms };
+  if (!lines.some((line) => promptLine(line) !== undefined))
+    return { state: "ready", forms };
+  return { state: "ready", forms, runs: lines.map((line) => promptLine(line)?.runs ?? line) };
 }
 function installLines(install) {
   if (install.state === "held")
     return [`  install: held, ${install.reason}`];
   if (install.state !== "ready")
     return [`  install: ${install.state}`];
-  return ["  install: ready", ...install.forms.map(({ form, note }) => `    ${form}: ${note}`)];
+  return [
+    "  install: ready",
+    ...install.forms.map(({ form, note }) => `    ${form}: ${note}`),
+    ...(install.runs ?? []).map((line) => `    runs: ${line}`)
+  ];
 }
 var PER_STACK = "### Per stack, from the framework's or the tool's own team";
 var STACK_OF = new Map([

@@ -37,8 +37,14 @@ const FASTAPI_STATE = [
   "    uvx library-skills install: downloads and runs the PyPI package `library-skills` first, which the row does not say is its publisher's",
 ];
 const HELD_VALUE = "  install: held, its line takes a value of the machine, a token or a key";
-const HELD_PROMPT =
-  "  install: held, its line is typed at Claude Code's prompt, which a session cannot do";
+/** 2026-11-28-001: a row of two lines typed at the prompt is ready, and prints the lines the session runs. */
+const API_PLATFORM_READY = [
+  "  install: ready",
+  "    claude plugin marketplace add: its page gives the line as typed at Claude Code's prompt; the session runs the command-line form under `runs`, which declares the marketplace in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+  "    claude plugin install: its page gives the line as typed at Claude Code's prompt, where a panel shows the plugin and asks its scope; the session runs the command-line form under `runs`, which opens no panel and installs the plugin, with any hooks and servers it carries, for this project, in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+  "    runs: claude plugin marketplace add api-platform/skillset --scope project",
+  "    runs: claude plugin install api-platform@api-platform-skillset --scope project",
+];
 const HELD_NO_FORM = "  install: held, its line is not one of the engine's install forms";
 const FOR_TOOLS = "rows for the tools this project shows:";
 const BY_STACK = "rows by stack:";
@@ -255,14 +261,14 @@ test(`${ITEM} AC-11: crew sources backend --project prints the project's stacks 
   expect(merged.out.split("\n")[1]).toBe(
     "this project: node (nestjs, hono); php (laravel, api-platform, slim)",
   );
-  expect(merged.out.split("\n").slice(2, 11)).toEqual([
+  expect(merged.out.split("\n").slice(2, 15)).toEqual([
     FOR_FRAMEWORKS,
     rowLine("Laravel Boost:"),
     ...BOOST_STATE,
     rowLine("Laravel Herd's"),
     HELD_VALUE,
     rowLine("API Platform's skills"),
-    HELD_PROMPT,
+    ...API_PLATFORM_READY,
   ]);
   // From a folder below the root the project is the same.
   const below = await cliIo(join(root, "services", "ml"), testEnv())(
@@ -327,7 +333,7 @@ test(`${ITEM} AC-13: --project takes a team, no value and no section number (202
   // 2026-11-24-001: the QA team's form, where a refusal stood.
   expect(qa.code).toBe(0);
   expect(qa.out.split("\n")[0]).toBe(join(pluginRoot(), "teams", "qa.md"));
-  expect(qa.out).toContain("\nready: 2 rows; held: 25 rows\n");
+  expect(qa.out).toContain("\nready: 3 rows; held: 24 rows\n");
   for (const args of [
     ["sources", "backend", "5", "--project"],
     ["sources", "backend", "--project", "5"],

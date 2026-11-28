@@ -111,14 +111,32 @@ const READY_PAGES: Record<Team, string[]> = {
   security: [
     // 2026-11-26-002: a repository's address in a line is no hosted server.
     "https://github.com/cloudflare/security-audit-skill",
+    // 2026-11-28-001: a plugin line typed at the prompt is read as its command-line form.
+    "https://code.claude.com/docs/en/claude-security",
+    "https://code.claude.com/docs/en/security-guidance",
   ],
   etl: [
     "https://github.com/planetscale/database-skills",
+    // 2026-11-28-001
+    "https://github.com/redis/agent-skills",
     "https://github.com/ClickHouse/agent-skills",
+    // 2026-11-28-001
+    "https://github.com/neondatabase/agent-skills",
+    "https://github.com/cockroachdb/claude-plugin",
     "https://github.com/prisma/skills",
+    // 2026-11-28-001
+    "https://github.com/dbt-labs/dbt-agent-skills",
+    "https://github.com/dagster-io/skills",
+    "https://github.com/airbytehq/airbyte-agent-sdk",
+    "https://github.com/meltano/agent-skills",
+    "https://github.com/confluentinc/agent-skills",
     "https://github.com/datahub-project/datahub-skills",
     "https://github.com/metabase/agent-skills",
+    // 2026-11-28-001
+    "https://github.com/microsoft/skills-for-fabric",
     "https://github.com/looker-open-source/looker-skills",
+    // 2026-11-28-001
+    "https://github.com/databricks/databricks-agent-skills",
     "https://atlasgo.io/guides/ai-tools/agent-skills",
     // 2026-11-26-002: a repository's address in a line is no hosted server.
     "https://github.com/datacontract/datacontract-skills",
@@ -126,10 +144,15 @@ const READY_PAGES: Record<Team, string[]> = {
   researchers: ["https://github.com/WizardingCode-io/wizardingcode-mem"],
   qa: [
     "https://github.com/cypress-io/ai-toolkit",
+    // 2026-11-28-001
+    "https://github.com/testcontainers/claude-skills",
     // 2026-11-26-002: a repository's address in a line is no hosted server.
     "https://github.com/currents-dev/playwright-best-practices-skill",
   ],
   architects: [
+    // 2026-11-28-001
+    "https://github.com/anthropics/claude-plugins-official/tree/main/plugins/feature-dev",
+    "https://github.com/bufbuild/claude-plugins",
     "https://github.com/pactflow/pactflow-agent-skills",
     "https://github.com/apollographql/skills",
     "https://github.com/mattpocock/skills",
@@ -140,11 +163,12 @@ const READY_PAGES: Record<Team, string[]> = {
 };
 const HELD_COUNT: Record<Team, number> = {
   // 2026-11-26-002: one row fewer in security, ETL and QA.
-  security: 28,
-  etl: 63,
+  // 2026-11-28-001: the rows of a plugin line typed at the prompt: two fewer in security, ten in ETL, one in QA, two in architects.
+  security: 26,
+  etl: 53,
   researchers: 24,
-  qa: 25,
-  architects: 46,
+  qa: 24,
+  architects: 44,
   devops: 32,
   "agentic-os": 80,
   frontend: 54,
@@ -313,9 +337,11 @@ test(`${ITEM} AC-12: a row that names beta, preview, pre-release or alpha as a w
   expect(reasonOf(state("`composer require a/b --token x`, in words"))).toBe(
     "its line takes a value of the machine, a token or a key",
   );
-  expect(reasonOf(state("`/plugin install a@b`, in words"))).toBe(
+  expect(reasonOf(state("`/plugin install a`, in words"))).toBe(
     "its line is typed at Claude Code's prompt, which a session cannot do",
   );
+  // 2026-11-28-001: a line the prompt order reads leaves the row to the words beside it.
+  expect(reasonOf(state("`/plugin install a@b`, in words"))).toBe(WORDY);
   // Before the form is asked: a wordy row whose line is no form is wordy.
   expect(reasonOf(state("`gh skills install a/b`"))).toBe(
     "its line is not one of the engine's install forms",
@@ -623,6 +649,7 @@ test(`${ITEM} AC-15: the usage line, the last line, the help's three lines, the 
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
     "Amendment of 2026-11-26 (item 2026-11-26-002)",
     "Amendment of 2026-11-26 (item 2026-11-26-005)",
+    "Amendment of 2026-11-28 (item 2026-11-28-001)",
   ]);
   for (const phrase of [
     "every team",

@@ -196,7 +196,12 @@ export interface InstallForm {
 
 /** Whether a row may be installed by a session, as the engine reads it from the row's own cells (ADR 0025). */
 export type RowInstall =
-  | { state: "ready"; forms: InstallForm[] }
+  | {
+      state: "ready";
+      forms: InstallForm[];
+      /** Where a line of the row is typed at the prompt: every line of the row as the session runs it, in the row's order. */
+      runs?: string[];
+    }
   | { state: "in the project already" }
   | { state: "held"; reason: string };
 
@@ -257,6 +262,33 @@ export const SERVER_FORMS: readonly InstallForm[] = [
   {
     form: "claude mcp add",
     note: "adds a hosted server to the person's Claude Code for every project of theirs, in their `~/.claude.json`",
+  },
+];
+
+/** A name of a plugin, a marketplace, an owner or a repository in a line typed at the prompt: it opens with no hyphen and no dot. */
+const PROMPT_NAME = "[A-Za-z0-9][A-Za-z0-9._-]*";
+
+/**
+ * The two lines typed at Claude Code's prompt that are read as their command-line forms, each
+ * compared whole, with the form its row prints (ADR 0025's amendment of 2026-11-28, the user's
+ * decision D-1 of item 2026-11-28-001): the command line opens no panel, so the note says it.
+ */
+const PROMPT_FORMS: readonly { shape: RegExp; form: InstallForm }[] = [
+  {
+    shape: new RegExp(
+      `^/plugin marketplace add ((?:https://github\\.com/)?${PROMPT_NAME}/${PROMPT_NAME})$`,
+    ),
+    form: {
+      form: "claude plugin marketplace add",
+      note: "its page gives the line as typed at Claude Code's prompt; the session runs the command-line form under `runs`, which declares the marketplace in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+    },
+  },
+  {
+    shape: new RegExp(`^/plugin install (${PROMPT_NAME}@${PROMPT_NAME})$`),
+    form: {
+      form: "claude plugin install",
+      note: "its page gives the line as typed at Claude Code's prompt, where a panel shows the plugin and asks its scope; the session runs the command-line form under `runs`, which opens no panel and installs the plugin, with any hooks and servers it carries, for this project, in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+    },
   },
 ];
 
@@ -347,6 +379,15 @@ function formOf(line: string): InstallForm | undefined {
   return INSTALL_FORMS.find(({ form }) => line === form || line.startsWith(`${form} `));
 }
 
+/** The form of a line typed at the prompt and the line the session runs in its place, at the project's scope; undefined where the line is of neither shape. */
+function promptLine(line: string): { form: InstallForm; runs: string } | undefined {
+  for (const { shape, form } of PROMPT_FORMS) {
+    const [, taken] = shape.exec(line) ?? [];
+    if (taken !== undefined) return { form, runs: `${form.form} ${taken} --scope project` };
+  }
+  return undefined;
+}
+
 /** What a row's last cell holds beside its lines: its words outside the spans, the joining words left out. */
 function wordsBeside(cells: readonly string[]): string[] {
   return (cells.at(-1) ?? "")
@@ -390,7 +431,7 @@ function holdOf(
     return HOLD.notStable;
   if (!hostedLifted && (some(holdsAnAddress) || said(cells[1], "hosted"))) return HOLD.hosted;
   if (some((line) => VALUE_MARKS.some((mark) => line.includes(mark)))) return HOLD.value;
-  if (some((line) => line.startsWith("/"))) return HOLD.prompt;
+  if (some((line) => line.startsWith("/") && promptLine(line) === undefined)) return HOLD.prompt;
   if (wordsBeside(cells).length > 0) return HOLD.wordy;
   return null;
 }
@@ -436,7 +477,7 @@ function serverLine(line: string): { form: InstallForm; address: string } | unde
 function formsOf(lines: readonly string[]): InstallForm[] | null {
   const forms: InstallForm[] = [];
   for (const line of lines) {
-    const form = formOf(line) ?? serverLine(line)?.form;
+    const form = promptLine(line)?.form ?? formOf(line) ?? serverLine(line)?.form;
     if (form === undefined || SHELL_MARKS.some((mark) => line.includes(mark))) return null;
     if (!forms.includes(form)) forms.push(form);
   }
@@ -486,14 +527,19 @@ export function rowInstall(
   const stack = STACK_OF.get(cells[0] ?? "");
   if (stack !== undefined && lines.some((line) => requiresShown(line, stack, shown)))
     return { state: "in the project already" };
-  return { state: "ready", forms };
+  if (!lines.some((line) => promptLine(line) !== undefined)) return { state: "ready", forms };
+  return { state: "ready", forms, runs: lines.map((line) => promptLine(line)?.runs ?? line) };
 }
 
 /** The lines printed after a row for its state: the engine's own words alone. */
 export function installLines(install: RowInstall): string[] {
   if (install.state === "held") return [`  install: held, ${install.reason}`];
   if (install.state !== "ready") return [`  install: ${install.state}`];
-  return ["  install: ready", ...install.forms.map(({ form, note }) => `    ${form}: ${note}`)];
+  return [
+    "  install: ready",
+    ...install.forms.map(({ form, note }) => `    ${form}: ${note}`),
+    ...(install.runs ?? []).map((line) => `    runs: ${line}`),
+  ];
 }
 
 /** The heading of the one table whose rows are keyed by stack. */

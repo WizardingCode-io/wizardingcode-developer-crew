@@ -572,8 +572,14 @@ const BOOST_READY = [
   "    php artisan boost:install: runs Boost's installer in the project; it may add Laravel Herd's server, a held row: that part is declined",
 ];
 const HELD_HERD = "  install: held, its line takes a value of the machine, a token or a key";
-const HELD_PROMPT =
-  "  install: held, its line is typed at Claude Code's prompt, which a session cannot do";
+/** 2026-11-28-001: a row of two lines typed at the prompt is ready, and prints the lines the session runs. */
+const ASTRAL_READY = [
+  "  install: ready",
+  "    claude plugin marketplace add: its page gives the line as typed at Claude Code's prompt; the session runs the command-line form under `runs`, which declares the marketplace in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+  "    claude plugin install: its page gives the line as typed at Claude Code's prompt, where a panel shows the plugin and asks its scope; the session runs the command-line form under `runs`, which opens no panel and installs the plugin, with any hooks and servers it carries, for this project, in the project's `.claude/settings.json`, a file that a commit shares with everyone who opens the project",
+  "    runs: claude plugin marketplace add astral-sh/agent-plugins --scope project",
+  "    runs: claude plugin install astral@astral-sh --scope project",
+];
 const HELD_CREDENTIAL = "  install: held, it reaches production data with a credential";
 
 /** The whole output of the project form for the repository, with what follows FastAPI's row and what stands before the last line. */
@@ -591,7 +597,7 @@ function expected(fastapi: string[], tail: string[] = [], boost: string[] = BOOS
     ...fastapi,
     "rows for the tools this project shows:",
     rowLine("Astral's plugin"),
-    HELD_PROMPT,
+    ...ASTRAL_READY,
     "rows by stack:",
     "  none",
     "error services this project shows:",
@@ -658,8 +664,8 @@ test(`${ITEM} AC-13: the project form prints a recorded row's state in place of 
           'claude mcp add herd php /Applications/Herd.app/Contents/Resources/herd-mcp.phar -e SITE_PATH="$(pwd)"',
         ],
       }),
+      // 2026-11-28-001: Astral's row left this list, since it is no longer held.
       entry({ page: sentry, lines: ["x"] }),
-      entry({ page: pageOf("Astral's plugin"), lines: ["x"] }),
     ],
   });
   expect(await printed()).toEqual(expected(READY));
@@ -762,6 +768,7 @@ test(`${ITEM} AC-14: the reference, the ADR's amendment, the help and the usage 
     "Amendment of 2026-11-26 (item 2026-11-26-001)",
     "Amendment of 2026-11-26 (item 2026-11-26-002)",
     "Amendment of 2026-11-26 (item 2026-11-26-005)",
+    "Amendment of 2026-11-28 (item 2026-11-28-001)",
   ]);
   for (const phrase of [
     NAME,
