@@ -3891,7 +3891,7 @@ var EXPANSION_CHARS = String.raw`$\x60`;
 var PATTERN_CHARS = String.raw`{[(*?`;
 
 // packages/engine/src/version.ts
-var VERSION = "0.35.0";
+var VERSION = "0.35.1";
 function compareVersions(a, b) {
   const x = a.split(".").map(Number);
   const y = b.split(".").map(Number);
